@@ -1277,23 +1277,28 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels }) {
 // FTD$$ = Σftd/Σqtd · D0$$ = Σd0/Σqtd · retX(qtd)=Σcdx/Σqtd · retX(val)=Σvdx/Σd0
 // ============================================================
 const BENCH_HOUSE_ORDER = ['lottu', 'betpontobet', 'donaldbet'];
-const MES_ABBR = ['', 'jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
-const mesLabel_ = (m) => { if (!m) return '—'; const [y, mm] = String(m).split('-'); return `${MES_ABBR[+mm]}/${y.slice(2)}`; };
-const mesRangeLabel_ = (a, b) => (a && b) ? (a === b ? mesLabel_(a) : `${mesLabel_(a)}–${mesLabel_(b)}`) : '—';
+const benchDM_ = (iso) => { if (!iso) return '—'; const p = String(iso).split('-'); return `${p[2]}/${p[1]}`; };   // dd/mm
+const dateRangeLabel_ = (a, b) => (a && b) ? (a === b ? benchDM_(a) : `${benchDM_(a)}–${benchDM_(b)}`) : '—';
+function dateBounds_(rows) {
+  if (!rows || !rows.length) return null;
+  let min = rows[0].date, max = rows[0].date;
+  rows.forEach(r => { if (r.date < min) min = r.date; if (r.date > max) max = r.date; });
+  return { min, max };
+}
 
-// Linhas colunares das casas -> {mes, canal, faixa, qtd, ftd, d0, cd1, vd1, cw1, vw1, cm0, vm0}
+// Linhas colunares das casas -> {date, canal, faixa, qtd, ftd, d0, cd1, vd1, cw1, vw1, cm0, vm0}
 function benchHouseRows_(bench, hkey) {
   if (!bench || !bench.houses || !bench.houses[hkey]) return [];
-  const { meses, canais, faixas } = bench;
+  const { dates, canais, faixas } = bench;
   return bench.houses[hkey].rows.map(r => ({
-    mes: meses[r[0]], canal: canais[r[1]], faixa: faixas[r[2]],
+    date: dates[r[0]], canal: canais[r[1]], faixa: faixas[r[2]],
     qtd: r[3], ftd: r[4], d0: r[5], cd1: r[6], vd1: r[7], cw1: r[8], vw1: r[9], cm0: r[10], vm0: r[11],
   }));
 }
-// retencaoFaixa (Apostou, diária) -> mesmo shape, colapsando o dia em mês.
+// retencaoFaixa (Apostou, diária) -> mesmo shape, mantendo o dia.
 function benchApostouRows_(retencaoFaixa) {
   return (retencaoFaixa || []).map(r => ({
-    mes: String(r.date).slice(0, 7), canal: r.canal, faixa: r.faixa,
+    date: String(r.date), canal: r.canal, faixa: r.faixa,
     qtd: r.qtdFtds || 0, ftd: r.ftdTotal || 0, d0: r.depD0 || 0,
     cd1: r.cntD1 || 0, vd1: r.valD1 || 0, cw1: r.cntW1 || 0, vw1: r.valW1 || 0, cm0: r.cntM0 || 0, vm0: r.valM0 || 0,
   }));
@@ -1305,8 +1310,8 @@ function aggBench_(rows, sel) {
     if (sel.canal && sel.canal !== 'all') { if (r.canal !== sel.canal) return; }
     else if (sel.scope === 'growth' && !isGrowthCh_(r.canal)) return;
     if (sel.faixa && sel.faixa !== 'all' && r.faixa !== sel.faixa) return;
-    if (sel.mesFrom && r.mes < sel.mesFrom) return;
-    if (sel.mesTo && r.mes > sel.mesTo) return;
+    if (sel.from && r.date < sel.from) return;
+    if (sel.to && r.date > sel.to) return;
     out.qtd += r.qtd; out.ftd += r.ftd; out.d0 += r.d0;
     out.cd1 += r.cd1; out.vd1 += r.vd1; out.cw1 += r.cw1; out.vw1 += r.vw1; out.cm0 += r.cm0; out.vm0 += r.vm0;
   });
@@ -1329,17 +1334,8 @@ function benchMetrics_(a, mode) {
     retM0: ret(a.cm0, a.vm0),
   };
 }
-function monthsInRows_(rows) { const s = {}; (rows || []).forEach(r => { s[r.mes] = 1; }); return Object.keys(s).sort(); }
 
 const BENCH_SEL_STYLE = { background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)', padding: '6px 10px', borderRadius: '6px', fontSize: '12px', fontFamily: 'inherit' };
-// Top-level (não inline na BenchmarkTab) p/ não remontar o <select> a cada render.
-function BenchMesSelect({ value, onChange, options }) {
-  return (
-    <select value={value || ''} onChange={e => onChange(e.target.value)} style={BENCH_SEL_STYLE}>
-      {options.map((m, i) => <option key={i} value={m}>{mesLabel_(m)}</option>)}
-    </select>
-  );
-}
 
 function BenchmarkTab({ retencaoFaixa, benchmark }) {
   // Apostou puxa o PERÍODO PRÓPRIO (jan–jun, = span das casas) via modo leve only=retfaixa,
@@ -1347,9 +1343,8 @@ function BenchmarkTab({ retencaoFaixa, benchmark }) {
   const [aptFetch, setAptFetch] = React.useState({ rows: null, loading: false, error: null });
   React.useEffect(() => {
     if (!benchmark || !ENDPOINT_URL) return;
-    const fullFrom = `${benchmark.mesMin}-01`;
-    const [ey, em] = benchmark.mesMax.split('-').map(Number);
-    const fullTo = `${benchmark.mesMax}-${String(new Date(ey, em, 0).getDate()).padStart(2, '0')}`;
+    const fullFrom = benchmark.dateMin;   // = span exato das casas (diário)
+    const fullTo = benchmark.dateMax;
     setAptFetch(s => ({ ...s, loading: true, error: null }));
     fetch(`${ENDPOINT_URL}?key=${ACCESS_TOKEN}&from=${fullFrom}&to=${fullTo}&only=retfaixa`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
@@ -1363,8 +1358,9 @@ function BenchmarkTab({ retencaoFaixa, benchmark }) {
     const m = {}; BENCH_HOUSE_ORDER.forEach(h => { m[h] = benchHouseRows_(benchmark, h); }); return m;
   }, [benchmark]);
 
-  const aptMonths = monthsInRows_(aptRows);
-  const houseMonths = (benchmark && benchmark.meses) || [];
+  const aptBounds = React.useMemo(() => dateBounds_(aptRows), [aptRows]);
+  const houseMin = (benchmark && benchmark.dateMin) || null;
+  const houseMax = (benchmark && benchmark.dateMax) || null;
   const canalOptions = (benchmark && benchmark.canais) || [];
   const faixaOptions = (benchmark && benchmark.faixas) || FAIXA_LIST;
 
@@ -1377,17 +1373,15 @@ function BenchmarkTab({ retencaoFaixa, benchmark }) {
   const [houseFrom, setHouseFrom] = React.useState(null);
   const [houseTo, setHouseTo] = React.useState(null);
 
-  // defaults = janela cheia de cada lado, setado quando os dados chegam
-  const aptKey = aptMonths.join(',');
-  const houseKey = houseMonths.join(',');
-  React.useEffect(() => { if (aptMonths.length) { setAptFrom(aptMonths[0]); setAptTo(aptMonths[aptMonths.length - 1]); } }, [aptKey]);
-  React.useEffect(() => { if (houseMonths.length) { setHouseFrom(houseMonths[0]); setHouseTo(houseMonths[houseMonths.length - 1]); } }, [houseKey]);
+  // defaults = janela cheia (diária) de cada lado, setado quando os dados chegam
+  React.useEffect(() => { if (aptBounds) { setAptFrom(aptBounds.min); setAptTo(aptBounds.max); } }, [aptBounds]);
+  React.useEffect(() => { if (houseMin && houseMax) { setHouseFrom(houseMin); setHouseTo(houseMax); } }, [houseMin, houseMax]);
 
-  const apt = benchMetrics_(aggBench_(aptRows, { canal, scope, faixa, mesFrom: aptFrom, mesTo: aptTo }), mode);
+  const apt = benchMetrics_(aggBench_(aptRows, { canal, scope, faixa, from: aptFrom, to: aptTo }), mode);
   const houses = BENCH_HOUSE_ORDER.map(h => ({
     key: h,
     label: (benchmark && benchmark.houses && benchmark.houses[h] && benchmark.houses[h].label) || h,
-    m: benchMetrics_(aggBench_(houseRowsMap[h], { canal, scope, faixa, mesFrom: houseFrom, mesTo: houseTo }), mode),
+    m: benchMetrics_(aggBench_(houseRowsMap[h], { canal, scope, faixa, from: houseFrom, to: houseTo }), mode),
   }));
   // Rótulo do escopo de canal p/ os títulos das tabelas
   const canalLabel = canal !== 'all' ? canal : (scope === 'growth' ? 'Canais Growth' : 'todos os canais');
@@ -1469,20 +1463,20 @@ function BenchmarkTab({ retencaoFaixa, benchmark }) {
         <div className="slicer-divider" />
         <div className="slicer-group">
           <label style={lblStyle}>Data Apostou</label>
-          <BenchMesSelect value={aptFrom} onChange={setAptFrom} options={aptMonths} />
+          <input type="date" value={aptFrom || ''} min={aptBounds ? aptBounds.min : undefined} max={aptTo || (aptBounds ? aptBounds.max : undefined)} onChange={e => setAptFrom(e.target.value)} />
           <span className="slicer-arrow">→</span>
-          <BenchMesSelect value={aptTo} onChange={setAptTo} options={aptMonths} />
+          <input type="date" value={aptTo || ''} min={aptFrom || (aptBounds ? aptBounds.min : undefined)} max={aptBounds ? aptBounds.max : undefined} onChange={e => setAptTo(e.target.value)} />
         </div>
         <div className="slicer-group">
           <label style={lblStyle}>Data Demais Casas</label>
-          <BenchMesSelect value={houseFrom} onChange={setHouseFrom} options={houseMonths} />
+          <input type="date" value={houseFrom || ''} min={houseMin || undefined} max={houseTo || houseMax || undefined} onChange={e => setHouseFrom(e.target.value)} />
           <span className="slicer-arrow">→</span>
-          <BenchMesSelect value={houseTo} onChange={setHouseTo} options={houseMonths} />
+          <input type="date" value={houseTo || ''} min={houseFrom || houseMin || undefined} max={houseMax || undefined} onChange={e => setHouseTo(e.target.value)} />
         </div>
       </div>
 
       <div className="support">
-        <div className="support-title">Apostou · {mesRangeLabel_(aptFrom, aptTo)} · {canalLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}{aptFetch.loading ? ' · carregando BQ…' : ''}{aptFetch.error ? ' · erro (usando janela global)' : ''}</div>
+        <div className="support-title">Apostou · {dateRangeLabel_(aptFrom, aptTo)} · {canalLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}{aptFetch.loading ? ' · carregando BQ…' : ''}{aptFetch.error ? ' · erro (usando janela global)' : ''}</div>
         <table className="ch-table">
           {head}
           <tbody>
@@ -1495,7 +1489,7 @@ function BenchmarkTab({ retencaoFaixa, benchmark }) {
       </div>
 
       <div className="support">
-        <div className="support-title">Demais Casas · {mesRangeLabel_(houseFrom, houseTo)} · {canalLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}</div>
+        <div className="support-title">Demais Casas · {dateRangeLabel_(houseFrom, houseTo)} · {canalLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}</div>
         <table className="ch-table">
           {head}
           <tbody>
