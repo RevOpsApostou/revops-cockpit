@@ -1386,8 +1386,8 @@ function BenchmarkTab({ retencaoFaixa, benchmark }) {
   // Rótulo do escopo de canal p/ os títulos das tabelas
   const canalLabel = canal !== 'all' ? canal : (scope === 'growth' ? 'Canais Growth' : 'todos os canais');
 
-  const fmtRet = (x) => mode === 'qtd' ? fmtPct(x, 1) : fmtMultiple(x);
-  const retHdr = mode === 'qtd' ? 'Ret %' : 'Ret ×';
+  const fmtRet = (x) => fmtPct(x, 1);   // sempre % (Valor pode passar de 100%); o toggle Qtd/Valor diz qual base
+  const retHdr = 'Ret %';
   const selStyle = BENCH_SEL_STYLE;
   const lblStyle = { fontSize: '11px', color: 'var(--text-muted)' };
   // Cor de fundo das colunas de retenção (amarelinho) p/ separar do resto.
@@ -1505,7 +1505,7 @@ function BenchmarkTab({ retencaoFaixa, benchmark }) {
           <strong>Qtd FTD</strong> = nº de 1ºs depósitos · <strong>FTD $$</strong> = ticket médio do FTD (Σ FTD ÷ qtd) · <strong>Dep D0 Med</strong> = depósito médio no D0 (Σ D0 ÷ qtd).
           <strong> Mult X/FTD</strong> = depósito acumulado (incluindo o D0) até a janela ÷ valor do FTD: D0/FTD · (D0+dia 1)/FTD · (D0+dias 1–7)/FTD · (D0+resto do mês)/FTD.
           <strong> D1/W1/M0 Ret</strong> (colunas <span style={{ background: 'rgba(250,204,21,0.25)', padding: '0 4px', borderRadius: '3px' }}>amarelas</span>) = retenção acumulada vs D0 (D1 = dia seguinte · W1 = dias 1–7 · M0 = resto do mês do FTD).
-          No modo <strong>Valor</strong> = $ depositado na janela ÷ depósito do D0 (exclui o D0); no modo <strong>Qtd</strong> = % dos FTDs que voltaram a depositar.
+          No modo <strong>Valor</strong> = $ depositado na janela ÷ depósito do D0 em % (exclui o D0; pode passar de 100%); no modo <strong>Qtd</strong> = % dos FTDs que voltaram a depositar.
           Apostou via BigQuery com <strong>período próprio</strong> (jan–jun, independente do slicer global do topo); demais casas via Excel estático (jan–jun/26).
           <strong> ⚠ Ambos vêm em jan–jun por padrão (comparável).</strong> Se filtrar o mês corrente, lembre que ele ainda está imaturo (M0 = "resto do mês" trunca coortes recentes).
         </div>
