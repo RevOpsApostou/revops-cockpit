@@ -1329,14 +1329,6 @@ function benchMetrics_(a, mode) {
 }
 function monthsInRows_(rows) { const s = {}; (rows || []).forEach(r => { s[r.mes] = 1; }); return Object.keys(s).sort(); }
 
-// Tint da célula da casa vs Apostou (maior = melhor em todas as 5 métricas).
-function benchCmpBg_(h, a) {
-  if (h == null || a == null || isNaN(h) || isNaN(a)) return undefined;
-  if (h > a * 1.0001) return 'rgba(34,197,94,0.14)';   // melhor que Apostou
-  if (h < a * 0.9999) return 'rgba(239,68,68,0.13)';   // pior
-  return undefined;
-}
-
 const BENCH_SEL_STYLE = { background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)', padding: '6px 10px', borderRadius: '6px', fontSize: '12px', fontFamily: 'inherit' };
 // Top-level (não inline na BenchmarkTab) p/ não remontar o <select> a cada render.
 function BenchMesSelect({ value, onChange, options }) {
@@ -1348,7 +1340,23 @@ function BenchMesSelect({ value, onChange, options }) {
 }
 
 function BenchmarkTab({ retencaoFaixa, benchmark }) {
-  const aptRows = React.useMemo(() => benchApostouRows_(retencaoFaixa), [retencaoFaixa]);
+  // Apostou puxa o PERÍODO PRÓPRIO (jan–jun, = span das casas) via modo leve only=retfaixa,
+  // independente do slicer global. Fallback no prop retencaoFaixa enquanto carrega / em mock.
+  const [aptFetch, setAptFetch] = React.useState({ rows: null, loading: false, error: null });
+  React.useEffect(() => {
+    if (!benchmark || !ENDPOINT_URL) return;
+    const fullFrom = `${benchmark.mesMin}-01`;
+    const [ey, em] = benchmark.mesMax.split('-').map(Number);
+    const fullTo = `${benchmark.mesMax}-${String(new Date(ey, em, 0).getDate()).padStart(2, '0')}`;
+    setAptFetch(s => ({ ...s, loading: true, error: null }));
+    fetch(`${ENDPOINT_URL}?key=${ACCESS_TOKEN}&from=${fullFrom}&to=${fullTo}&only=retfaixa`)
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(j => { if (j.error) throw new Error(j.error); setAptFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
+      .catch(e => setAptFetch({ rows: null, loading: false, error: String(e.message || e) }));
+  }, [benchmark]);
+
+  const aptSource = (aptFetch.rows && aptFetch.rows.length) ? aptFetch.rows : retencaoFaixa;
+  const aptRows = React.useMemo(() => benchApostouRows_(aptSource), [aptSource]);
   const houseRowsMap = React.useMemo(() => {
     const m = {}; BENCH_HOUSE_ORDER.forEach(h => { m[h] = benchHouseRows_(benchmark, h); }); return m;
   }, [benchmark]);
@@ -1383,27 +1391,29 @@ function BenchmarkTab({ retencaoFaixa, benchmark }) {
   const retHdr = mode === 'qtd' ? 'Ret %' : 'Ret ×';
   const selStyle = BENCH_SEL_STYLE;
   const lblStyle = { fontSize: '11px', color: 'var(--text-muted)' };
-  // Células de uma casa. apt=null na linha da Apostou (sem tint); senão = métricas da Apostou p/ comparar.
-  const benchRowCells = (m, apt) => {
-    const bg = (v, k) => apt ? { background: benchCmpBg_(v, apt[k]) } : undefined;
-    return [
-      <td key="q">{fmtQty(m.qtd)}</td>,
-      <td key="ftd" style={bg(m.ftdMedio, 'ftdMedio')}>{fmtBRL(m.ftdMedio)}</td>,
-      <td key="d0" style={bg(m.d0Medio, 'd0Medio')}>{fmtBRL(m.d0Medio)}</td>,
-      <td key="d0f" style={bg(m.multD0F, 'multD0F')}>{fmtMultiple(m.multD0F)}</td>,
-      <td key="d1f" style={bg(m.multD1F, 'multD1F')}>{fmtMultiple(m.multD1F)}</td>,
-      <td key="w1f" style={bg(m.multW1F, 'multW1F')}>{fmtMultiple(m.multW1F)}</td>,
-      <td key="m0f" style={bg(m.multM0F, 'multM0F')}>{fmtMultiple(m.multM0F)}</td>,
-      <td key="r1" style={bg(m.retD1, 'retD1')}>{fmtRet(m.retD1)}</td>,
-      <td key="rw1" style={bg(m.retW1, 'retW1')}>{fmtRet(m.retW1)}</td>,
-      <td key="rm0" style={bg(m.retM0, 'retM0')}>{fmtRet(m.retM0)}</td>,
-    ];
-  };
+  // Cor de fundo das colunas de retenção (amarelinho) p/ separar do resto.
+  const RET_BG = 'rgba(250,204,21,0.10)';
+  const retTd = { background: RET_BG };
+  const retTdL = { background: RET_BG, borderLeft: '2px solid rgba(250,204,21,0.45)' };
+  const benchRowCells = (m) => [
+    <td key="q">{fmtQty(m.qtd)}</td>,
+    <td key="ftd">{fmtBRL(m.ftdMedio)}</td>,
+    <td key="d0">{fmtBRL(m.d0Medio)}</td>,
+    <td key="d0f">{fmtMultiple(m.multD0F)}</td>,
+    <td key="d1f">{fmtMultiple(m.multD1F)}</td>,
+    <td key="w1f">{fmtMultiple(m.multW1F)}</td>,
+    <td key="m0f">{fmtMultiple(m.multM0F)}</td>,
+    <td key="r1" style={retTdL}>{fmtRet(m.retD1)}</td>,
+    <td key="rw1" style={retTd}>{fmtRet(m.retW1)}</td>,
+    <td key="rm0" style={retTd}>{fmtRet(m.retM0)}</td>,
+  ];
+  const retTh = { background: 'rgba(250,204,21,0.20)' };
+  const retThL = { background: 'rgba(250,204,21,0.20)', borderLeft: '2px solid rgba(250,204,21,0.55)' };
   const head = (
     <thead><tr>
       <th>Casa</th><th>Qtd FTD</th><th>FTD $$</th><th>Dep D0 Med</th>
       <th>Mult D0/FTD</th><th>Mult D1/FTD</th><th>Mult W1/FTD</th><th>Mult M0/FTD</th>
-      <th>{`D1 ${retHdr}`}</th><th>{`W1 ${retHdr}`}</th><th>{`M0 ${retHdr}`}</th>
+      <th style={retThL}>{`D1 ${retHdr}`}</th><th style={retTh}>{`W1 ${retHdr}`}</th><th style={retTh}>{`M0 ${retHdr}`}</th>
     </tr></thead>
   );
 
@@ -1463,13 +1473,13 @@ function BenchmarkTab({ retencaoFaixa, benchmark }) {
       </div>
 
       <div className="support">
-        <div className="support-title">Apostou · {mesRangeLabel_(aptFrom, aptTo)} · {canal === 'all' ? 'todos os canais' : canal} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}</div>
+        <div className="support-title">Apostou · {mesRangeLabel_(aptFrom, aptTo)} · {canal === 'all' ? 'todos os canais' : canal} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}{aptFetch.loading ? ' · carregando BQ…' : ''}{aptFetch.error ? ' · erro (usando janela global)' : ''}</div>
         <table className="ch-table">
           {head}
           <tbody>
             <tr>
               <td className="ch-name">Apostou</td>
-              {benchRowCells(apt, null)}
+              {benchRowCells(apt)}
             </tr>
           </tbody>
         </table>
@@ -1483,7 +1493,7 @@ function BenchmarkTab({ retencaoFaixa, benchmark }) {
             {houses.map((h) => (
               <tr key={h.key}>
                 <td className="ch-name">{h.label}</td>
-                {benchRowCells(h.m, apt)}
+                {benchRowCells(h.m)}
               </tr>
             ))}
           </tbody>
@@ -1491,11 +1501,10 @@ function BenchmarkTab({ retencaoFaixa, benchmark }) {
         <div className="ch-note">
           <strong>Qtd FTD</strong> = nº de 1ºs depósitos · <strong>FTD $$</strong> = ticket médio do FTD (Σ FTD ÷ qtd) · <strong>Dep D0 Med</strong> = depósito médio no D0 (Σ D0 ÷ qtd).
           <strong> Mult X/FTD</strong> = depósito acumulado (incluindo o D0) até a janela ÷ valor do FTD: D0/FTD · (D0+dia 1)/FTD · (D0+dias 1–7)/FTD · (D0+resto do mês)/FTD.
-          <strong> D1/W1/M0 Ret</strong> = retenção acumulada vs D0 (D1 = dia seguinte · W1 = dias 1–7 · M0 = resto do mês do FTD).
+          <strong> D1/W1/M0 Ret</strong> (colunas <span style={{ background: 'rgba(250,204,21,0.25)', padding: '0 4px', borderRadius: '3px' }}>amarelas</span>) = retenção acumulada vs D0 (D1 = dia seguinte · W1 = dias 1–7 · M0 = resto do mês do FTD).
           No modo <strong>Valor</strong> = $ depositado na janela ÷ depósito do D0 (exclui o D0); no modo <strong>Qtd</strong> = % dos FTDs que voltaram a depositar.
-          Células das casas <span style={{ background: 'rgba(34,197,94,0.18)', padding: '0 4px', borderRadius: '3px' }}>verdes</span> = melhor que a Apostou, <span style={{ background: 'rgba(239,68,68,0.16)', padding: '0 4px', borderRadius: '3px' }}>vermelhas</span> = pior.
-          Apostou via BigQuery (segue a janela global no topo); demais casas via Excel estático (jan–jun/26).
-          <strong> ⚠ Pra comparar justo, alinhe os dois filtros de mês:</strong> o mês corrente ainda está imaturo (M0 = "resto do mês" trunca coortes recentes), então Apostou no mês atual fica subestimada vs casas com período maturado.
+          Apostou via BigQuery com <strong>período próprio</strong> (jan–jun, independente do slicer global do topo); demais casas via Excel estático (jan–jun/26).
+          <strong> ⚠ Ambos vêm em jan–jun por padrão (comparável).</strong> Se filtrar o mês corrente, lembre que ele ainda está imaturo (M0 = "resto do mês" trunca coortes recentes).
         </div>
       </div>
     </React.Fragment>
