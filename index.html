@@ -500,23 +500,28 @@ const fmtVal = (n, fmt) => {
 // HERO CARD
 // ============================================================
 
+// BP/farol PAUSADO até a fonte do sheet ficar limpa — esconde o "vs BP" em todos os cards. Religar quando o BP voltar.
+const BP_FAROL_ON = false;
+
 function Hero({ metric }) {
-  const farol = farolFromPct(metric.pctBp);
-  const fillPct = metric.pctBp == null ? 0 : Math.min(metric.pctBp * 100, 150); // cap visual em 150%
+  // Farol off enquanto BP pausado; ACT negativo (dado corrompido) também esconde.
+  const pct = (!BP_FAROL_ON || (metric.act != null && metric.act < 0)) ? null : metric.pctBp;
+  const farol = farolFromPct(pct);
+  const fillPct = pct == null ? 0 : Math.min(pct * 100, 150); // cap visual em 150%
   const deltaM1 = (metric.m1 != null && metric.act != null && metric.m1 !== 0)
     ? (metric.act - metric.m1) / metric.m1 : null;
   return (
     <div className="hero">
       <div className="head">
         <div className="label">{metric.label}</div>
-        <span className={`farol-dot ${farol}`} title={`${fmtPct(metric.pctBp)} do BP`} />
+        <span className={`farol-dot ${farol}`} title={`${fmtPct(pct)} do BP`} />
       </div>
       <div className="value">{fmtVal(metric.act, metric.fmt)}</div>
-      {metric.pctBp != null && (
+      {pct != null && (
         <div className="vs-bp">
           <div className="vs-bp-head">
             <span>vs Business Plan</span>
-            <span className={`pct ${farol}`}>{fmtPct(metric.pctBp, 0)}</span>
+            <span className={`pct ${farol}`}>{fmtPct(pct, 0)}</span>
           </div>
           <div className="vs-bp-track">
             {/* mark de 100% — em 150% de escala, 100% = 66.67% */}
@@ -1101,10 +1106,154 @@ function TabSafras({ dailyCohort, chFilter }) {
   );
 }
 
+// ===== Retenções por faixa de FTD — diária; faixa de valor do FTD + canal = filtros =====
+const FAIXA_LIST = ['01. Até R$10','02. R$10–20','03. R$20–30','04. R$30–50','05. R$50–75','06. R$75–100','07. R$100–200','08. R$200+'];
+const fxLabel_ = (f) => String(f).replace(/^\d+\.\s*/, '');
+
+// Mock (modo dev) — dias 01–11/06 × canais × faixas.
+const MOCK_RETENCAO_FAIXA = (() => {
+  const out = [], chs = [['Meta', 1], ['Google', 0.7], ['Orgânico (sem atribuição)', 0.5]];
+  const tkts = [7, 15, 25, 40, 62, 87, 150, 320];
+  for (let d = 1; d <= 11; d++) {
+    const date = `2026-06-${String(d).padStart(2, '0')}`;
+    const dayF = 0.78 + ((d * 3) % 11) / 22; // varia por dia (~0,78–1,23) só pro mock
+    chs.forEach(([canal, w]) => FAIXA_LIST.forEach((faixa, i) => {
+      const tkt = tkts[i], qtd = Math.max(1, Math.round((40 - i * 4) * w * dayF)), d0 = qtd * tkt * 1.3;
+      const r1 = (0.10 + i * 0.012) * dayF, rw = (0.20 + i * 0.018) * dayF, rm = (0.32 + i * 0.022) * dayF;
+      out.push({ date, canal, faixa, qtdFtds: qtd, ftdTotal: qtd * tkt, depD0: d0,
+        cntD1: Math.round(qtd * r1), valD1: d0 * r1 * 1.1,
+        cntW1: Math.round(qtd * rw), valW1: d0 * rw * 1.15,
+        cntM0: Math.round(qtd * rm), valM0: d0 * rm * 1.2 });
+    }));
+  }
+  return out;
+})();
+
+// Seletor de canal por escopo (canal específico · growth · total casa).
+function chSelector_(filter) {
+  if (filter && filter.channel) return (ch) => ch === filter.channel;
+  if (filter && filter.scope === 'growth') return (ch) => isGrowthCh_(ch);
+  return () => true;
+}
+
+// Filtra por canal + faixa, agrega por DIA de FTD, calcula retenção de valor por dia.
+function aggRetFaixaDaily_(rows, filter, faixa) {
+  if (!rows || !rows.length) return { rows: [], totals: {} };
+  const selCh = chSelector_(filter);
+  const selFx = (fx) => faixa === 'all' || fx === faixa;
+  const keys = ['qtdFtds','ftdTotal','depD0','cntD1','valD1','cntW1','valW1','cntM0','valM0'];
+  const byDay = {}, tot = {}; keys.forEach(k => tot[k] = 0);
+  rows.forEach(r => {
+    if (!selCh(r.canal) || !selFx(r.faixa)) return;
+    if (!byDay[r.date]) { byDay[r.date] = {}; keys.forEach(k => byDay[r.date][k] = 0); }
+    keys.forEach(k => { byDay[r.date][k] += r[k] || 0; tot[k] += r[k] || 0; });
+  });
+  const fin = (o, date) => ({
+    date, qtdFtds: o.qtdFtds, ftdTotal: o.ftdTotal,
+    ftdMedio: o.qtdFtds ? o.ftdTotal / o.qtdFtds : null,
+    d0: o.depD0, d1: o.valD1, w1: o.valW1, m0: o.valM0,
+    retD1: o.depD0 ? o.valD1 / o.depD0 : null,
+    retW1: o.depD0 ? o.valW1 / o.depD0 : null,
+    retM0: o.depD0 ? o.valM0 / o.depD0 : null,
+  });
+  const days = Object.keys(byDay).sort();
+  return { rows: days.map(d => fin(byDay[d], d)), totals: fin(tot, 'Total') };
+}
+
+function RetFaixaTable({ data }) {
+  const rows = data.rows || [], t = data.totals || {};
+  const range = (key) => { const v = rows.map(r => r[key]).filter(x => x != null && !isNaN(x)); return v.length ? { min: Math.min(...v), max: Math.max(...v) } : { min: 0, max: 1 }; };
+  const rD1 = range('retD1'), rW1 = range('retW1'), rM0 = range('retM0');
+  const dm = (iso) => { if (!iso) return '—'; const p = iso.split('-'); return `${p[2]}/${p[1]}`; };
+  return (
+    <table className="ch-table">
+      <thead>
+        <tr>
+          <th>Data FTD</th><th>Qtd FTDs</th><th>Tkt Médio FTD</th>
+          <th>D0 $</th><th>D1 $</th><th>Ret. D1</th><th>W1 $</th><th>Ret. W1</th><th>M0 $</th><th>Ret. M0</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r, i) => (
+          <tr key={i}>
+            <td className="ch-name">{dm(r.date)}</td>
+            <td>{fmtQty(r.qtdFtds)}</td>
+            <td>{fmtBRL(r.ftdMedio)}</td>
+            <td>{fmtBRL(r.d0)}</td>
+            <td>{fmtBRL(r.d1)}</td>
+            <td style={{ background: heatBg_(r.retD1, rD1.min, rD1.max) }}>{fmtPct(r.retD1, 1)}</td>
+            <td>{fmtBRL(r.w1)}</td>
+            <td style={{ background: heatBg_(r.retW1, rW1.min, rW1.max) }}>{fmtPct(r.retW1, 1)}</td>
+            <td>{fmtBRL(r.m0)}</td>
+            <td style={{ background: heatBg_(r.retM0, rM0.min, rM0.max) }}>{fmtPct(r.retM0, 1)}</td>
+          </tr>
+        ))}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td>Total</td><td>{fmtQty(t.qtdFtds)}</td><td>{fmtBRL(t.ftdMedio)}</td>
+          <td>{fmtBRL(t.d0)}</td><td>{fmtBRL(t.d1)}</td><td>{fmtPct(t.retD1, 1)}</td>
+          <td>{fmtBRL(t.w1)}</td><td>{fmtPct(t.retW1, 1)}</td><td>{fmtBRL(t.m0)}</td><td>{fmtPct(t.retM0, 1)}</td>
+        </tr>
+      </tfoot>
+    </table>
+  );
+}
+
+function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels }) {
+  const [faixa, setFaixa] = React.useState('all');
+  const data = aggRetFaixaDaily_(retencaoFaixa, chFilter, faixa);
+  const t = data.totals || {};
+  // CAC do escopo (independe da faixa — investimento não é segmentado por faixa de FTD): Σspend ÷ Σ FTD qtd.
+  let sScope = 0, qScope = 0;
+  (channels || []).forEach(c => { if (c.spend != null) { sScope += c.spend; qScope += (c.ftdQty || 0); } });
+  const cac = qScope > 0 ? sScope / qScope : null;
+  const m0Dep = (t.d0 || 0) + (t.m0 || 0);                              // depósito do mês M0 = D0 + resto do mês
+  const m0PerFtd = t.ftdTotal ? m0Dep / t.ftdTotal : null;             // multiplicador M0/FTD
+  const m0PerPlayer = t.qtdFtds ? m0Dep / t.qtdFtds : null;            // M0 por jogador
+  const paybackM0 = (cac && m0PerPlayer != null) ? m0PerPlayer / cac : null; // quantas vezes o CAC voltou em M0
+  const heroes = [
+    { label: 'M0 / FTD', act: m0PerFtd, m1: null, pctBp: null, fmt: 'multiple' },
+    { label: 'FTD médio do período', act: t.ftdMedio, m1: null, pctBp: null, fmt: 'brl' },
+    { label: 'Payback M0 / CAC', act: paybackM0, m1: null, pctBp: null, fmt: 'multiple' },
+  ];
+  const chLabel = (chFilter && chFilter.channel) ? chFilter.channel : (chFilter && chFilter.scope === 'growth' ? 'Canais Growth' : 'Total Casa');
+  const selStyle = { background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)', padding: '6px 10px', borderRadius: '6px', fontSize: '12px', fontFamily: 'inherit' };
+  return (
+    <React.Fragment>
+      <div className="tab-header">
+        <div>
+          <h1>Retenções por faixa de FTD</h1>
+          <div className="subtitle">Safra de FTD por dia, filtrável por faixa de valor do 1º depósito e por canal — retenção D1 / W1 / M0 (valor)</div>
+        </div>
+        <div className="slicer-group">
+          <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Faixa FTD</label>
+          <select value={faixa} onChange={e => setFaixa(e.target.value)} style={selStyle}>
+            <option value="all">Todas</option>
+            {FAIXA_LIST.map((f, i) => <option key={i} value={f}>{fxLabel_(f)}</option>)}
+          </select>
+        </div>
+      </div>
+      <div className="hero-grid">
+        {heroes.map((m, i) => <Hero key={i} metric={m} />)}
+      </div>
+      <div className="support">
+        <div className="support-title">Safra por Dia · {chLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}</div>
+        <RetFaixaTable data={data} />
+        <div className="ch-note">
+          Cada linha = safra de FTD daquele dia, na faixa selecionada. <strong>Ret.</strong> = R$ depositado no período ÷ depósito D0.
+          <strong> D1</strong> = dia seguinte · <strong>W1</strong> = dias 1–7 · <strong>M0</strong> = resto do mês do FTD. Coorte = FTDs na janela de data.
+        </div>
+      </div>
+    </React.Fragment>
+  );
+}
+
 const TABS = [
   { id: 'aquisicao', label: 'Aquisições', component: TabAquisicao },
   { id: 'safras', label: 'Safras Diárias', component: TabSafras },
   { id: 'retencao', label: 'Retenções', component: TabRetencao },
+  { id: 'retfaixa', label: 'Ret. Faixa FTD', component: TabRetencaoFaixa },
   { id: 'ggr', label: 'GGR', component: TabGgr },
   { id: 'depositos', label: 'Depósitos', component: TabDepositos },
   { id: 'apostas', label: 'Turnover', component: TabApostas },
@@ -1202,8 +1351,8 @@ function deriveMockM_(M, filter) {
 }
 
 // Live: deriva os hero cards do canal/scope a partir dos componentes por canal (exato, mesma fonte do backend).
-function deriveLiveM_(M, filter, comp, retCh, depCh) {
-  if ((!filter.channel && filter.scope !== 'growth') || !comp) return M;
+function deriveLiveM_(M, filter, comp, retCh, depCh, bp) {
+  if ((!filter.channel && filter.scope !== 'growth') || !comp) return M; // Total da Casa: backend já setou BP
   const inSel = (ch) => filter.channel ? ch === filter.channel : isGrowthCh_(ch);
   const sel = Object.keys(comp).filter(inSel);
   const sum = (bk, key) => sel.reduce((a, ch) => {
@@ -1224,7 +1373,7 @@ function deriveLiveM_(M, filter, comp, retCh, depCh) {
   const depM0Growth = dsel.filter(c => isGrowthCh_(c.channel)).reduce((a, c) => a + (c.depM0 || 0), 0);
 
   const mk = (m, act, m1) => ({ ...m, act: (act == null ? null : act), m1: (m1 === undefined ? null : m1) });
-  return {
+  const out = {
     ...M,
     ftdAmount:   mk(M.ftdAmount, ftdAmt || null, lFtdAmt || null),
     roasFtd:     mk(M.roasFtd, div(ftdAmt, spend), div(lFtdAmt, lSpend)),
@@ -1242,7 +1391,92 @@ function deriveLiveM_(M, filter, comp, retCh, depCh) {
     depM0Total:  mk(M.depM0Total, depM0Total || null, null),
     depM0Growth: mk(M.depM0Growth, depM0Growth || null, null),
   };
+  return applyBpLive_(out, filter, bp);
 }
+
+// Recalcula bp/pctBp dos hero cards conforme o escopo (growth ou canal específico).
+// Aquisição + DEP M0 vêm do BP per-canal; GGR/Depósitos Totais não têm BP por canal → farol off.
+function applyBpLive_(out, filter, bp) {
+  if (!bp) return out;
+  let sel;
+  if (filter.channel) sel = (bp.byChannel && bp.byChannel[filter.channel]) || {};
+  else if (filter.scope === 'growth') sel = bp.growthAgg || {};
+  else return out; // total: mantém o BP do backend
+  const setM = (m, bpVal) => {
+    if (!m) return m;
+    const v = (bpVal != null && isFinite(bpVal) && bpVal !== 0) ? bpVal : null;
+    return { ...m, bp: v, pctBp: (v && m.act != null) ? m.act / v : null };
+  };
+  out.invest      = setM(out.invest, sel.invest);
+  out.ftdAmount   = setM(out.ftdAmount, sel.ftdAmount);
+  out.roasFtd     = setM(out.roasFtd, (sel.ftdAmount && sel.invest) ? sel.ftdAmount / sel.invest : null);
+  out.depM0Growth = setM(out.depM0Growth, sel.depM0);
+  out.depM0Total  = setM(out.depM0Total, sel.depM0);
+  // Sem BP per-canal: zera o farol pra não mostrar BP de Total da Casa no escopo errado.
+  out.ggr      = { ...out.ggr, bp: null, pctBp: null };
+  out.depTotal = { ...out.depTotal, bp: null, pctBp: null };
+  return out;
+}
+
+// ===================== TEMP — SIMULAÇÃO DE BP NO CLIENTE =====================
+// Preview do farol ANTES do deploy do backend. Quando o Code.gs novo estiver no ar,
+// payload.bp passa a existir e este bloco é ignorado. REMOVER depois do deploy.
+const BP_SIM_ENABLED = false; // BP pausado até a fonte do sheet ficar limpa — farol fica off até lá
+const BP_SIM_MONTHLY = {
+  '2026-06': {
+    house:  { invest:500000, ftdAmount:135000, ftd:3766, totDep:940000, m0tt:1128000, ggr:168046, ftdAmountTt:240000, ftdTt:6485, depM0:765000 },
+    growth: {
+      'Google_ads':   { invest:174600, ftdAmount:49308, depM0:272376 },
+      'Meta_ads':     { invest:243450, ftdAmount:69171, depM0:377124.67 },
+      'TikTok_ads':   { invest:123900, ftdAmount:28950, depM0:170362.50 },
+      'Kwai_ads':     { invest:29250,  ftdAmount:7238,  depM0:40218.75 },
+      'Programatica': { invest:11580,  ftdAmount:5211,  depM0:28660.50 },
+      'Streamer Influenciadores_ads': { invest:17370, ftdAmount:5320, depM0:29257.59 },
+      'Mobile_ads':   { invest:0, ftdAmount:0, depM0:0 }
+    }
+  }
+};
+function bpSimCanon_(raw) {
+  const s = String(raw || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!s) return 'Orgânico (sem atribuição)';
+  if (/meta|facebook|instagram/.test(s)) return 'Meta';
+  if (/google|youtube/.test(s)) return 'Google';
+  if (/tiktok/.test(s)) return 'TikTok';
+  if (/kwai/.test(s)) return 'Kwai';
+  if (/program/.test(s)) return 'Programática';
+  if (/social|influencer/.test(s)) return 'Social Media';
+  if (/afili/.test(s)) return 'Afiliados';
+  return 'Outros';
+}
+function bpSimBuild_(from, to) {
+  const houseAcc = {}, rawAcc = {};
+  const add = (a, s, f) => { for (const k in s) a[k] = (a[k] || 0) + s[k] * f; };
+  let cur = new Date(from + 'T00:00:00'), end = new Date(to + 'T00:00:00'), guard = 0;
+  while (cur <= end && guard < 800) { guard++;
+    const mk = cur.getFullYear() + '-' + String(cur.getMonth() + 1).padStart(2, '0');
+    const dim = new Date(cur.getFullYear(), cur.getMonth() + 1, 0).getDate();
+    const mm = BP_SIM_MONTHLY[mk];
+    if (mm) { add(houseAcc, mm.house, 1 / dim);
+      for (const raw in mm.growth) { if (!rawAcc[raw]) rawAcc[raw] = {}; add(rawAcc[raw], mm.growth[raw], 1 / dim); } }
+    cur.setDate(cur.getDate() + 1);
+  }
+  const byChannel = {}, growthAgg = {}, allAgg = {};
+  for (const raw in rawAcc) { const c = bpSimCanon_(raw);
+    if (!byChannel[c]) byChannel[c] = {}; add(byChannel[c], rawAcc[raw], 1); add(allAgg, rawAcc[raw], 1);
+    if (isGrowthCh_(c)) add(growthAgg, rawAcc[raw], 1); }
+  return { house: houseAcc, allAgg: allAgg, growthAgg: growthAgg, byChannel: byChannel };
+}
+function bpSimApply_(payload) {
+  if (!BP_SIM_ENABLED || !payload || payload.bp || !payload.metrics || !payload.meta) return (payload && payload.bp) || null;
+  const bp = bpSimBuild_(payload.meta.from, payload.meta.to);
+  const h = bp.house, g = bp.allAgg, gr = bp.growthAgg, M = payload.metrics;
+  const setb = (m, v) => { if (!m) return; m.bp = (v && isFinite(v)) ? v : null; m.pctBp = (m.bp && m.act != null) ? m.act / m.bp : null; };
+  setb(M.invest, g.invest); setb(M.ftdAmount, h.ftdAmountTt);
+  setb(M.roasFtd, (h.ftdAmountTt && g.invest) ? h.ftdAmountTt / g.invest : null);
+  setb(M.ggr, h.ggr); setb(M.depM0Total, h.m0tt); setb(M.depM0Growth, gr.depM0); // depTotal (bruto) sem BP
+  return bp;
+}
+// =================== FIM TEMP — SIMULAÇÃO DE BP ===================
 
 // Seleciona a série da safra diária conforme o filtro (novo shape {all,growth,byChannel} ou mock {totals,rows}).
 function selectDailyCohort_(dc, filter) {
@@ -1288,9 +1522,11 @@ function App() {
     ggrChannels: MOCK_GGR_CHANNELS,
     ggrPayback: MOCK_GGR_PAYBACK,
     dailyCohort: MOCK_DAILY_COHORT,
+    retencaoFaixa: MOCK_RETENCAO_FAIXA,
     componentsByChannel: null,
     depM0Channels: MOCK_DEPM0_CHANNELS,
     rolloverMatrix: MOCK_ROLLOVER_MATRIX,
+    bp: null,
     isLive: false,
   });
 
@@ -1307,6 +1543,7 @@ function App() {
       })
       .then(payload => {
         if (payload.error) throw new Error(payload.error);
+        const simBp = bpSimApply_(payload); // TEMP: preenche bp/pctBp se o backend ainda não manda
         setState(prev => ({
           ...prev,
           loading: false,
@@ -1322,9 +1559,11 @@ function App() {
           ggrChannels: payload.ggrChannels,
           ggrPayback: payload.ggrPayback || prev.ggrPayback,
           dailyCohort: payload.dailyCohort || prev.dailyCohort,
+          retencaoFaixa: payload.retencaoFaixa || [],  // live sem o campo (back não deployado) → vazio, não mock
           componentsByChannel: payload.componentsByChannel || null,
           depM0Channels: payload.depM0Channels,
           rolloverMatrix: payload.rolloverMatrix,
+          bp: payload.bp || simBp || null,
           isLive: true,
         }));
       })
@@ -1383,7 +1622,7 @@ function App() {
 
   // Heroes: live = backend já filtrado · mock = deriva das tabelas mock
   const displayM = state.isLive
-    ? deriveLiveM_(state.M, chFilter, state.componentsByChannel, state.retentionChannels, state.depM0Channels)
+    ? deriveLiveM_(state.M, chFilter, state.componentsByChannel, state.retentionChannels, state.depM0Channels, state.bp)
     : deriveMockM_(state.M, chFilter);
 
   function applyPreset(presetId) {
@@ -1512,6 +1751,7 @@ function App() {
           ggrChannels={fGgrChannels}
           ggrPayback={state.ggrPayback}
           dailyCohort={selectDailyCohort_(state.dailyCohort, chFilter)}
+          retencaoFaixa={state.retencaoFaixa}
           chFilter={chFilter}
           depM0Channels={fDepM0Channels}
           rolloverMatrix={fRolloverMatrix}
