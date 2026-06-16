@@ -519,7 +519,6 @@ function Hero({ metric }) {
   // Farol off enquanto BP pausado; ACT negativo (dado corrompido) também esconde.
   const pct = (!BP_FAROL_ON || (metric.act != null && metric.act < 0)) ? null : metric.pctBp;
   const farol = farolFromPct(pct);
-  const fillPct = pct == null ? 0 : Math.min(pct * 100, 150); // cap visual em 150%
   const deltaM1 = (metric.m1 != null && metric.act != null && metric.m1 !== 0)
     ? (metric.act - metric.m1) / metric.m1 : null;
   return (
@@ -532,13 +531,8 @@ function Hero({ metric }) {
       {pct != null && (
         <div className="vs-bp">
           <div className="vs-bp-head">
-            <span>vs Business Plan</span>
+            <span>BP {fmtVal(metric.bp, metric.fmt)}</span>
             <span className={`pct ${farol}`}>{fmtPct(pct, 0)}</span>
-          </div>
-          <div className="vs-bp-track">
-            {/* mark de 100% — em 150% de escala, 100% = 66.67% */}
-            <div className="vs-bp-mark" style={{ left: `${(100 / 150) * 100}%` }} />
-            <div className={`vs-bp-fill ${farol}`} style={{ width: `${(fillPct / 150) * 100}%` }} />
           </div>
         </div>
       )}
