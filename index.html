@@ -301,6 +301,18 @@
 <script type="text/babel">
 const { useState, useEffect } = React;
 
+// Estado persistido em localStorage (sobrevive a refresh / troca de aba / sair e voltar).
+function usePersistedState(key, initial) {
+  const [v, setV] = React.useState(() => {
+    try { const s = window.localStorage.getItem(key); return s != null ? JSON.parse(s) : initial; }
+    catch (e) { return initial; }
+  });
+  React.useEffect(() => {
+    try { window.localStorage.setItem(key, JSON.stringify(v)); } catch (e) {}
+  }, [key, v]);
+  return [v, setV];
+}
+
 // ============================================================
 // CONFIG — set this to your Apps Script web app URL to go live.
 // Quando `null`, o dashboard mostra o snapshot mock (modo dev).
@@ -1322,7 +1334,8 @@ function benchMetrics_(a, mode) {
 const BENCH_SEL_STYLE = { background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)', padding: '6px 10px', borderRadius: '6px', fontSize: '12px', fontFamily: 'inherit' };
 
 // View genérica do Benchmark — parametrizada por houseOrder + sameday (p/ reusar na aba Same-day).
-function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, subtitle }) {
+// pkey = prefixo de persistência (filtros sobrevivem a refresh/troca de aba).
+function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, subtitle, pkey }) {
   // Apostou puxa o PERÍODO PRÓPRIO (jan–jun, = span das casas) via modo leve only=retfaixa
   // (sameday=1 quando coorte same-day), independente do slicer global. Fallback no prop só no modo normal.
   const [aptFetch, setAptFetch] = React.useState({ rows: null, loading: false, error: null });
@@ -1350,18 +1363,19 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
   const canalOptions = (benchmark && benchmark.canais) || [];
   const faixaOptions = (benchmark && benchmark.faixas) || FAIXA_LIST;
 
-  const [canal, setCanal] = React.useState('all');
-  const [scope, setScope] = React.useState('all');   // 'all' (Total Casa) | 'growth' (só mídia paga) — define o que 'Todos' agrega
-  const [faixa, setFaixa] = React.useState('all');
-  const [mode, setMode] = React.useState('qtd');     // 'qtd' (% redepositou) | 'val' (multiplicador $)
+  // Filtros persistidos por aba (canal/escopo/faixa/modo sobrevivem a refresh + troca de aba).
+  const [canal, setCanal] = usePersistedState(`rvops:${pkey}:canal`, 'all');
+  const [scope, setScope] = usePersistedState(`rvops:${pkey}:scope`, 'all');   // 'all' (Total Casa) | 'growth' (só mídia paga)
+  const [faixa, setFaixa] = usePersistedState(`rvops:${pkey}:faixa`, 'all');
+  const [mode, setMode] = usePersistedState(`rvops:${pkey}:mode`, 'qtd');       // 'qtd' (% redepositou) | 'val' (% sobre D0)
   const [aptFrom, setAptFrom] = React.useState(null);
   const [aptTo, setAptTo] = React.useState(null);
   const [houseFrom, setHouseFrom] = React.useState(null);
   const [houseTo, setHouseTo] = React.useState(null);
 
-  // defaults = janela cheia (diária) de cada lado, setado quando os dados chegam
-  React.useEffect(() => { if (aptBounds) { setAptFrom(aptBounds.min); setAptTo(aptBounds.max); } }, [aptBounds]);
-  React.useEffect(() => { if (houseMin && houseMax) { setHouseFrom(houseMin); setHouseTo(houseMax); } }, [houseMin, houseMax]);
+  // default das datas = MÊS MAIS RECENTE dos dados (junho), em cada lado, quando os dados chegam.
+  React.useEffect(() => { if (aptBounds) { setAptFrom(aptBounds.max.slice(0, 7) + '-01'); setAptTo(aptBounds.max); } }, [aptBounds]);
+  React.useEffect(() => { if (houseMin && houseMax) { setHouseFrom(houseMax.slice(0, 7) + '-01'); setHouseTo(houseMax); } }, [houseMin, houseMax]);
 
   const apt = benchMetrics_(aggBench_(aptRows, { canal, scope, faixa, from: aptFrom, to: aptTo }), mode);
   const houses = houseOrder.map(h => ({
@@ -1506,14 +1520,14 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
 // Aba Benchmark — 3 casas (faixa_diaria) vs Apostou (coorte cheia).
 function BenchmarkTab({ retencaoFaixa, benchmark }) {
   return <BenchmarkView retencaoFaixa={retencaoFaixa} benchmark={benchmark}
-    houseOrder={BENCH_HOUSE_ORDER} sameday={false}
+    houseOrder={BENCH_HOUSE_ORDER} sameday={false} pkey="bench"
     title="Benchmark entre casas"
     subtitle="Apostou vs Lottu · Bet.Bet · Donald — ticket de FTD, depósito D0 e retenção D1/W1/M0 por faixa e canal" />;
 }
 // Aba Same-day — só Apostou + Lottu, coorte de FTDs que depositaram no dia do cadastro.
 function SamedayTab({ retencaoFaixa, benchmarkSameday }) {
   return <BenchmarkView retencaoFaixa={retencaoFaixa} benchmark={benchmarkSameday}
-    houseOrder={['lottu']} sameday={true}
+    houseOrder={['lottu']} sameday={true} pkey="sameday"
     title="Same-day · Apostou vs Lottu"
     subtitle="Coorte SAME-DAY (FTD no mesmo dia do cadastro) — mesmas métricas do Benchmark, só Apostou e Lottu" />;
 }
@@ -1772,13 +1786,13 @@ const PRESETS = [
 ];
 
 function App() {
-  const [tabId, setTabId] = useState('aquisicao');
+  const [tabId, setTabId] = usePersistedState('rvops:tab', 'aquisicao');
   const initialRange = PRESETS[0].range();
   const [pendingRange, setPendingRange] = useState(initialRange);
   const [appliedRange, setAppliedRange] = useState(initialRange);
   const [activePreset, setActivePreset] = useState('mtd');
   // Filtro de canal: channel = canal específico · scope = 'all' (Total Casa) | 'growth' (Canais Growth)
-  const [chFilter, setChFilter] = useState({ channel: null, scope: 'all' });
+  const [chFilter, setChFilter] = usePersistedState('rvops:chFilter', { channel: null, scope: 'all' });
   const [state, setState] = useState({
     loading: !!ENDPOINT_URL,
     error: null,
