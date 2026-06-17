@@ -113,12 +113,15 @@
   }
   .slicer input[type="date"]:focus { border-color: var(--accent-yellow); }
   .slicer select {
-    background: rgba(250, 204, 21, .06); border: 1px solid rgba(250, 204, 21, .45);
+    background: var(--surface); border: 1px solid rgba(250, 204, 21, .45);
     color: var(--text); font-family: inherit; font-size: 12px;
     padding: 6px 10px; border-radius: 6px; outline: none;
     cursor: pointer; color-scheme: dark; max-width: 220px;
   }
   .slicer select:focus { border-color: var(--accent-yellow); }
+  /* opções do dropdown nativo: força fundo escuro + texto claro (o bg amarelo
+     do select vazava pro popup e deixava as opções ilegíveis) */
+  .slicer select option { background: var(--surface); color: var(--text); }
   .slicer-divider { width: 1px; height: 24px; background: var(--border); }
   .slicer-arrow { color: var(--text-dim); font-size: 12px; }
   .slicer-presets { display: flex; gap: 4px; margin-left: 6px; }
@@ -1300,11 +1303,17 @@ function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode) {
 function RetFaixaTable({ data }) {
   const rows = data.rows || [], t = data.totals || {};
   const dm = (iso) => { if (!iso || iso === 'Total') return iso || '—'; const p = String(iso).split('-'); return `${p[2]}/${p[1]}`; };
-  const retTd = { background: 'rgba(250,204,21,0.10)' };
-  const retTdL = { background: 'rgba(250,204,21,0.10)', borderLeft: '2px solid rgba(250,204,21,0.45)' };
+  // Heatmap por coluna (vermelho→amarelo→verde, min/max das linhas) nas retenções —
+  // igual à aba Safras Diárias. Total (heat=false) mantém o amarelo chapado.
+  const range = (key) => { const v = rows.map(x => x[key]).filter(x => x != null && !isNaN(x)); return v.length ? { min: Math.min(...v), max: Math.max(...v) } : { min: 0, max: 1 }; };
+  const rD1 = range('retD1'), rW1 = range('retW1'), rM0 = range('retM0');
   const retTh = { background: 'rgba(250,204,21,0.20)' };
   const retThL = { background: 'rgba(250,204,21,0.20)', borderLeft: '2px solid rgba(250,204,21,0.55)' };
-  const cells = (r) => [
+  const retCell = (v, rng, heat, left) => {
+    const bg = heat ? heatBg_(v, rng.min, rng.max) : 'rgba(250,204,21,0.10)';
+    return left ? { background: bg, borderLeft: '2px solid rgba(250,204,21,0.45)' } : { background: bg };
+  };
+  const cells = (r, heat) => [
     <td key="q">{fmtQty(r.qtd)}</td>,
     <td key="ftd">{fmtBRL(r.ftdMedio)}</td>,
     <td key="d0">{fmtBRL(r.d0Medio)}</td>,
@@ -1312,9 +1321,9 @@ function RetFaixaTable({ data }) {
     <td key="d1f">{fmtMultiple(r.multD1F)}</td>,
     <td key="w1f">{fmtMultiple(r.multW1F)}</td>,
     <td key="m0f">{fmtMultiple(r.multM0F)}</td>,
-    <td key="r1" style={retTdL}>{fmtPct(r.retD1, 1)}</td>,
-    <td key="rw1" style={retTd}>{fmtPct(r.retW1, 1)}</td>,
-    <td key="rm0" style={retTd}>{fmtPct(r.retM0, 1)}</td>,
+    <td key="r1" style={retCell(r.retD1, rD1, heat, true)}>{fmtPct(r.retD1, 1)}</td>,
+    <td key="rw1" style={retCell(r.retW1, rW1, heat, false)}>{fmtPct(r.retW1, 1)}</td>,
+    <td key="rm0" style={retCell(r.retM0, rM0, heat, false)}>{fmtPct(r.retM0, 1)}</td>,
   ];
   return (
     <div className="table-scroll"><table className="ch-table">
@@ -1326,10 +1335,10 @@ function RetFaixaTable({ data }) {
         </tr>
       </thead>
       <tbody>
-        {rows.map((r, i) => (<tr key={i}><td className="ch-name">{dm(r.date)}</td>{cells(r)}</tr>))}
+        {rows.map((r, i) => (<tr key={i}><td className="ch-name">{dm(r.date)}</td>{cells(r, true)}</tr>))}
       </tbody>
       <tfoot>
-        <tr><td>Total</td>{cells(t)}</tr>
+        <tr><td>Total</td>{cells(t, false)}</tr>
       </tfoot>
     </table></div>
   );
@@ -1372,7 +1381,7 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp }) {
     { label: 'Payback M0 / CAC', act: paybackM0, m1: null, pctBp: null, fmt: 'multiple' },
   ];
   const chLabel = (chFilter && chFilter.channel) ? chFilter.channel : (chFilter && chFilter.scope === 'growth' ? 'Canais Growth' : 'Total Casa');
-  const selStyle = { background: 'rgba(250,204,21,.06)', border: '1px solid rgba(250,204,21,.45)', color: 'var(--text)', padding: '6px 10px', borderRadius: '6px', fontSize: '12px', fontFamily: 'inherit' };
+  const selStyle = { background: 'var(--surface)', border: '1px solid rgba(250,204,21,.45)', color: 'var(--text)', padding: '6px 10px', borderRadius: '6px', fontSize: '12px', fontFamily: 'inherit' };
   return (
     <React.Fragment>
       <div className="tab-header">
@@ -1477,7 +1486,7 @@ function benchMetrics_(a, mode) {
   };
 }
 
-const BENCH_SEL_STYLE = { background: 'rgba(250,204,21,.06)', border: '1px solid rgba(250,204,21,.45)', color: 'var(--text)', padding: '6px 10px', borderRadius: '6px', fontSize: '12px', fontFamily: 'inherit' };
+const BENCH_SEL_STYLE = { background: 'var(--surface)', border: '1px solid rgba(250,204,21,.45)', color: 'var(--text)', padding: '6px 10px', borderRadius: '6px', fontSize: '12px', fontFamily: 'inherit' };
 
 // View genérica do Benchmark — parametrizada por houseOrder + sameday (p/ reusar na aba Same-day).
 // pkey = prefixo de persistência (filtros sobrevivem a refresh/troca de aba).
