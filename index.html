@@ -51,6 +51,35 @@
     background: rgba(251, 191, 36, .08); padding: 6px 12px;
     border-radius: 6px; border: 1px solid rgba(251, 191, 36, .3);
   }
+  .user-chip {
+    font-size: 11px; color: var(--text); background: var(--surface-2);
+    padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border-strong);
+  }
+  .logout-btn {
+    font-size: 11px; color: var(--text-muted); background: transparent;
+    padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border);
+    cursor: pointer; font-family: inherit;
+  }
+  .logout-btn:hover { color: var(--text); border-color: var(--border-strong); }
+  /* Tela de login */
+  .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .login-card {
+    width: 320px; max-width: 100%; display: flex; flex-direction: column; gap: 12px;
+    background: var(--surface); border: 1px solid var(--border-strong); border-radius: 12px; padding: 32px 28px;
+  }
+  .login-title { font-size: 20px; font-weight: 700; color: var(--text); }
+  .login-sub { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+  .login-card input {
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+    padding: 11px 12px; border-radius: 8px; font-size: 14px; font-family: inherit;
+  }
+  .login-card input:focus { outline: none; border-color: var(--border-strong); }
+  .login-card button {
+    margin-top: 4px; padding: 11px; border-radius: 8px; border: none; cursor: pointer;
+    background: var(--text); color: var(--bg, #000); font-weight: 600; font-size: 14px; font-family: inherit;
+  }
+  .login-card button:disabled { opacity: .5; cursor: default; }
+  .login-err { font-size: 12px; color: var(--negative); }
   .refresh-btn {
     display: inline-flex; align-items: center; gap: 6px;
     font-size: 11px; color: var(--text-muted); font-family: inherit;
@@ -324,7 +353,16 @@ function usePersistedState(key, initial) {
 // Quando `null`, o dashboard mostra o snapshot mock (modo dev).
 // ============================================================
 const ENDPOINT_URL = 'https://script.google.com/macros/s/AKfycbz23PQIQhJcqeNaLhdvyypl2epktR3frFcmekKv6OXmU5drx_BjLQVBAjSKZTIlFfw/exec';
-const ACCESS_TOKEN = 'rvops_5fa28e9c4b1d3a7f';
+const ACCESS_TOKEN = 'rvops_5fa28e9c4b1d3a7f';   // legado — o gate real agora é a sessão (login)
+
+// ===== AUTH (front) — sessão validada no backend (doPost). Token em localStorage; os
+// fetches de dados (GET) mandam &session=<tok> via authParam_(). Login/admin via apiPost_.
+const SESSION_KEY = 'rvops:session';
+const USER_KEY = 'rvops:user';
+function authParam_() { const s = localStorage.getItem(SESSION_KEY); return 'session=' + encodeURIComponent(s || ''); }
+function apiPost_(payload) {
+  return fetch(ENDPOINT_URL, { method: 'POST', body: JSON.stringify(payload) }).then(r => r.json());
+}
 
 // ============================================================
 // MOCK DATA — Farol snapshot (22/05/2026) — usado enquanto ENDPOINT_URL = null
@@ -1422,7 +1460,7 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
     const fullFrom = benchmark.dateMin;   // = span exato das casas (diário)
     const fullTo = benchmark.dateMax;
     setAptFetch(s => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?key=${ACCESS_TOKEN}&from=${fullFrom}&to=${fullTo}&only=retfaixa${sameday ? '&sameday=1' : ''}`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${fullFrom}&to=${fullTo}&only=retfaixa${sameday ? '&sameday=1' : ''}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(j => { if (j.error) throw new Error(j.error); setAptFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
       .catch(e => setAptFetch({ rows: null, loading: false, error: String(e.message || e) }));
@@ -1867,7 +1905,71 @@ const PRESETS = [
   { id: 'lm',  label: 'Mês passado', range: () => lastMonthRangeISO_() },
 ];
 
-function App() {
+// Aba Segurança (só admin) — designar quem tem acesso. Login validado no backend (doPost).
+function SegurancaTab({ user }) {
+  const [users, setUsers] = React.useState(null);
+  const [err, setErr] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+  const [form, setForm] = React.useState({ email: '', name: '', senha: '', admin: false });
+  const session = localStorage.getItem(SESSION_KEY);
+  const load = React.useCallback(() => {
+    setErr(null);
+    apiPost_({ action: 'listUsers', session }).then(j => {
+      if (j && j.ok) setUsers(j.users); else setErr((j && j.error) || 'Falha ao listar usuários');
+    }).catch(() => setErr('Erro de conexão'));
+  }, [session]);
+  React.useEffect(() => { load(); }, [load]);
+  const add = (ev) => {
+    ev.preventDefault(); setBusy(true); setErr(null);
+    apiPost_({ action: 'addUser', session, email: form.email, name: form.name, senha: form.senha, admin: form.admin })
+      .then(j => { setBusy(false); if (j && j.ok) { setForm({ email: '', name: '', senha: '', admin: false }); load(); } else setErr((j && j.error) || 'Falha ao salvar'); })
+      .catch(() => { setBusy(false); setErr('Erro de conexão'); });
+  };
+  const remove = (email) => {
+    if (!window.confirm('Remover o acesso de ' + email + '?')) return;
+    apiPost_({ action: 'removeUser', session, email }).then(j => { if (j && j.ok) load(); else setErr((j && j.error) || 'Falha ao remover'); }).catch(() => setErr('Erro de conexão'));
+  };
+  const inp = { background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)', padding: '8px 10px', borderRadius: '6px', fontSize: '13px', fontFamily: 'inherit' };
+  return (
+    <React.Fragment>
+      <div className="tab-header"><div>
+        <h1>Segurança · Acessos</h1>
+        <div className="subtitle">Quem pode entrar no dashboard. Login validado no backend, senha guardada em hash (SHA-256). Só admin vê esta aba.</div>
+      </div></div>
+      <div className="support">
+        <div className="support-title">Adicionar / atualizar acesso</div>
+        <form onSubmit={add} style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', marginBottom: '10px' }}>
+          <input style={inp} type="email" placeholder="e-mail" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} required />
+          <input style={inp} type="text" placeholder="nome" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+          <input style={inp} type="password" placeholder="senha inicial" value={form.senha} onChange={e => setForm(f => ({ ...f, senha: e.target.value }))} required />
+          <label style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', gap: '5px', alignItems: 'center' }}>
+            <input type="checkbox" checked={form.admin} onChange={e => setForm(f => ({ ...f, admin: e.target.checked }))} /> admin
+          </label>
+          <button className="apply-btn" type="submit" disabled={busy}>{busy ? 'Salvando…' : 'Salvar'}</button>
+        </form>
+        {err && <div style={{ color: 'var(--negative)', fontSize: '12px', marginBottom: '8px' }}>{err}</div>}
+        <table className="ch-table">
+          <thead><tr><th>E-mail</th><th>Nome</th><th>Admin</th><th></th></tr></thead>
+          <tbody>
+            {(users || []).map((u, i) => (
+              <tr key={i}>
+                <td className="ch-name">{u.email}</td>
+                <td>{u.name}</td>
+                <td>{u.admin ? '✓' : '—'}</td>
+                <td>{u.email === (user && user.email) ? <span style={{ color: 'var(--text-dim)' }}>você</span> : <button className="logout-btn" onClick={() => remove(u.email)}>remover</button>}</td>
+              </tr>
+            ))}
+            {users && users.length === 0 && <tr><td colSpan="4" style={{ color: 'var(--text-muted)' }}>nenhum usuário</td></tr>}
+            {!users && !err && <tr><td colSpan="4" style={{ color: 'var(--text-muted)' }}>carregando…</td></tr>}
+          </tbody>
+        </table>
+        <div className="ch-note">A senha é definida aqui e guardada em <strong>hash</strong> (não dá pra ler depois) — passe ao usuário por um canal seguro. Reenviar com o mesmo e-mail <strong>redefine</strong> a senha. Remover tira o acesso (sessões ativas expiram em até 6h).</div>
+      </div>
+    </React.Fragment>
+  );
+}
+
+function App({ user, onLogout }) {
   const [tabId, setTabId] = usePersistedState('rvops:tab', 'aquisicao');
   const initialRange = PRESETS[0].range();
   const [pendingRange, setPendingRange] = useState(initialRange);
@@ -1904,7 +2006,7 @@ function App() {
     if (!ENDPOINT_URL) return;
     setState(prev => ({ ...prev, loading: true, error: null }));
     // Sempre busca o dataset completo (todos os canais); o filtro de canal é client-side (instantâneo).
-    let url = `${ENDPOINT_URL}?key=${ACCESS_TOKEN}&from=${appliedRange.from}&to=${appliedRange.to}`;
+    let url = `${ENDPOINT_URL}?${authParam_()}&from=${appliedRange.from}&to=${appliedRange.to}`;
     if (opts.bustCache) url += `&refresh=true`;
     fetch(url)
       .then(r => {
@@ -1912,6 +2014,7 @@ function App() {
         return r.json();
       })
       .then(payload => {
+        if (payload.error === 'unauthorized') { if (onLogout) onLogout(); return; }
         if (payload.error) throw new Error(payload.error);
         setState(prev => ({
           ...prev,
@@ -2034,7 +2137,9 @@ function App() {
 
   const isDirty = pendingRange.from !== appliedRange.from || pendingRange.to !== appliedRange.to;
 
-  const Tab = TABS.find(t => t.id === tabId).component;
+  // Aba Segurança só aparece p/ admin. Fallback p/ 1ª aba se o tabId persistido não existir no escopo.
+  const visibleTabs = (user && user.admin) ? TABS.concat([{ id: 'seguranca', label: 'Segurança', component: SegurancaTab }]) : TABS;
+  const Tab = (visibleTabs.find(t => t.id === tabId) || visibleTabs[0]).component;
 
   return (
     <React.Fragment>
@@ -2065,6 +2170,8 @@ function App() {
               {state.loading ? 'Atualizando…' : 'Atualizar'}
             </button>
           )}
+          {user && <span className="user-chip" title={user.email}>{user.name}{user.admin ? ' · admin' : ''}</span>}
+          {onLogout && <button className="logout-btn" onClick={onLogout} title="Encerrar sessão">Sair</button>}
         </div>
       </header>
       <div className="slicer">
@@ -2126,7 +2233,7 @@ function App() {
         <button className="apply-btn" disabled={!isDirty} onClick={applyManual}>Aplicar</button>
       </div>
       <nav className="tabs">
-        {TABS.map(t => (
+        {visibleTabs.map(t => (
           <button
             key={t.id}
             className={`tab-btn ${tabId === t.id ? 'active' : ''}`}
@@ -2138,6 +2245,7 @@ function App() {
       </nav>
       <main>
         <Tab
+          user={user}
           M={displayM}
           channels={fChannels}
           bp={state.bp}
@@ -2171,7 +2279,65 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('app')).render(<App />);
+// ===== Tela de login (gateia o app quando há ENDPOINT_URL e não há sessão) =====
+function Login({ onLogin }) {
+  const [email, setEmail] = React.useState('');
+  const [senha, setSenha] = React.useState('');
+  const [err, setErr] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+  const submit = (ev) => {
+    ev.preventDefault(); setBusy(true); setErr(null);
+    apiPost_({ action: 'login', email, senha })
+      .then(j => { if (j && j.ok) onLogin(j.session, j.user); else { setErr((j && j.error) || 'Falha no login'); setBusy(false); } })
+      .catch(() => { setErr('Erro de conexão'); setBusy(false); });
+  };
+  return (
+    <div className="login-wrap">
+      <form className="login-card" onSubmit={submit}>
+        <div className="login-title">RevOps Cockpit</div>
+        <div className="login-sub">Acesso restrito · Apostou</div>
+        <input type="email" placeholder="E-mail" value={email} onChange={e => setEmail(e.target.value)} autoFocus autoComplete="username" />
+        <input type="password" placeholder="Senha" value={senha} onChange={e => setSenha(e.target.value)} autoComplete="current-password" />
+        {err && <div className="login-err">{err}</div>}
+        <button type="submit" disabled={busy || !email || !senha}>{busy ? 'Entrando…' : 'Entrar'}</button>
+      </form>
+    </div>
+  );
+}
+
+// ===== Root — gerencia a sessão e decide: Login vs App =====
+function Root() {
+  const [session, setSession] = React.useState(() => localStorage.getItem(SESSION_KEY) || null);
+  const [user, setUser] = React.useState(() => { try { return JSON.parse(localStorage.getItem(USER_KEY) || 'null'); } catch (e) { return null; } });
+  const [checking, setChecking] = React.useState(!!session);
+
+  React.useEffect(() => {
+    if (!session) { setChecking(false); return; }
+    apiPost_({ action: 'me', session }).then(j => {
+      if (j && j.ok) { setUser(j.user); localStorage.setItem(USER_KEY, JSON.stringify(j.user)); }
+      else { localStorage.removeItem(SESSION_KEY); localStorage.removeItem(USER_KEY); setSession(null); setUser(null); }
+      setChecking(false);
+    }).catch(() => setChecking(false));
+  }, []);
+
+  const onLogin = (tok, u) => {
+    localStorage.setItem(SESSION_KEY, tok); localStorage.setItem(USER_KEY, JSON.stringify(u));
+    setSession(tok); setUser(u);
+  };
+  const onLogout = () => {
+    const tok = localStorage.getItem(SESSION_KEY);
+    if (tok) apiPost_({ action: 'logout', session: tok }).catch(() => {});
+    localStorage.removeItem(SESSION_KEY); localStorage.removeItem(USER_KEY);
+    setSession(null); setUser(null);
+  };
+
+  // Modo dev (sem ENDPOINT_URL) não exige login.
+  if (ENDPOINT_URL && !session) return <Login onLogin={onLogin} />;
+  if (ENDPOINT_URL && checking) return <div className="login-wrap"><div className="login-card"><div className="login-sub">Verificando sessão…</div></div></div>;
+  return <App user={user} onLogout={onLogout} />;
+}
+
+ReactDOM.createRoot(document.getElementById('app')).render(<Root />);
 </script>
 </body>
 </html>
