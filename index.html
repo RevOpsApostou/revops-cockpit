@@ -1894,7 +1894,7 @@ function deriveLiveM_(M, filter, comp, retCh, depCh, bp) {
 }
 
 // Recalcula bp/pctBp dos hero cards conforme o escopo (growth ou canal específico).
-// Aquisição + DEP M0 vêm do BP per-canal; GGR/Depósitos Totais não têm BP por canal → farol off.
+// Aquisição + DEP M0 vêm do BP per-canal; Depósitos Totais espelha o M0 (= "same as M0") em qualquer escopo; GGR não tem BP por canal → farol off.
 function applyBpLive_(out, filter, bp) {
   if (!bp) return out;
   let sel;
@@ -1911,11 +1911,11 @@ function applyBpLive_(out, filter, bp) {
   out.roasFtd     = setM(out.roasFtd, (sel.ftdAmount && sel.invest) ? sel.ftdAmount / sel.invest : null);
   out.depM0Growth = setM(out.depM0Growth, sel.depM0);
   out.depM0Total  = setM(out.depM0Total, sel.depM0);
+  out.depTotal    = setM(out.depTotal, sel.depM0);   // Depósitos Totais = M0 também no escopo canal/growth (mês 1)
   // Sem BP per-canal: zera o farol pra não mostrar BP de Total da Casa no escopo errado.
   out.ggr       = { ...out.ggr, bp: null, pctBp: null };
   out.ggrPerDep = { ...out.ggrPerDep, bp: null, pctBp: null };
   out.ggrTrend  = { ...out.ggrTrend, bp: null, pctBp: null };
-  out.depTotal  = { ...out.depTotal, bp: null, pctBp: null };
   // Retenção: BP do plano é só Total da Casa (não há plano por canal) → farol off em canal/growth.
   out.retM0M1   = { ...out.retM0M1, bp: null, pctBp: null };
   out.retM1M2   = { ...out.retM1M2, bp: null, pctBp: null };
