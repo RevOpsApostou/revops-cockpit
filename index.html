@@ -2309,7 +2309,7 @@ function App({ user, onLogout }) {
           <span className="farol-key"><span className="dot vermelho" /> &lt; 85%</span>
           <div style={{ marginTop: 8 }}>
             {state.isLive
-              ? <>Live · gerado em {state.meta.generatedAt ? new Date(state.meta.generatedAt).toLocaleString('pt-BR') : '—'}</>
+              ? <>Live · dados até {state.meta.dataMaxDate ? state.meta.dataMaxDate.slice(8,10)+'/'+state.meta.dataMaxDate.slice(5,7) : '—'} · gerado em {state.meta.generatedAt ? new Date(state.meta.generatedAt).toLocaleString('pt-BR') : '—'}</>
               : <>Snapshot {state.meta.refDate} · Mock data · Configure <code>ENDPOINT_URL</code> para ir live</>
             }
           </div>
