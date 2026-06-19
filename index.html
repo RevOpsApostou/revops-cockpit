@@ -439,10 +439,10 @@ const MOCK_ROLLOVER_MATRIX = {
   ],
 };
 
-// Growth = TODOS os canais EXCETO social/orgânico/afiliados (regra por exclusão;
-// Programática e canais novos entram automaticamente). Usado no filtro client-side.
-const NON_GROWTH_CHANNELS = ['Social Media', 'Afiliados', 'Orgânico (sem atribuição)'];
-const isGrowthCh_ = (ch) => NON_GROWTH_CHANNELS.indexOf(ch) < 0;
+// Growth = APENAS esta lista fixa (allowlist). 'Outros'/Social/Orgânico/Afiliados ficam
+// de fora. Espelha GROWTH_CHANNELS do Code.gs (regra do Luis 2026-06-19). Filtro client-side.
+const GROWTH_CHANNELS = ['Meta', 'Google', 'TikTok', 'Kwai', 'Programática'];
+const isGrowthCh_ = (ch) => GROWTH_CHANNELS.indexOf(ch) >= 0;
 
 const CLUSTER_DEP = [
   { label: '% DEP Novos', value: 0.7196 },
@@ -1658,7 +1658,7 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
             {canalOptions.map((c, i) => <option key={i} value={c}>{c}</option>)}
           </select>
           <div className="slicer-presets">
-            <button className={`preset-btn ${scope === 'growth' ? 'active' : ''}`} onClick={() => setScope('growth')} title="Universo = só mídia paga (exclui Social Media, Orgânico e Afiliados). Define o que 'Todos' agrega.">Growth</button>
+            <button className={`preset-btn ${scope === 'growth' ? 'active' : ''}`} onClick={() => setScope('growth')} title="Universo = só mídia paga (Meta, Google, TikTok, Kwai, Programática). Define o que 'Todos' agrega.">Growth</button>
             <button className={`preset-btn ${scope === 'all' ? 'active' : ''}`} onClick={() => setScope('all')} title="Universo = casa toda.">Total Casa</button>
           </div>
         </div>
@@ -2280,7 +2280,7 @@ function App({ user, onLogout }) {
           <button
             className={`preset-btn ${chFilter.scope === 'growth' ? 'active' : ''}`}
             onClick={() => setChFilter(f => ({ ...f, scope: 'growth' }))}
-            title="Universo = só mídia paga (Meta, Google, TikTok, Kwai). Define o que 'Todos' mostra."
+            title="Universo = só mídia paga (Meta, Google, TikTok, Kwai, Programática). Define o que 'Todos' mostra."
           >
             Canais Growth
           </button>
