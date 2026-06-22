@@ -1430,8 +1430,10 @@ function RetFaixaTable({ data, dateLabel }) {
   // igual à aba Safras Diárias. Total (heat=false) mantém o amarelo chapado.
   const range = (key) => { const v = rows.map(x => x[key]).filter(x => x != null && !isNaN(x)); return v.length ? { min: Math.min(...v), max: Math.max(...v) } : { min: 0, max: 1 }; };
   const rD1 = range('retD1'), rW1 = range('retW1'), rW2 = range('retW2'), rM0 = range('retM0');
-  const retTh = { background: 'rgba(250,204,21,0.20)' };
-  const retThL = { background: 'rgba(250,204,21,0.20)', borderLeft: '2px solid rgba(250,204,21,0.55)' };
+  // Header sticky: fundo OPACO (tint amarelo composto sobre --surface-2) p/ as linhas não
+  // vazarem por baixo do título ao rolar. rgba puro deixava o header transparente.
+  const retTh = { background: 'linear-gradient(rgba(250,204,21,0.20),rgba(250,204,21,0.20)), var(--surface-2)' };
+  const retThL = { background: 'linear-gradient(rgba(250,204,21,0.20),rgba(250,204,21,0.20)), var(--surface-2)', borderLeft: '2px solid rgba(250,204,21,0.55)' };
   const retCell = (v, rng, heat, left) => {
     const bg = heat ? heatBg_(v, rng.min, rng.max) : 'rgba(250,204,21,0.10)';
     return left ? { background: bg, borderLeft: '2px solid rgba(250,204,21,0.45)' } : { background: bg };
