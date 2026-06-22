@@ -1275,9 +1275,7 @@ function TabSafras({ dailyCohort, chFilter }) {
     { label: 'Retenção W1', act: t.retW1,  m1: null, pctBp: null, fmt: 'pct' },
   ];
   // Rótulo segue o slicer (igual às outras abas): sem filtro = Total Casa (blended).
-  const chLabel = (chFilter && chFilter.channel)
-    ? chFilter.channel
-    : (chFilter && chFilter.scope === 'growth' ? 'Canais Growth' : 'Total Casa');
+  const chLabel = chLabel_(chFilter);
   return (
     <React.Fragment>
       <div className="tab-header">
@@ -1325,11 +1323,67 @@ const MOCK_RETENCAO_FAIXA = (() => {
   return out;
 })();
 
-// Seletor de canal por escopo (canal específico · growth · total casa).
+// Canais selecionados (array) — aceita o shape novo {channels:[]} e o antigo {channel:'x'}.
+function chList_(filter) {
+  if (!filter) return [];
+  if (Array.isArray(filter.channels)) return filter.channels;
+  return filter.channel ? [filter.channel] : [];
+}
+// Rótulo do escopo: 0 sel = scope · 1-2 = nomes · 3+ = "N canais".
+function chLabel_(filter, totalLabel) {
+  const sel = chList_(filter);
+  if (sel.length === 0) return (filter && filter.scope === 'growth') ? 'Canais Growth' : (totalLabel || 'Total Casa');
+  if (sel.length <= 2) return sel.join(' + ');
+  return sel.length + ' canais';
+}
+// Seletor de canal por escopo (canais específicos · growth · total casa).
 function chSelector_(filter) {
-  if (filter && filter.channel) return (ch) => ch === filter.channel;
+  const sel = chList_(filter);
+  if (sel.length) return (ch) => sel.includes(ch);
   if (filter && filter.scope === 'growth') return (ch) => isGrowthCh_(ch);
   return () => true;
+}
+
+// Dropdown multiselect de canais (botão + painel de checkboxes; fecha ao clicar fora).
+// selected = array; onChange recebe o novo array. [] = "Todos" (cai no escopo Growth/Total).
+function ChannelMultiSelect({ options, selected, onChange }) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    if (!open) return;
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+  const sel = selected || [];
+  const toggle = (ch) => onChange(sel.includes(ch) ? sel.filter(c => c !== ch) : [...sel, ch]);
+  const label = sel.length === 0 ? 'Todos' : (sel.length <= 2 ? sel.join(', ') : sel.length + ' canais');
+  const optBtn = (on) => ({ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', textAlign: 'left', background: on ? 'rgba(250,204,21,.12)' : 'transparent', border: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: '12px', padding: '7px 10px', borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap' });
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button type="button" onClick={() => setOpen(o => !o)} style={{ background: 'var(--surface)', border: '1px solid rgba(250,204,21,.45)', color: 'var(--text)', fontFamily: 'inherit', fontSize: '12px', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', maxWidth: '220px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+        <span style={{ fontSize: '9px', opacity: .7 }}>▼</span>
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 50, minWidth: '200px', maxHeight: '320px', overflowY: 'auto', background: 'var(--surface)', border: '1px solid rgba(250,204,21,.45)', borderRadius: '8px', padding: '4px', boxShadow: '0 8px 24px rgba(0,0,0,.5)' }}>
+          <button type="button" onClick={() => onChange([])} style={optBtn(sel.length === 0)}>
+            <span style={{ width: '14px', flexShrink: 0, color: 'var(--accent-yellow)', textAlign: 'center' }}>{sel.length === 0 ? '✓' : ''}</span>
+            <span>Todos</span>
+          </button>
+          {(options || []).map((ch, i) => {
+            const on = sel.includes(ch);
+            return (
+              <button key={i} type="button" onClick={() => toggle(ch)} style={optBtn(on)}>
+                <span style={{ width: '14px', height: '14px', borderRadius: '3px', border: '1px solid ' + (on ? 'var(--accent-yellow)' : 'var(--border)'), background: on ? 'var(--accent-yellow)' : 'transparent', color: '#000', fontSize: '10px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{on ? '✓' : ''}</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{ch}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // Início (segunda-feira) da semana ISO de 'YYYY-MM-DD' + rótulo "DD/MM–DD/MM".
@@ -1445,9 +1499,11 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   // que soma todos os canais); growth/canal usam os agregados per-canal. M0/FTD = M0÷FTD$.
   let bpScope = null;
   if (bp) {
-    if (chFilter && chFilter.channel) {
-      const b = bp.byChannel && bp.byChannel[chFilter.channel];
-      if (b) bpScope = { m0: b.depM0, ftdAmount: b.ftdAmount, ftd: b.ftd };
+    const list = chList_(chFilter);
+    if (list.length) {
+      const agg = {};
+      list.forEach(ch => { const b = bp.byChannel && bp.byChannel[ch]; if (b) ['depM0','ftdAmount','ftd'].forEach(k => { if (b[k] != null) agg[k] = (agg[k] || 0) + b[k]; }); });
+      bpScope = { m0: agg.depM0, ftdAmount: agg.ftdAmount, ftd: agg.ftd };
     } else if (chFilter && chFilter.scope === 'growth') {
       const g = bp.growthAgg || {};
       bpScope = { m0: g.depM0, ftdAmount: g.ftdAmount, ftd: g.ftd };
@@ -1465,7 +1521,7 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
     { label: 'FTD médio do período', act: t.ftdMedio, m1: null, bp: bpFtdMedio, pctBp: pb(t.ftdMedio, bpFtdMedio), fmt: 'brl' },
     { label: 'Payback M0 / CAC', act: paybackM0, m1: null, pctBp: null, fmt: 'multiple' },
   ];
-  const chLabel = (chFilter && chFilter.channel) ? chFilter.channel : (chFilter && chFilter.scope === 'growth' ? 'Canais Growth' : 'Total Casa');
+  const chLabel = chLabel_(chFilter);
   const selStyle = { background: 'var(--surface)', border: '1px solid rgba(250,204,21,.45)', color: 'var(--text)', padding: '6px 10px', borderRadius: '6px', fontSize: '12px', fontFamily: 'inherit' };
   return (
     <React.Fragment>
@@ -1550,9 +1606,10 @@ function benchApostouRows_(retencaoFaixa) {
 }
 function aggBench_(rows, sel) {
   const out = { qtd: 0, ftd: 0, d0: 0, cd1: 0, vd1: 0, cw1: 0, vw1: 0, cw2: 0, vw2: 0, cm0: 0, vm0: 0, dep: 0, saq: 0, net: 0 };
+  const canals = sel.canals || (sel.canal && sel.canal !== 'all' ? [sel.canal] : []);
   (rows || []).forEach(r => {
-    // canal específico tem precedência; senão, scope 'growth' = só mídia paga (exclui social/orgânico/afiliados)
-    if (sel.canal && sel.canal !== 'all') { if (r.canal !== sel.canal) return; }
+    // canais específicos têm precedência; senão, scope 'growth' = só mídia paga (exclui social/orgânico/afiliados)
+    if (canals.length) { if (!canals.includes(r.canal)) return; }
     else if (sel.scope === 'growth' && !isGrowthCh_(r.canal)) return;
     if (sel.faixa && sel.faixa !== 'all' && r.faixa !== sel.faixa) return;
     if (sel.from && r.date < sel.from) return;
@@ -1620,7 +1677,7 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
   const faixaOptions = (benchmark && benchmark.faixas) || FAIXA_LIST;
 
   // Filtros persistidos por aba (canal/escopo/faixa/modo sobrevivem a refresh + troca de aba).
-  const [canal, setCanal] = usePersistedState(`rvops:${pkey}:canal`, 'all');
+  const [canals, setCanals] = usePersistedState(`rvops:${pkey}:canals`, []);    // [] = Todos (cai no escopo)
   const [scope, setScope] = usePersistedState(`rvops:${pkey}:scope`, 'all');   // 'all' (Total Casa) | 'growth' (só mídia paga)
   const [faixa, setFaixa] = usePersistedState(`rvops:${pkey}:faixa`, 'all');
   const [mode, setMode] = usePersistedState(`rvops:${pkey}:mode`, 'qtd');       // 'qtd' (% redepositou) | 'val' (% sobre D0)
@@ -1642,10 +1699,10 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
     else { setHouseFrom(houseMax.slice(0, 7) + '-01'); setHouseTo(houseMax); }
   } }, [houseMin, houseMax]);
 
-  const aptAgg = aggBench_(aptRows, { canal, scope, faixa, from: aptFrom, to: aptTo });
+  const aptAgg = aggBench_(aptRows, { canals, scope, faixa, from: aptFrom, to: aptTo });
   const apt = benchMetrics_(aptAgg, mode);
   const houses = houseOrder.map(h => {
-    const agg = aggBench_(houseRowsMap[h], { canal, scope, faixa, from: houseFrom, to: houseTo });
+    const agg = aggBench_(houseRowsMap[h], { canals, scope, faixa, from: houseFrom, to: houseTo });
     return {
       key: h,
       label: (benchmark && benchmark.houses && benchmark.houses[h] && benchmark.houses[h].label) || h,
@@ -1653,7 +1710,7 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
     };
   });
   // Rótulo do escopo de canal p/ os títulos das tabelas
-  const canalLabel = canal !== 'all' ? canal : (scope === 'growth' ? 'Canais Growth' : 'todos os canais');
+  const canalLabel = canals.length ? (canals.length <= 2 ? canals.join(' + ') : canals.length + ' canais') : (scope === 'growth' ? 'Canais Growth' : 'todos os canais');
   // Título da 2ª tabela: 1 casa só = o nome dela; várias = "Demais Casas"
   const housesLabel = houseOrder.length === 1 ? (houses[0] && houses[0].label || 'Casa') : 'Demais Casas';
 
@@ -1728,10 +1785,7 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
       <div className="slicer" style={{ flexWrap: 'wrap', rowGap: '8px' }}>
         <div className="slicer-group">
           <label style={lblStyle}>Canal</label>
-          <select value={canal} onChange={e => setCanal(e.target.value)} style={selStyle}>
-            <option value="all">Todos</option>
-            {canalOptions.map((c, i) => <option key={i} value={c}>{c}</option>)}
-          </select>
+          <ChannelMultiSelect options={canalOptions} selected={canals} onChange={setCanals} />
           <div className="slicer-presets">
             <button className={`preset-btn ${scope === 'growth' ? 'active' : ''}`} onClick={() => setScope('growth')} title="Universo = só mídia paga (Meta, Google, TikTok, Kwai, Programática). Define o que 'Todos' agrega.">Growth</button>
             <button className={`preset-btn ${scope === 'all' ? 'active' : ''}`} onClick={() => setScope('all')} title="Universo = casa toda.">Total Casa</button>
@@ -1896,10 +1950,10 @@ function fmtBR_(iso) {
 function sumBy_(list, f) { return (list || []).reduce((a, c) => a + (f(c) || 0), 0); }
 
 function deriveMockM_(M, filter) {
-  if (!filter.channel && filter.scope !== 'growth') return M;
-  const pick = (list, isPaid) => filter.channel
-    ? list.filter(c => c.channel === filter.channel)
-    : list.filter(c => isGrowthCh_(c.channel));
+  const selCh = chList_(filter);
+  if (!selCh.length && filter.scope !== 'growth') return M;
+  const inSel = selCh.length ? (c) => selCh.includes(c.channel) : (c) => isGrowthCh_(c.channel);
+  const pick = (list) => list.filter(inSel);
 
   const ch = pick(MOCK_CHANNELS, c => c.spend != null);
   const gg = pick(MOCK_GGR_CHANNELS, c => c.spend != null);
@@ -1947,8 +2001,9 @@ function deriveMockM_(M, filter) {
 
 // Live: deriva os hero cards do canal/scope a partir dos componentes por canal (exato, mesma fonte do backend).
 function deriveLiveM_(M, filter, comp, retCh, depCh, bp) {
-  if ((!filter.channel && filter.scope !== 'growth') || !comp) return M; // Total da Casa: backend já setou BP
-  const inSel = (ch) => filter.channel ? ch === filter.channel : isGrowthCh_(ch);
+  const selList = chList_(filter);
+  if ((!selList.length && filter.scope !== 'growth') || !comp) return M; // Total da Casa: backend já setou BP
+  const inSel = selList.length ? (ch) => selList.includes(ch) : (ch) => isGrowthCh_(ch);
   const sel = Object.keys(comp).filter(inSel);
   const sum = (bk, key) => sel.reduce((a, ch) => {
     const c = comp[ch] && comp[ch][bk]; return a + ((c && c[key]) || 0);
@@ -1994,8 +2049,15 @@ function deriveLiveM_(M, filter, comp, retCh, depCh, bp) {
 // Aquisição + DEP M0 vêm do BP per-canal; Depósitos Totais espelha o M0 (= "same as M0") em qualquer escopo; GGR não tem BP por canal → farol off.
 function applyBpLive_(out, filter, bp) {
   if (!bp) return out;
+  const list = chList_(filter);
   let sel;
-  if (filter.channel) sel = (bp.byChannel && bp.byChannel[filter.channel]) || {};
+  if (list.length) {
+    sel = {};
+    list.forEach(ch => {
+      const b = bp.byChannel && bp.byChannel[ch];
+      if (b) ['invest','ftdAmount','depD0','ftd','depM0'].forEach(k => { if (b[k] != null) sel[k] = (sel[k] || 0) + b[k]; });
+    });
+  }
   else if (filter.scope === 'growth') sel = bp.growthAgg || {};
   else return out; // total: mantém o BP do backend
   const setM = (m, bpVal) => {
@@ -2024,11 +2086,55 @@ function applyBpLive_(out, filter, bp) {
 function selectDailyCohort_(dc, filter) {
   if (!dc) return null;
   if (dc.byChannel || dc.all || dc.growth) {
-    if (filter.channel) return (dc.byChannel && dc.byChannel[filter.channel]) || { totals: {}, rows: [] };
+    const sel = chList_(filter);
+    if (sel.length === 1) return (dc.byChannel && dc.byChannel[sel[0]]) || { totals: {}, rows: [] };
+    if (sel.length > 1) {
+      const series = sel.map(ch => dc.byChannel && dc.byChannel[ch]).filter(Boolean);
+      return series.length ? sumDailyCohorts_(series) : { totals: {}, rows: [] };
+    }
     if (filter.scope === 'growth') return dc.growth || { totals: {}, rows: [] };
     return dc.all || { totals: {}, rows: [] };
   }
   return dc; // mock antigo {totals, rows}
+}
+
+// Soma várias séries de safra diária (byChannel) por dia, recompondo as bases ADITIVAS e
+// RECALCULANDO as razões — espelha assembleDailyCohort_ do backend. Requer as bases
+// (reg/sameday/d0cnt/d1cnt/turnover/deposito) que o backend expõe a partir do CACHE_VERSION v11.
+function sumDailyCohorts_(series) {
+  const BASE = ['ftdQty','ftdAmt','d0','reg','sameday','d0cnt','freespin','turnover','deposito','bonus'];
+  const acc = {};
+  series.forEach(s => ((s && s.rows) || []).forEach(r => {
+    const t = acc[r.date] || (acc[r.date] = { date: r.date, d1n: false, w1n: false });
+    BASE.forEach(k => t[k] = (t[k] || 0) + (r[k] || 0));
+    if (r.d1 != null) { t.d1 = (t.d1 || 0) + r.d1; t.d1cnt = (t.d1cnt || 0) + (r.d1cnt || 0); t.d1n = true; }
+    if (r.w1 != null) { t.w1 = (t.w1 || 0) + r.w1; t.w1n = true; }
+  }));
+  const ratios = (t) => ({
+    date:     t.date,
+    txPass:   t.reg > 0 ? t.ftdQty / t.reg : null,
+    txPassSD: t.reg > 0 ? t.sameday / t.reg : null,
+    ftdQty:   t.ftdQty || 0, ftdAmt: t.ftdAmt || 0, d0: t.d0 || 0,
+    tktD0:    t.d0cnt > 0 ? t.d0 / t.d0cnt : null,
+    d1:       t.d1n ? t.d1 : null,
+    tktD1:    (t.d1n && t.d1cnt > 0) ? t.d1 / t.d1cnt : null,
+    retD1:    (t.d1n && t.d0 > 0) ? t.d1 / t.d0 : null,
+    w1:       t.w1n ? t.w1 : null,
+    retW1:    (t.w1n && t.d0 > 0) ? t.w1 / t.d0 : null,
+    freespin: t.freespin || 0,
+    rollover: t.deposito > 0 ? t.turnover / t.deposito : null,
+    bonus:    t.bonus || 0,
+  });
+  const dates = Object.keys(acc).sort();
+  const rows = dates.map(d => ratios(acc[d]));
+  const T = { date: null, d1n: false, w1n: false };
+  dates.forEach(d => {
+    const t = acc[d];
+    BASE.forEach(k => T[k] = (T[k] || 0) + (t[k] || 0));
+    if (t.d1n) { T.d1 = (T.d1 || 0) + (t.d1 || 0); T.d1cnt = (T.d1cnt || 0) + (t.d1cnt || 0); T.d1n = true; }
+    if (t.w1n) { T.w1 = (T.w1 || 0) + (t.w1 || 0); T.w1n = true; }
+  });
+  return { totals: ratios(T), rows };
 }
 
 const PRESETS = [
@@ -2112,8 +2218,8 @@ function App({ user, onLogout }) {
   const [pendingRange, setPendingRange] = useState(initialRange);
   const [appliedRange, setAppliedRange] = useState(initialRange);
   const [activePreset, setActivePreset] = useState('mtd');
-  // Filtro de canal: channel = canal específico · scope = 'all' (Total Casa) | 'growth' (Canais Growth)
-  const [chFilter, setChFilter] = usePersistedState('rvops:chFilter', { channel: null, scope: 'all' });
+  // Filtro de canal: channels = [] (Todos, cai no escopo) ou lista de canais · scope = 'all' (Total Casa) | 'growth' (Canais Growth)
+  const [chFilter, setChFilter] = usePersistedState('rvops:chFilter', { channels: [], scope: 'all' });
   const [state, setState] = useState({
     loading: !!ENDPOINT_URL,
     error: null,
@@ -2227,7 +2333,8 @@ function App({ user, onLogout }) {
   // Filtro client-side (modo mock e redundância no live) das tabelas por canal
   function filterByChannel(list, isPaid) {
     if (!list) return list;
-    if (chFilter.channel) return list.filter(c => c.channel === chFilter.channel);
+    const sel = chList_(chFilter);
+    if (sel.length) return list.filter(c => sel.includes(c.channel));
     if (chFilter.scope === 'growth') {
       return list.filter(c => isGrowthCh_(c.channel));
     }
@@ -2343,13 +2450,11 @@ function App({ user, onLogout }) {
         <div className="slicer-divider" />
         <div className="slicer-group">
           <label>Canal</label>
-          <select
-            value={chFilter.channel || ''}
-            onChange={e => setChFilter(f => ({ ...f, channel: e.target.value || null }))}
-          >
-            <option value="">Todos</option>
-            {channelOptions.map((c, i) => <option key={i} value={c}>{c}</option>)}
-          </select>
+          <ChannelMultiSelect
+            options={channelOptions}
+            selected={chList_(chFilter)}
+            onChange={chs => setChFilter(f => ({ ...f, channels: chs }))}
+          />
         </div>
         <div className="slicer-presets">
           <button
