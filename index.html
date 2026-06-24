@@ -98,7 +98,9 @@
     display: flex; align-items: center; gap: 14px;
     padding: 12px 32px; border-bottom: 1px solid var(--border);
     background: var(--bg); flex-wrap: wrap;
-    position: sticky; top: 65px; z-index: 9;
+    /* acima da .tabs (z-9) e .topbar (z-10): senão o painel do multiselect de CANAL,
+       preso no stacking context da .slicer, fica coberto pela barra de abas */
+    position: sticky; top: 65px; z-index: 11;
   }
   .slicer-group { display: flex; align-items: center; gap: 8px; }
   .slicer label {
