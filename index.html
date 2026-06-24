@@ -1572,13 +1572,30 @@ const M0_DEV_CURVE = {
   totalSameday:  [1.529, 1.829, 1.9825, 2.1211, 2.2125, 2.2915, 2.372, 2.4467, 2.5173, 2.5758, 2.6332, 2.6798, 2.7246, 2.7751, 2.8244, 2.8753, 2.9288, 2.9701, 3.0109, 3.0589, 3.1065, 3.1578, 3.1938, 3.236, 3.2669, 3.3016, 3.3281, 3.3556, 3.3948, 3.4326, 3.4544],
   growthSameday: [1.691, 2.0835, 2.2913, 2.4866, 2.6126, 2.7262, 2.8457, 2.9537, 3.0397, 3.1209, 3.1923, 3.255, 3.3207, 3.3929, 3.469, 3.5474, 3.6302, 3.6903, 3.7464, 3.8168, 3.8824, 3.9634, 4.0109, 4.064, 4.1022, 4.1557, 4.1935, 4.2271, 4.284, 4.3452, 4.3782],
 };
-// Curva do escopo atual: Growth puro → curva Growth; Total da Casa → curva total; canal específico
-// ainda não tem curva própria (→ null, coluna "—"). Validada p/ Total e Growth, em coorte normal e same-day.
+// Curvas POR CANAL (chave = r.canal da retfaixa, COM acento) — calendário (cal) e same-day (sd). Maio 01–24,
+// mesma metodologia das curvas de escopo (somam de volta a Total 3,24× e Growth 4,43× — reconciliado). Kwai
+// fica de fora (só 73 FTDs na janela → amostra fraca, cai pro "—"). Atualizar: Downloads/gcurve_bychannel.sql.
+const M0_DEV_CURVE_CH = {
+  'Meta': { cal: [1.5324, 1.8475, 2.0209, 2.1851, 2.2907, 2.3745, 2.463, 2.562, 2.6298, 2.7044, 2.7805, 2.8406, 2.9018, 2.9637, 3.0278, 3.0735, 3.1345, 3.1967, 3.2576, 3.3223, 3.3923, 3.4767, 3.5246, 3.5888, 3.6268, 3.6915, 3.7321, 3.773, 3.8486, 3.9275, 3.9664], sd: [1.5557, 1.8761, 2.0422, 2.2084, 2.3048, 2.3869, 2.4736, 2.5745, 2.6419, 2.7197, 2.7954, 2.8536, 2.9154, 2.9767, 3.0361, 3.0798, 3.1409, 3.2015, 3.266, 3.3357, 3.4101, 3.4999, 3.5459, 3.6093, 3.6451, 3.71, 3.7526, 3.7874, 3.8619, 3.9403, 3.9758] },
+  'Google': { cal: [2.2845, 2.9137, 3.4372, 3.779, 4.0069, 4.1942, 4.4329, 4.5698, 4.7256, 4.8179, 4.8881, 4.9702, 5.053, 5.1525, 5.2741, 5.4051, 5.5222, 5.6159, 5.6725, 5.7631, 5.8226, 5.8993, 5.965, 6.0206, 6.0923, 6.1379, 6.1828, 6.2284, 6.257, 6.3203, 6.3587], sd: [2.1702, 2.8462, 3.2338, 3.5724, 3.8261, 4.0274, 4.2817, 4.4271, 4.5874, 4.6777, 4.7511, 4.8402, 4.9265, 5.0335, 5.1711, 5.3178, 5.4329, 5.5123, 5.5679, 5.6745, 5.7314, 5.8145, 5.8767, 5.9148, 5.9746, 6.0081, 6.0423, 6.0829, 6.1076, 6.1391, 6.1658] },
+  'TikTok': { cal: [1.7822, 2.2044, 2.386, 2.535, 2.6424, 2.812, 2.9026, 3.0111, 3.09, 3.211, 3.284, 3.3413, 3.4175, 3.5134, 3.6027, 3.7987, 3.9875, 4.0368, 4.0635, 4.0945, 4.1495, 4.2023, 4.2497, 4.2955, 4.3213, 4.3625, 4.3912, 4.4209, 4.4546, 4.4928, 4.5363], sd: [1.8171, 2.2401, 2.4228, 2.5783, 2.6814, 2.8574, 2.9453, 3.0609, 3.1401, 3.2555, 3.3156, 3.3738, 3.4452, 3.5466, 3.6363, 3.8384, 4.0335, 4.0745, 4.0974, 4.1251, 4.1748, 4.2295, 4.2769, 4.3178, 4.3408, 4.3824, 4.4113, 4.4348, 4.467, 4.4993, 4.5443] },
+  'Social Media': { cal: [1.9381, 2.4014, 2.667, 2.8666, 3.0235, 3.0928, 3.1744, 3.2556, 3.3696, 3.4576, 3.5379, 3.5784, 3.6171, 3.6742, 3.7227, 3.7532, 3.7787, 3.8212, 3.8588, 3.8862, 3.9373, 3.9762, 4.015, 4.0996, 4.1421, 4.1758, 4.205, 4.2931, 4.3393, 4.369, 4.3921], sd: [1.8834, 2.3741, 2.6418, 2.8285, 2.9785, 3.0448, 3.1278, 3.2177, 3.3207, 3.4165, 3.4948, 3.5327, 3.5745, 3.6306, 3.6581, 3.6903, 3.713, 3.7505, 3.7776, 3.8084, 3.849, 3.8756, 3.9123, 4.006, 4.0429, 4.0727, 4.0995, 4.1972, 4.238, 4.2603, 4.2799] },
+  'Programática': { cal: [1.1616, 1.3107, 1.3633, 1.4136, 1.4337, 1.4746, 1.5218, 1.5463, 1.579, 1.5986, 1.6207, 1.6387, 1.6582, 1.6719, 1.6823, 1.6895, 1.705, 1.7176, 1.7255, 1.7349, 1.7441, 1.7493, 1.7529, 1.7589, 1.7671, 1.7754, 1.7818, 1.7879, 1.7943, 1.8072, 1.8166], sd: [1.1863, 1.2606, 1.3074, 1.3566, 1.3784, 1.413, 1.462, 1.4858, 1.5187, 1.5326, 1.5562, 1.5696, 1.5863, 1.5957, 1.6019, 1.6032, 1.6065, 1.6129, 1.6188, 1.6256, 1.6364, 1.6388, 1.64, 1.641, 1.6469, 1.6528, 1.6582, 1.663, 1.667, 1.6762, 1.6762] },
+  'Orgânico (sem atribuição)': { cal: [1.248, 1.3749, 1.4572, 1.5109, 1.5402, 1.575, 1.6017, 1.6295, 1.6686, 1.6997, 1.7244, 1.7459, 1.7609, 1.7809, 1.7992, 1.8194, 1.8339, 1.8534, 1.8751, 1.8953, 1.9166, 1.9309, 1.9553, 1.976, 1.9971, 2.0089, 2.0213, 2.0336, 2.0466, 2.0565, 2.0654], sd: [1.258, 1.4051, 1.4684, 1.5246, 1.5607, 1.5964, 1.6251, 1.6532, 1.6982, 1.721, 1.7565, 1.7833, 1.801, 1.822, 1.8396, 1.8572, 1.877, 1.8942, 1.9171, 1.9384, 1.9634, 1.9796, 2.0003, 2.0198, 2.0401, 2.0509, 2.0625, 2.0705, 2.0862, 2.0955, 2.103] },
+};
+// Curva aplicável a UMA linha (por r.canal). Canal(is) selecionado(s) → curva do canal (sd|cal por toggle);
+// senão a curva do escopo (Total/Growth). Retorna uma FUNÇÃO (canal)→array|null (ou null se nada se aplica).
+// Canal sem curva robusta (ex. Kwai) → null naquela linha: some do esperado sem contaminar o resto.
 function m0Curve_(chFilter, sameday) {
   const list = chList_(chFilter);
-  if (list && list.length) return null;
-  if (chFilter && chFilter.scope === 'growth') return sameday ? M0_DEV_CURVE.growthSameday : M0_DEV_CURVE.growth;
-  return sameday ? M0_DEV_CURVE.totalSameday : M0_DEV_CURVE.total;
+  if (list && list.length) {
+    const pick = (canal) => { const c = M0_DEV_CURVE_CH[canal]; return c ? ((sameday && c.sd) ? c.sd : c.cal) : null; };
+    return list.some(ch => M0_DEV_CURVE_CH[ch]) ? pick : null;   // nenhum canal selecionado com curva → coluna "—"
+  }
+  const base = (chFilter && chFilter.scope === 'growth')
+    ? (sameday ? M0_DEV_CURVE.growthSameday : M0_DEV_CURVE.growth)
+    : (sameday ? M0_DEV_CURVE.totalSameday : M0_DEV_CURVE.total);
+  return () => base;
 }
 // runway = dias do FTD (iso) até o último dia do mês-calendário dele, limitado a 0..30.
 function monthEndRunway_(iso) {
@@ -1600,7 +1617,7 @@ function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, d
   const selCh = chSelector_(chFilter);
   const selFx = (fx) => faixa === 'all' || fx === faixa;
   const keys = ['qtd','ftd','d0','cd1','vd1','cw1','vw1','cw2','vw2','cm0','vm0','ggrM0'];
-  const zero = () => { const o = {}; keys.forEach(k => o[k] = 0); o._esp = 0; o._rwMin = null; o._rwMax = null; return o; };
+  const zero = () => { const o = {}; keys.forEach(k => o[k] = 0); o._esp = 0; o._espFtd = 0; o._rwMin = null; o._rwMax = null; return o; };
   const weekly = gran === 'week';
   const by = {}, tot = zero();
   rows.forEach(r => {
@@ -1612,17 +1629,21 @@ function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, d
     // e completa só o runway que falta usando a forma da curva: realized × G(runway) ÷ G(idade atual).
     // Em mês fechado idade ≥ runway → vira o próprio realizado. Respeita junho rodar abaixo de maio.
     if (gCurve) {
-      const rw = monthEndRunway_(r.date);
-      const age = Math.max(0, Math.min(rw, dataMax ? isoDiffDays_(r.date, dataMax) : rw));
-      const realized = (r.d0 || 0) + (r.vm0 || 0);
-      const e = (gCurve[age] > 0) ? realized * gCurve[rw] / gCurve[age] : realized;
-      by[b]._esp += e; tot._esp += e;
-      [by[b], tot].forEach(o => { o._rwMin = o._rwMin == null ? rw : Math.min(o._rwMin, rw); o._rwMax = o._rwMax == null ? rw : Math.max(o._rwMax, rw); });
+      const cv = gCurve(r.canal);   // curva da linha: fixa do escopo, ou a do canal (null se o canal não tem curva)
+      if (cv) {
+        const rw = monthEndRunway_(r.date);
+        const age = Math.max(0, Math.min(rw, dataMax ? isoDiffDays_(r.date, dataMax) : rw));
+        const realized = (r.d0 || 0) + (r.vm0 || 0);
+        const e = (cv[age] > 0) ? realized * cv[rw] / cv[age] : realized;
+        by[b]._esp += e; tot._esp += e;
+        by[b]._espFtd += (r.ftd || 0); tot._espFtd += (r.ftd || 0);   // FTD$ só das linhas COM curva (denominador do esperado)
+        [by[b], tot].forEach(o => { o._rwMin = o._rwMin == null ? rw : Math.min(o._rwMin, rw); o._rwMax = o._rwMax == null ? rw : Math.max(o._rwMax, rw); });
+      }
     }
   });
   const fin = (b, label, key) => Object.assign(
     { date: label, _key: key || null, ggrM0: b.ggrM0, m0PerPlayer: b.qtd ? (b.d0 + b.vm0) / b.qtd : null,
-      m0Esp: (gCurve && b.ftd) ? b._esp / b.ftd : null, m0EspAmt: gCurve ? b._esp : null, rwMin: b._rwMin, rwMax: b._rwMax },
+      m0Esp: (b._espFtd > 0) ? b._esp / b._espFtd : null, m0EspAmt: (b._espFtd > 0) ? b._esp : null, rwMin: b._rwMin, rwMax: b._rwMax },
     benchMetrics_(b, mode));
   const ks = Object.keys(by).sort();
   return { rows: ks.map(k => fin(by[k], weekly ? weekLabel_(k) : k, k)), totals: fin(tot, 'Total', null) };
@@ -1633,7 +1654,7 @@ function RetFaixaTable({ data, dateLabel, m0Label }) {
   const mL = m0Label || 'M0';
   // Coluna "M0 Esp." = M0/FTD ESPERADO no fechamento do mês = Σ FTD$ × G(runway) ÷ FTD$ (vem pronto do
   // aggregador em r.m0Esp). G = curva histórica de desenvolvimento por escopo; runway = dias até o fim do
-  // mês. null (—) quando não há curva (canal específico, coorte 30d ou same-day).
+  // mês. null (—) na Coorte 30d ou em canal sem curva robusta (ex. Kwai). Escopo, same-day e por canal: OK.
   const espCell = (r) => {
     if (r.m0Esp == null) return <td key="esp" style={{ color: 'var(--text-muted)' }}>—</td>;
     const rw = (r.rwMin != null && r.rwMax != null) ? (r.rwMin === r.rwMax ? `${r.rwMax}` : `${r.rwMax}→${r.rwMin}`) : '—';
@@ -1674,7 +1695,7 @@ function RetFaixaTable({ data, dateLabel, m0Label }) {
         <tr>
           <th>{dateLabel || 'Data FTD'}</th><th>Qtd FTD</th><th>FTD $$</th><th>Dep D0 Med</th>
           <th>Mult D0/FTD</th><th>Mult D1/FTD</th><th>Mult W1/FTD</th><th>Mult W2/FTD</th><th>Mult {mL}/FTD</th>
-          <th title="M0/FTD esperado no fechamento, ancorado no realizado: realizado × G(runway) ÷ G(idade). G = curva histórica de desenvolvimento (maio), por escopo (Total/Growth).">M0 Esp.</th>
+          <th title="M0/FTD esperado no fechamento, ancorado no realizado: realizado × G(runway) ÷ G(idade). G = curva histórica de desenvolvimento (maio), por escopo (Total/Growth) e por canal. Canal sem curva robusta (ex. Kwai, amostra pequena) fica —.">M0 Esp.</th>
           <th style={retThL}>D1 Ret %</th><th style={retTh}>W1 Ret %</th><th style={retTh}>W2 Ret %</th><th style={retTh}>{mL} Ret %</th>
         </tr>
       </thead>
