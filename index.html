@@ -1423,16 +1423,30 @@ function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran) {
     if (!by[b]) by[b] = zero();
     keys.forEach(k => { by[b][k] += r[k] || 0; tot[k] += r[k] || 0; });
   });
-  const fin = (b, label) => Object.assign(
-    { date: label, ggrM0: b.ggrM0, m0PerPlayer: b.qtd ? (b.d0 + b.vm0) / b.qtd : null },
+  const fin = (b, label, key) => Object.assign(
+    { date: label, _key: key || null, ggrM0: b.ggrM0, m0PerPlayer: b.qtd ? (b.d0 + b.vm0) / b.qtd : null },
     benchMetrics_(b, mode));
   const ks = Object.keys(by).sort();
-  return { rows: ks.map(k => fin(by[k], weekly ? weekLabel_(k) : k)), totals: fin(tot, 'Total') };
+  return { rows: ks.map(k => fin(by[k], weekly ? weekLabel_(k) : k, k)), totals: fin(tot, 'Total', null) };
 }
 
-function RetFaixaTable({ data, dateLabel, m0Label }) {
+function RetFaixaTable({ data, dateLabel, m0Label, gran, dataMax, m0FromD1, pmLabel, cohort }) {
   const rows = data.rows || [], t = data.totals || {};
   const mL = m0Label || 'M0';
+  const weekly = gran === 'week';
+  // Coluna "Tend. M0 (D1)": projeta o M0/FTD a partir do D1 já observado = (M0/D1 do mês anterior,
+  // maduro) × D1/FTD da linha. Só na visão calendário (off na coorte 30d). Marca provisória (~ + itálico)
+  // quando o D1 da própria linha ainda está imaturo (a coorte mais nova não fechou o dia 1 no dado carregado).
+  const matureD1 = (r) => (!dataMax || !r._key) ? true : isoAddDays_(r._key, weekly ? 7 : 1) <= dataMax;
+  const projCell = (r) => {
+    if (cohort || m0FromD1 == null || r.multD1F == null) return <td key="m0p" style={{ color: 'var(--text-muted)' }}>—</td>;
+    const mature = matureD1(r);
+    const sty = mature ? { color: 'var(--accent-yellow)', fontWeight: 500 } : { color: 'var(--text-muted)', fontStyle: 'italic' };
+    const tip = mature
+      ? `Projeção de M0/FTD = (M0/D1 de ${pmLabel || 'mês anterior'} = ${fmtMultiple(m0FromD1)}) × D1/FTD desta linha. Premissa: a coorte amadurece como no mês anterior.`
+      : `D1 ainda imaturo nesta ${weekly ? 'semana' : 'data'} — a coorte mais nova não fechou o dia 1 no dado carregado (até ${dataMax ? dataMax.slice(8, 10) + '/' + dataMax.slice(5, 7) : '—'}). Projeção provisória.`;
+    return <td key="m0p" style={sty} title={tip}>{mature ? '' : '~'}{fmtMultiple(m0FromD1 * r.multD1F)}</td>;
+  };
   const dm = (s) => { if (!s || s === 'Total') return s || '—'; const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); return m ? `${m[3]}/${m[2]}` : String(s); };
   // Heatmap por coluna (vermelho→amarelo→verde, min/max das linhas) nas retenções —
   // igual à aba Safras Diárias. Total (heat=false) mantém o amarelo chapado.
@@ -1455,6 +1469,7 @@ function RetFaixaTable({ data, dateLabel, m0Label }) {
     <td key="w1f">{fmtMultiple(r.multW1F)}</td>,
     <td key="w2f">{fmtMultiple(r.multW2F)}</td>,
     <td key="m0f">{fmtMultiple(r.multM0F)}</td>,
+    projCell(r),
     <td key="r1" style={retCell(r.retD1, rD1, heat, true)}>{fmtPct(r.retD1, 1)}</td>,
     <td key="rw1" style={retCell(r.retW1, rW1, heat, false)}>{fmtPct(r.retW1, 1)}</td>,
     <td key="rw2" style={retCell(r.retW2, rW2, heat, false)}>{fmtPct(r.retW2, 1)}</td>,
@@ -1466,6 +1481,7 @@ function RetFaixaTable({ data, dateLabel, m0Label }) {
         <tr>
           <th>{dateLabel || 'Data FTD'}</th><th>Qtd FTD</th><th>FTD $$</th><th>Dep D0 Med</th>
           <th>Mult D0/FTD</th><th>Mult D1/FTD</th><th>Mult W1/FTD</th><th>Mult W2/FTD</th><th>Mult {mL}/FTD</th>
+          <th title="Tendência do M0/FTD projetada pelo D1 já observado: (M0/D1 do mês anterior) × D1/FTD da linha. ~ = D1 ainda imaturo na linha.">Tend. M0 (D1)</th>
           <th style={retThL}>D1 Ret %</th><th style={retTh}>W1 Ret %</th><th style={retTh}>W2 Ret %</th><th style={retTh}>{mL} Ret %</th>
         </tr>
       </thead>
@@ -1495,6 +1511,7 @@ function RetFaixaPrevRow({ row, label, loading, error }) {
         <tr>
           <th>Mês</th><th>Qtd FTD</th><th>FTD $$</th><th>Dep D0 Med</th>
           <th>Mult D0/FTD</th><th>Mult D1/FTD</th><th>Mult W1/FTD</th><th>Mult W2/FTD</th><th>Mult M0/FTD</th>
+          <th title="Mês base da projeção — a Tend. M0 das semanas é derivada do M0/D1 deste mês.">Tend. M0 (D1)</th>
           <th style={retThL}>D1 Ret %</th><th style={retTh}>W1 Ret %</th><th style={retTh}>W2 Ret %</th><th style={retTh}>M0 Ret %</th>
         </tr>
       </thead>
@@ -1510,11 +1527,12 @@ function RetFaixaPrevRow({ row, label, loading, error }) {
             <td key="w1f">{fmtMultiple(r.multW1F)}</td>,
             <td key="w2f">{fmtMultiple(r.multW2F)}</td>,
             <td key="m0f">{fmtMultiple(r.multM0F)}</td>,
+            <td key="m0p" style={{ color: 'var(--text-muted)' }} title="Mês base da projeção (a Tend. M0 das semanas vem do M0/D1 deste mês).">—</td>,
             <td key="r1" style={flatL}>{fmtPct(r.retD1, 1)}</td>,
             <td key="rw1" style={flat}>{fmtPct(r.retW1, 1)}</td>,
             <td key="rw2" style={flat}>{fmtPct(r.retW2, 1)}</td>,
             <td key="rm0" style={flat}>{fmtPct(r.retM0, 1)}</td>,
-          ] : <td colSpan={12} style={{ color: 'var(--text-muted)' }}>{error ? 'erro ao carregar' : (loading ? 'carregando…' : '—')}</td>}
+          ] : <td colSpan={13} style={{ color: 'var(--text-muted)' }}>{error ? 'erro ao carregar' : (loading ? 'carregando…' : '—')}</td>}
         </tr>
       </tbody>
     </table></div>
@@ -1580,6 +1598,8 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   const t = data.totals || {};
   // Mês anterior fechado: mesmo recorte (canal/faixa/modo) num único agregado (.totals).
   const pmRow = pmFetch.rows ? aggRetFaixaBench_(pmFetch.rows, chFilter, faixa, mode, 'day').totals : null;
+  // Fator da coluna "Tend. M0 (D1)": M0/D1 do mês anterior (maduro). × D1/FTD da linha = M0 projetado.
+  const m0FromD1 = (pmRow && pmRow.multD1F) ? pmRow.multM0F / pmRow.multD1F : null;
   // CAC do escopo (independe da faixa — investimento não é segmentado por faixa de FTD): Σspend ÷ Σ FTD qtd.
   let sScope = 0, qScope = 0;
   (channels || []).forEach(c => { if (c.spend != null) { sScope += c.spend; qScope += (c.ftdQty || 0); } });
@@ -1663,10 +1683,11 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
       </div>
       <div className="support">
         <div className="support-title">Safra por {gran === 'week' ? 'Semana' : 'Dia'} · {chLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}{sameday ? ' · same-day' : ''}{coSuffix}{loadingRF ? ' · carregando…' : ''}{errorRF ? ' · erro ao carregar' : ''}</div>
-        <RetFaixaTable data={data} dateLabel={gran === 'week' ? 'Semana' : 'Data FTD'} m0Label={cohort ? '30d' : 'M0'} />
+        <RetFaixaTable data={data} dateLabel={gran === 'week' ? 'Semana' : 'Data FTD'} m0Label={cohort ? '30d' : 'M0'} gran={gran} dataMax={dataMax} m0FromD1={m0FromD1} pmLabel={monthLabelPt_(pm.from)} cohort={cohort} />
         <div className="ch-note">
           Cada linha = safra de FTD daquele dia, na faixa selecionada. <strong>FTD $$</strong> = ticket médio do FTD · <strong>Dep D0 Med</strong> = depósito médio no D0.
           <strong> Mult X/FTD</strong> = depósito acumulado (incl. D0) até a janela ÷ valor do FTD: D0/FTD · (D0+dia 1)/FTD · (D0+dias 1–7)/FTD · (D0+dias 1–14)/FTD · (D0+resto do mês)/FTD.
+          <strong> Tend. M0 (D1)</strong> = projeção do M0/FTD a partir do D1 já observado: (M0/FTD ÷ D1/FTD do mês anterior) × D1/FTD da linha. <em>~</em> em itálico = D1 ainda imaturo na linha (projeção provisória). Off na visão Coorte 30d.
           <strong> D1/W1/W2/M0 Ret</strong> (<span style={{ background: 'rgba(250,204,21,0.25)', padding: '0 4px', borderRadius: '3px' }}>amarelo</span>) = retenção acumulada vs D0 — modo <strong>Valor</strong> = $ da janela ÷ D0 em % (pode passar de 100%); modo <strong>Qtd</strong> = % dos FTDs que voltaram a depositar. Canal e data seguem o slicer global do topo; <strong>Coorte Same-day</strong> = só FTDs que depositaram no mesmo dia do cadastro.
           <br /><strong>M0 Calendário</strong> = depósito até o fim do mês do FTD (visão atual). <strong>Coorte 30d</strong> = janela fixa de 30 dias corridos do FTD, mostrando só as coortes que já fecharam o ciclo (puxa o período sozinho, ~30 dias atrás) — comparação justa, independente do calendário.
         </div>
