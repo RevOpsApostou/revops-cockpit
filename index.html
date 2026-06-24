@@ -1554,10 +1554,10 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
       .then(j => { if (j.error) throw new Error(j.error); setCoFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
       .catch(e => setCoFetch({ rows: null, loading: false, error: String(e.message || e) }));
   }, [cohort, dataMax, sameday]);
-  // Linha de referência do MÊS-CALENDÁRIO ANTERIOR fechado (ex.: junho → maio). Puxa o próprio período
-  // (independe do slicer global, igual à coorte) via only=retfaixa; respeita o toggle same-day. M0 sempre
-  // calendário (mês fechado = maduro). Sem custo quando o backend já cacheou a janela.
-  const pm = React.useMemo(() => lastMonthRangeISO_(), []);
+  // Linha de referência do MÊS-CALENDÁRIO ANTERIOR ao período selecionado no slicer (jun→mai, mai→abr).
+  // Âncora = fim da janela global (winTo). Puxa o próprio período via only=retfaixa; respeita o toggle
+  // same-day. M0 sempre calendário. Sem custo quando o backend já cacheou a janela.
+  const pm = React.useMemo(() => prevMonthRangeOf_(winTo), [winTo]);
   const [pmFetch, setPmFetch] = React.useState({ rows: null, loading: false, error: null });
   React.useEffect(() => {
     if (!ENDPOINT_URL || !pm) return;
@@ -1657,9 +1657,9 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
         {heroes.map((m, i) => <Hero key={i} metric={m} />)}
       </div>
       <div className="support">
-        <div className="support-title">Mês anterior fechado · {monthLabelPt_(pm.from)} · {chLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}{sameday ? ' · same-day' : ''}{pmFetch.loading ? ' · carregando…' : ''}{pmFetch.error ? ' · erro ao carregar' : ''}</div>
+        <div className="support-title">Mês anterior · {monthLabelPt_(pm.from)} · {chLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}{sameday ? ' · same-day' : ''}{pmFetch.loading ? ' · carregando…' : ''}{pmFetch.error ? ' · erro ao carregar' : ''}</div>
         <RetFaixaPrevRow row={pmRow} label={monthLabelPt_(pm.from)} loading={pmFetch.loading} error={pmFetch.error} />
-        <div className="ch-note">Referência do último mês-calendário <strong>fechado</strong> ({monthLabelPt_(pm.from)}), com M0 já maduro, no mesmo recorte de canal/faixa/modo. <strong>Independe do slicer de data do topo</strong> e o M0 é sempre mês-calendário (não muda com o toggle Calendário/Coorte).</div>
+        <div className="ch-note">Mês-calendário <strong>anterior ao período selecionado</strong> no slicer ({monthLabelPt_(pm.from)}), agregado num único registro, no mesmo recorte de canal/faixa/modo. O M0 é sempre mês-calendário (não muda com o toggle Calendário/Coorte).</div>
       </div>
       <div className="support">
         <div className="support-title">Safra por {gran === 'week' ? 'Semana' : 'Dia'} · {chLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}{sameday ? ' · same-day' : ''}{coSuffix}{loadingRF ? ' · carregando…' : ''}{errorRF ? ' · erro ao carregar' : ''}</div>
@@ -2037,6 +2037,15 @@ function lastMonthRangeISO_() {
   const t = new Date();
   const start = new Date(t.getFullYear(), t.getMonth() - 1, 1);
   const end = new Date(t.getFullYear(), t.getMonth(), 0);
+  return { from: toLocalISO_(start), to: toLocalISO_(end) };
+}
+// Mês-calendário ANTERIOR ao mês da data `iso` (âncora = fim da janela do slicer):
+// jun→mai, mai→abr, jan→dez/ano-1. Fallback p/ o último mês fechado de hoje se sem âncora.
+function prevMonthRangeOf_(iso) {
+  if (!iso) return lastMonthRangeISO_();
+  const [y, m] = String(iso).split('-').map(Number);   // m = 1..12 (mês da janela)
+  const start = new Date(y, m - 2, 1);                  // 1º dia do mês anterior
+  const end = new Date(y, m - 1, 0);                    // dia 0 do mês da janela = último dia do anterior
   return { from: toLocalISO_(start), to: toLocalISO_(end) };
 }
 function daysAgoISO_(n) {
