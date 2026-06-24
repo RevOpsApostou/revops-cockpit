@@ -1567,14 +1567,18 @@ function isoAddDays_(iso, n) {
 const M0_DEV_CURVE = {
   total:  [1.4861, 1.7457, 1.9094, 2.0339, 2.1139, 2.1848, 2.2553, 2.32, 2.384, 2.44, 2.4888, 2.5295, 2.5681, 2.6127, 2.6583, 2.7039, 2.7493, 2.7904, 2.8274, 2.8677, 2.9094, 2.9524, 2.9887, 3.0295, 3.0613, 3.0939, 3.1189, 3.1473, 3.1823, 3.2193, 3.2418],
   growth: [1.6996, 2.0843, 2.3277, 2.5231, 2.6511, 2.7631, 2.882, 2.9865, 3.0726, 3.1528, 3.2249, 3.2877, 3.353, 3.4239, 3.5002, 3.5765, 3.6594, 3.7249, 3.7793, 3.8439, 3.9076, 3.9838, 4.0335, 4.0915, 4.1341, 4.19, 4.2289, 4.2682, 4.3267, 4.3954, 4.4333],
+  // Coorte SAME-DAY (FTD no dia do cadastro, DATE(data_cadastro,'America/Sao_Paulo')=data_ref) — maio 01–24.
+  // Total desenvolve mais que o calendário (3,45× vs 3,24×); Growth ~igual. Medida igual às de cima + cláusula same-day.
+  totalSameday:  [1.529, 1.829, 1.9825, 2.1211, 2.2125, 2.2915, 2.372, 2.4467, 2.5173, 2.5758, 2.6332, 2.6798, 2.7246, 2.7751, 2.8244, 2.8753, 2.9288, 2.9701, 3.0109, 3.0589, 3.1065, 3.1578, 3.1938, 3.236, 3.2669, 3.3016, 3.3281, 3.3556, 3.3948, 3.4326, 3.4544],
+  growthSameday: [1.691, 2.0835, 2.2913, 2.4866, 2.6126, 2.7262, 2.8457, 2.9537, 3.0397, 3.1209, 3.1923, 3.255, 3.3207, 3.3929, 3.469, 3.5474, 3.6302, 3.6903, 3.7464, 3.8168, 3.8824, 3.9634, 4.0109, 4.064, 4.1022, 4.1557, 4.1935, 4.2271, 4.284, 4.3452, 4.3782],
 };
 // Curva do escopo atual: Growth puro → curva Growth; Total da Casa → curva total; canal específico
-// ainda não tem curva própria (→ null, coluna "—"). Validada só p/ Total e Growth.
-function m0Curve_(chFilter) {
+// ainda não tem curva própria (→ null, coluna "—"). Validada p/ Total e Growth, em coorte normal e same-day.
+function m0Curve_(chFilter, sameday) {
   const list = chList_(chFilter);
   if (list && list.length) return null;
-  if (chFilter && chFilter.scope === 'growth') return M0_DEV_CURVE.growth;
-  return M0_DEV_CURVE.total;
+  if (chFilter && chFilter.scope === 'growth') return sameday ? M0_DEV_CURVE.growthSameday : M0_DEV_CURVE.growth;
+  return sameday ? M0_DEV_CURVE.totalSameday : M0_DEV_CURVE.total;
 }
 // runway = dias do FTD (iso) até o último dia do mês-calendário dele, limitado a 0..30.
 function monthEndRunway_(iso) {
@@ -1783,9 +1787,9 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   } else {
     srcRF = sameday ? (sdFetch.rows || []) : retencaoFaixa;
   }
-  // Coluna "M0 Esperado": curva G do escopo (Total/Growth; canal específico → null). Só na visão
-  // calendário, coorte normal (não 30d, não same-day) — senão runway/curva não se aplicam.
-  const gCurve = (!cohort && !sameday) ? m0Curve_(chFilter) : null;
+  // Coluna "M0 Esperado": curva G do escopo (Total/Growth; canal específico → null). Same-day usa
+  // curva própria (m0Curve_ escolhe). OFF só na Coorte 30d (janela fixa de 30d ≠ mês-calendário → runway não se aplica).
+  const gCurve = !cohort ? m0Curve_(chFilter, sameday) : null;
   const data = aggRetFaixaBench_(srcRF, chFilter, faixa, mode, gran, gCurve, dataMax);
   const t = data.totals || {};
   // Mês anterior fechado: mesmo recorte (canal/faixa/modo) num único agregado (.totals). Sem curva (já maduro).
