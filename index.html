@@ -1986,7 +1986,7 @@ const BENCH_SEL_STYLE = { background: 'var(--surface)', border: '1px solid rgba(
 
 // View genérica do Benchmark — parametrizada por houseOrder + sameday (p/ reusar na aba Same-day).
 // pkey = prefixo de persistência (filtros sobrevivem a refresh/troca de aba).
-function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, subtitle, pkey, apostouHouse, withNet }) {
+function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, subtitle, pkey, apostouHouse, withNet, defaultMode = 'qtd' }) {
   // fromBench = Apostou vem do PRÓPRIO JSON (que tem saque/net), não do BQ (aba net Apostou vs Lottu).
   // Caso contrário, Apostou puxa o período próprio (jan–jun) via modo leve only=retfaixa do BQ.
   const fromBench = !!apostouHouse;
@@ -2022,23 +2022,20 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
   const [canals, setCanals] = usePersistedState(`rvops:${pkey}:canals`, []);    // [] = Todos (cai no escopo)
   const [scope, setScope] = usePersistedState(`rvops:${pkey}:scope`, 'all');   // 'all' (Total Casa) | 'growth' (só mídia paga)
   const [faixa, setFaixa] = usePersistedState(`rvops:${pkey}:faixa`, 'all');
-  const [mode, setMode] = usePersistedState(`rvops:${pkey}:mode`, 'qtd');       // 'qtd' (% redepositou) | 'val' (% sobre D0)
-  const [cash, setCash] = usePersistedState(`rvops:${pkey}:cash`, 'liquido');   // 'bruto' (retenção) | 'liquido' (caixa net) — só withNet
+  const [mode, setMode] = usePersistedState(`rvops:${pkey}:mode`, defaultMode); // 'qtd' (% redepositou) | 'val' (% sobre D0)
+  const [cash, setCash] = usePersistedState(`rvops:${pkey}:cash`, 'bruto');     // 'bruto' (retenção) | 'liquido' (caixa net) — só withNet
   const netMode = withNet && cash === 'liquido';
   const [aptFrom, setAptFrom] = React.useState(null);
   const [aptTo, setAptTo] = React.useState(null);
   const [houseFrom, setHouseFrom] = React.useState(null);
   const [houseTo, setHouseTo] = React.useState(null);
 
-  // default das datas: aba net = span CHEIO (net é caixa de vida da safra, comparação justa no período todo);
-  // demais abas = mês mais recente (junho). Em cada lado, quando os dados chegam.
+  // default das datas: mês-calendário mais recente (MTD) em cada lado, quando os dados chegam.
   React.useEffect(() => { if (aptBounds) {
-    if (withNet) { setAptFrom(aptBounds.min); setAptTo(aptBounds.max); }
-    else { setAptFrom(aptBounds.max.slice(0, 7) + '-01'); setAptTo(aptBounds.max); }
+    setAptFrom(aptBounds.max.slice(0, 7) + '-01'); setAptTo(aptBounds.max);
   } }, [aptBounds]);
   React.useEffect(() => { if (houseMin && houseMax) {
-    if (withNet) { setHouseFrom(houseMin); setHouseTo(houseMax); }
-    else { setHouseFrom(houseMax.slice(0, 7) + '-01'); setHouseTo(houseMax); }
+    setHouseFrom(houseMax.slice(0, 7) + '-01'); setHouseTo(houseMax);
   } }, [houseMin, houseMax]);
 
   const aptAgg = aggBench_(aptRows, { canals, scope, faixa, from: aptFrom, to: aptTo });
@@ -2233,8 +2230,8 @@ function BenchmarkTab({ retencaoFaixa, benchmark }) {
 // planilhas (Apostou do CSV "Base FTD Com saques", pq o BQ não tem saque/net). Substituiu a Same-day.
 function NetBenchTab({ benchmarkNet }) {
   return <BenchmarkView benchmark={benchmarkNet}
-    apostouHouse="apostou" houseOrder={['lottu']} sameday={false} withNet={true} pkey="netbench"
-    title="Apostou vs Lottu"
+    apostouHouse="apostou" houseOrder={['lottu']} sameday={false} withNet={true} pkey="benchsd" defaultMode="val"
+    title="Benchmark Sameday"
     subtitle="Ticket de FTD, depósito e CAIXA LÍQUIDO (depósito − saque) por faixa e canal — slicer Bruto/Líquido" />;
 }
 
@@ -2247,7 +2244,7 @@ const TABS = [
   { id: 'depositos', label: 'Depósitos', component: TabDepositos },
   { id: 'apostas', label: 'Turnover', component: TabApostas },
   { id: 'benchmark', label: 'Benchmark', component: BenchmarkTab },
-  { id: 'sameday', label: 'Apostou vs Lottu', component: NetBenchTab },
+  { id: 'sameday', label: 'Benchmark Sameday', component: NetBenchTab },
 ];
 
 // ============================================================
