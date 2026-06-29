@@ -657,13 +657,17 @@ const fmtVal = (n, fmt) => {
 const BP_FAROL_ON = true;
 
 function Hero({ metric }) {
+  // Atingimento vs BP: maior=melhor → ACT/BP; custo (menor=melhor, ex. FreeSpins/Bonif) → BP/ACT.
+  const lb = !!metric.lowerBetter;
+  const attain = (v) => (v == null || metric.bp == null || metric.bp === 0 || (lb && v === 0)) ? null
+    : (lb ? metric.bp / v : v / metric.bp);
   // Farol off enquanto BP pausado; ACT negativo (dado corrompido) também esconde.
-  const pct = (!BP_FAROL_ON || (metric.act != null && metric.act < 0)) ? null : metric.pctBp;
+  const pct = (!BP_FAROL_ON || (metric.act != null && metric.act < 0)) ? null : attain(metric.act);
   const farol = farolFromPct(pct);
   const deltaM1 = (metric.m1 != null && metric.act != null && metric.m1 !== 0)
     ? (metric.act - metric.m1) / metric.m1 : null;
-  // Trend = projeção de fechamento (já calculada no TabFarol p/ métricas aditivas). % = projeção ÷ BP cheio do mês.
-  const trendPct = (BP_FAROL_ON && metric.trend != null && metric.bp) ? metric.trend / metric.bp : null;
+  // Trend = projeção de fechamento. % = atingimento da projeção vs BP cheio do mês (mesma direção do card).
+  const trendPct = (BP_FAROL_ON && metric.trend != null) ? attain(metric.trend) : null;
   const trendFarol = farolFromPct(trendPct);
   return (
     <div className="hero">
@@ -2285,8 +2289,8 @@ function monthCloseMult_(range) {
 }
 
 // Reaproveita os cards do M (backend) + as métricas derivadas de buildFarolMetrics_ (farol).
-// Trend (projeção de fechamento) só vale p/ métricas ADITIVAS de volume (Investimento, DEP M0, Depósitos
-// Totais, GGR). Razões (ROAS, CAC, Tkt, retenção, rollover, %/Dep) não projetam por run-rate → sem trend.
+// Trend (projeção de fechamento): volumes ADITIVOS (Investimento, FTD, DEP M0, Depósitos, GGR) via run-rate;
+// ROAS FTD e Rollover via razão dos COMPONENTES projetados. Demais razões (CAC, Tkt, retenção, %/Dep) sem trend.
 // Multiplicador = ggrTrend/ggr do backend (mesma base do card "Close Trend GGR"), com fallback pra janela.
 function TabFarol({ M, farol, range }) {
   const f = farol || {};
@@ -2294,12 +2298,18 @@ function TabFarol({ M, farol, range }) {
   const tf = mult == null ? null
     : (M.ggr && M.ggr.act && M.ggrTrend && M.ggrTrend.act != null && M.ggr.act !== 0)
       ? M.ggrTrend.act / M.ggr.act : mult;
-  const withTrend = (m) => (m && tf != null && m.act != null) ? { ...m, trend: m.act * tf } : m;
+  const proj = (m) => (m && tf != null && m.act != null) ? m.act * tf : null;   // valor projetado de fechamento
+  const withTrend = (m) => { const t = proj(m); return (m && t != null) ? { ...m, trend: t } : m; };
+  // Razões: trend pela ROAS/rollover REAL dos componentes projetados (não run-rate da razão).
+  // ROAS FTD = FTD projetado ÷ Investimento projetado · Rollover = Turnover projetado ÷ Depósitos projetado.
+  const withRatioTrend = (m, numProj, denProj) => (m && numProj != null && denProj) ? { ...m, trend: numProj / denProj } : m;
+  const roasFtdCard  = withRatioTrend(M.roasFtd, proj(M.ftdAmount), proj(M.invest));
+  const rolloverCard = withRatioTrend(M.rollover, proj(M.turnover), proj(M.depTotal));
   const groups = [
-    { title: 'Aquisição', cards: [withTrend(M.invest), M.roasFtd, f.roasDepD0, f.cac, f.ticketFtd] },
+    { title: 'Aquisição', cards: [withTrend(M.invest), withTrend(M.ftdAmount), roasFtdCard, f.roasDepD0, f.cac, f.ticketFtd] },
     { title: 'Depósito M0', cards: [withTrend(M.depM0Total), f.roasDepM0] },
     { title: 'Retenção', cards: [M.retM0M1, M.retM1M2, M.retM3plus] },
-    { title: 'Volume & GGR', cards: [withTrend(M.depTotal), withTrend(M.ggr), M.ggrPerDep, M.rollover, f.freespinDep, f.bonusDep] },
+    { title: 'Volume & GGR', cards: [withTrend(M.depTotal), withTrend(M.ggr), M.ggrPerDep, rolloverCard, f.freespinDep, f.bonusDep] },
   ];
   return (
     <React.Fragment>
@@ -2512,17 +2522,19 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter) {
   const B = {};
   Object.keys(byCh).forEach(ch => { if (inSel(ch)) ['invest','ftdAmount','depD0','depM0','ftd'].forEach(k => { if (byCh[ch][k] != null) B[k] = (B[k] || 0) + byCh[ch][k]; }); });
   const div = (a, b) => (a != null && b) ? a / b : null;
-  const mk = (label, fmt, act, bpv, m1) => ({ label, fmt, act: act == null ? null : act, m1: m1 == null ? null : m1,
+  const mk = (label, fmt, act, bpv, m1, lowerBetter) => ({ label, fmt, act: act == null ? null : act, m1: m1 == null ? null : m1,
     bp: (bpv != null && isFinite(bpv) && bpv !== 0) ? bpv : null,
-    pctBp: (bpv && act != null) ? act / bpv : null });
+    pctBp: (bpv && act != null) ? act / bpv : null,
+    lowerBetter: !!lowerBetter });
   const inv = M.invest || {}, fa = M.ftdAmount || {}, dt = M.depTotal || {}, dm0 = M.depM0Total || {};
   return {
     cac:         mk('CAC', 'brl', div(inv.act, ftdQtyM), div(B.invest, B.ftd), div(inv.m1, ftdQtyL)),
     ticketFtd:   mk('Tkt Médio FTD', 'brl', div(fa.act, ftdQtyM), div(B.ftdAmount, B.ftd), div(fa.m1, ftdQtyL)),
     roasDepD0:   mk('ROAS Dep D0', 'multiple', div(depD0M, inv.act), div(B.depD0, B.invest), null),
     roasDepM0:   mk('ROAS Dep M0', 'multiple', div(dm0.act, inv.act), div(B.depM0, B.invest), div(dm0.m1, inv.m1)),
-    freespinDep: mk('FreeSpins / Dep', 'pct', div(fs, dt.act), null, null),
-    bonusDep:    mk('Bonificação / Dep', 'pct', div(bn, dt.act), null, null),
+    // FreeSpins/Bonif = custos (menor=melhor). BP plano: meta fixa (flat) de % sobre depósitos. Sem trend (pedido do Luis).
+    freespinDep: mk('FreeSpins / Dep', 'pct', div(fs, dt.act), 0.02, null, true),
+    bonusDep:    mk('Bonificação / Dep', 'pct', div(bn, dt.act), 0.028, null, true),
   };
 }
 
