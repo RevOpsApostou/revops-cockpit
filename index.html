@@ -1977,12 +1977,18 @@ function benchHouseRows_(bench, hkey) {
 }
 // retencaoFaixa (Apostou, diária) -> mesmo shape, mantendo o dia. ggrM0 = p/ ROAS GGR na aba Ret. Faixa.
 function benchApostouRows_(retencaoFaixa) {
-  return (retencaoFaixa || []).map(r => ({
-    date: String(r.date), canal: r.canal, faixa: r.faixa,
-    qtd: r.qtdFtds || 0, ftd: r.ftdTotal || 0, d0: r.depD0 || 0,
-    cd1: r.cntD1 || 0, vd1: r.valD1 || 0, cw1: r.cntW1 || 0, vw1: r.valW1 || 0, cw2: r.cntW2 || 0, vw2: r.valW2 || 0, cm0: r.cntM0 || 0, vm0: r.valM0 || 0,
-    ggrM0: r.ggrM0 || 0,
-  }));
+  return (retencaoFaixa || []).map(r => {
+    // Caixa LÍQUIDO da safra (mesma base "totais da safra" da Lottu): Σ depósitos − Σ saques OBSERVADOS
+    // (todo o histórico da coorte, não a janela M0). Vem do BQ via retfaixa (depTot/saqTot).
+    const dep = r.depTot || 0, saq = r.saqTot || 0;
+    return {
+      date: String(r.date), canal: r.canal, faixa: r.faixa,
+      qtd: r.qtdFtds || 0, ftd: r.ftdTotal || 0, d0: r.depD0 || 0,
+      cd1: r.cntD1 || 0, vd1: r.valD1 || 0, cw1: r.cntW1 || 0, vw1: r.valW1 || 0, cw2: r.cntW2 || 0, vw2: r.valW2 || 0, cm0: r.cntM0 || 0, vm0: r.valM0 || 0,
+      ggrM0: r.ggrM0 || 0,
+      dep, saq, net: dep - saq,
+    };
+  });
 }
 function aggBench_(rows, sel) {
   const out = { qtd: 0, ftd: 0, d0: 0, cd1: 0, vd1: 0, cw1: 0, vw1: 0, cw2: 0, vw2: 0, cm0: 0, vm0: 0, dep: 0, saq: 0, net: 0 };
@@ -2239,7 +2245,7 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
           {netMode ? (
             <React.Fragment>
               <strong>Modo LÍQUIDO (caixa da safra).</strong> <strong>Depósito</strong> = Σ depósito da safra · <strong>Net</strong> = depósito − saque (net_cash) = dinheiro que ficou · <strong>Net/FTD</strong> = net ÷ nº de FTDs · <strong>Mult Net/FTD$</strong> = net ÷ valor depositado no FTD · <strong style={{ background: 'rgba(248,113,113,0.25)', padding: '0 4px', borderRadius: '3px' }}>Saque %</strong> = saque ÷ depósito.
-              Net/saque são <strong>totais da safra</strong> (não por janela D0/D1/W1) — por isso o modo líquido não tem a curva de retenção; troque pra <strong>Bruto</strong> p/ ver D0→M0. Os dois lados (Apostou e Lottu) vêm das planilhas faixa_diaria com saque; default = span cheio (jan–jun).
+              Net/saque são <strong>totais da safra</strong> (Σ depósitos − Σ saques observados, não por janela D0/D1/W1) — por isso o modo líquido não tem a curva de retenção; troque pra <strong>Bruto</strong> p/ ver D0→M0. <strong>Apostou</strong> vem do BQ ao vivo (mesma fonte da Ret. Faixa FTD); <strong>Lottu</strong> do Excel.
             </React.Fragment>
           ) : (
             <React.Fragment>
@@ -2247,9 +2253,9 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
               <strong> Mult X/FTD</strong> = depósito acumulado (incluindo o D0) até a janela ÷ valor do FTD: D0/FTD · (D0+dia 1)/FTD · (D0+dias 1–7)/FTD · (D0+resto do mês)/FTD.
               <strong> D1/W1/M0 Ret</strong> (colunas <span style={{ background: 'rgba(250,204,21,0.25)', padding: '0 4px', borderRadius: '3px' }}>amarelas</span>) = retenção acumulada vs D0 (D1 = dia seguinte · W1 = dias 1–7 · M0 = resto do mês do FTD).
               No modo <strong>Valor</strong> = $ depositado na janela ÷ depósito do D0 em % (exclui o D0; pode passar de 100%); no modo <strong>Qtd</strong> = % dos FTDs que voltaram a depositar.
-              {fromBench ? <span> Os dois lados vêm das planilhas faixa_diaria.</span> : <span> Apostou via BigQuery com <strong>período próprio</strong> (jan–jun); {housesLabel} via Excel estático.</span>}
+              {fromBench ? <span> Os dois lados vêm das planilhas faixa_diaria.</span> : <span> <strong>Apostou via BigQuery ao vivo</strong> (mesma fonte da aba Ret. Faixa FTD); {housesLabel} via Excel.</span>}
               {sameday ? <strong> Coorte SAME-DAY: só FTDs que depositaram no mesmo dia do cadastro (dos dois lados). </strong> : ''}
-              <strong> ⚠ Ambos vêm em jan–jun por padrão (comparável).</strong> Se filtrar o mês corrente, lembre que ele ainda está imaturo (M0 = "resto do mês" trunca coortes recentes).
+              <strong> ⚠ Ambos abrem em MTD (mês corrente) por padrão</strong> — alinhe as datas dos dois lados p/ comparar a mesma janela. Mês corrente ainda imaturo (M0 = "resto do mês" trunca coortes recentes).
             </React.Fragment>
           )}
         </div>
@@ -2265,13 +2271,14 @@ function BenchmarkTab({ retencaoFaixa, benchmark }) {
     title="Benchmark entre casas"
     subtitle="Apostou vs Lottu · Bet.Bet · Donald — ticket de FTD, depósito D0 e retenção D1/W1/M0 por faixa e canal" />;
 }
-// Aba Apostou vs Lottu — faixa_diaria com SAQUE/NET; slicer Bruto/Líquido. Os DOIS lados vêm das
-// planilhas (Apostou do CSV "Base FTD Com saques", pq o BQ não tem saque/net). Substituiu a Same-day.
-function NetBenchTab({ benchmarkNet }) {
-  return <BenchmarkView benchmark={benchmarkNet}
-    apostouHouse="apostou" houseOrder={['lottu']} sameday={false} withNet={true} pkey="benchsd" defaultMode="val"
+// Aba Benchmark Sameday — Apostou vem do BQ AO VIVO (mesma fonte da aba Ret. Faixa FTD, coorte same-day);
+// só a Lottu vem do Excel (benchmark_net.json). Bruto bate com Ret. Faixa FTD; Líquido = caixa da safra
+// (Σ depósitos − Σ saques observados), saque da Apostou agora vem do retfaixa (depTot/saqTot).
+function NetBenchTab({ benchmarkNet, retencaoFaixa }) {
+  return <BenchmarkView retencaoFaixa={retencaoFaixa} benchmark={benchmarkNet}
+    houseOrder={['lottu']} sameday={true} withNet={true} pkey="benchsd" defaultMode="val"
     title="Benchmark Sameday"
-    subtitle="Ticket de FTD, depósito e CAIXA LÍQUIDO (depósito − saque) por faixa e canal — slicer Bruto/Líquido" />;
+    subtitle="Apostou (BQ ao vivo · same-day) vs Lottu (Excel) — ticket de FTD, depósito e caixa líquido (dep − saque) por faixa e canal · slicer Bruto/Líquido" />;
 }
 
 // Aba FAROL — visão consolidada: todos os indicadores em hero cards (vs M-1 e vs BP), em 4 grupos.
