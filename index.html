@@ -2528,7 +2528,7 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter) {
     lowerBetter: !!lowerBetter });
   const inv = M.invest || {}, fa = M.ftdAmount || {}, dt = M.depTotal || {}, dm0 = M.depM0Total || {};
   return {
-    cac:         mk('CAC', 'brl', div(inv.act, ftdQtyM), div(B.invest, B.ftd), div(inv.m1, ftdQtyL)),
+    cac:         mk('CAC', 'brl', div(inv.act, ftdQtyM), div(B.invest, B.ftd), div(inv.m1, ftdQtyL), true),   // custo: menor=melhor
     ticketFtd:   mk('Tkt Médio FTD', 'brl', div(fa.act, ftdQtyM), div(B.ftdAmount, B.ftd), div(fa.m1, ftdQtyL)),
     roasDepD0:   mk('ROAS Dep D0', 'multiple', div(depD0M, inv.act), div(B.depD0, B.invest), null),
     roasDepM0:   mk('ROAS Dep M0', 'multiple', div(dm0.act, inv.act), div(B.depM0, B.invest), div(dm0.m1, inv.m1)),
