@@ -1310,6 +1310,7 @@ function TabGgr({ M, ggrChannels, ggrSafra, ggrSafraRoas, ggrPayback }) {
   // ROAS de coorte da safra: invest = spend de aquisição da safra · cumGgr = GGR acumulado desde o FTD
   // (cohort view, só coortes com mídia paga rastreada). ROAS = cumGgr ÷ invest.
   const roasChans = (safraActive && ggrSafraRoas) ? (ggrSafraRoas[safra] || []) : null;
+  const roasByCh = {}; (roasChans || []).forEach(c => { roasByCh[c.channel] = c; });
   const safraInvest = roasChans ? roasChans.reduce((a, c) => a + (c.invest || 0), 0) : null;
   const safraCumGgr = roasChans ? roasChans.reduce((a, c) => a + (c.cumGgr || 0), 0) : null;
   const safraRoas = (safraInvest > 0 && safraCumGgr != null) ? safraCumGgr / safraInvest : null;
@@ -1364,16 +1365,28 @@ function TabGgr({ M, ggrChannels, ggrSafra, ggrSafraRoas, ggrPayback }) {
             <div className="support">
               <div className="support-title">GGR por Canal — Safra {safraLabel}</div>
               <div className="table-scroll"><table className="ch-table">
-                <thead><tr><th>Canal</th><th>GGR</th><th>% do total</th></tr></thead>
+                <thead><tr><th>Canal</th><th>GGR</th><th>% do total</th><th>Investimento</th><th>GGR acum.</th><th>ROAS GGR</th></tr></thead>
                 <tbody>
-                  {safraChans.map((c, i) => (
-                    <tr key={i}>
-                      <td className="ch-name">{c.channel}</td>
-                      <td>{fmtBRL(c.ggr)}</td>
-                      <td>{safraGgr > 0 ? fmtPct((c.ggr || 0) / safraGgr) : '—'}</td>
-                    </tr>
-                  ))}
-                  <tr className="ch-total"><td>Total</td><td>{fmtBRL(safraGgr)}</td><td>100%</td></tr>
+                  {safraChans.map((c, i) => {
+                    const rc = roasByCh[c.channel];
+                    const roas = (rc && rc.invest > 0) ? rc.cumGgr / rc.invest : null;
+                    return (
+                      <tr key={i}>
+                        <td className="ch-name">{c.channel}</td>
+                        <td>{fmtBRL(c.ggr)}</td>
+                        <td>{safraGgr > 0 ? fmtPct((c.ggr || 0) / safraGgr) : '—'}</td>
+                        <td>{rc ? fmtBRL(rc.invest) : '—'}</td>
+                        <td>{rc ? fmtBRL(rc.cumGgr) : '—'}</td>
+                        <td>{roas != null ? fmtMultiple(roas) : '—'}</td>
+                      </tr>
+                    );
+                  })}
+                  <tr className="ch-total">
+                    <td>Total</td><td>{fmtBRL(safraGgr)}</td><td>100%</td>
+                    <td>{safraInvest != null ? fmtBRL(safraInvest) : '—'}</td>
+                    <td>{safraCumGgr != null ? fmtBRL(safraCumGgr) : '—'}</td>
+                    <td>{safraRoas != null ? fmtMultiple(safraRoas) : '—'}</td>
+                  </tr>
                 </tbody>
               </table></div>
               <div className="ch-note">
@@ -2000,13 +2013,6 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
       <div className="support">
         <div className="support-title">Safra por {gran === 'week' ? 'Semana' : 'Dia'} · {chLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}{sameday ? ' · same-day' : ''}{coSuffix}{loadingRF ? ' · carregando…' : ''}{errorRF ? ' · erro ao carregar' : ''}</div>
         <RetFaixaTable data={data} dateLabel={gran === 'week' ? 'Semana' : 'Data FTD'} m0Label={cohort ? '30d' : 'M0'} />
-        <div className="ch-note">
-          Cada linha = safra de FTD daquele dia, na faixa selecionada. <strong>FTD $$</strong> = ticket médio do FTD · <strong>Dep D0 Med</strong> = depósito médio no D0.
-          <strong> Mult X/FTD</strong> = depósito acumulado (incl. D0) até a janela ÷ valor do FTD: D0/FTD · (D0+dia 1)/FTD · (D0+dias 1–7)/FTD · (D0+dias 1–14)/FTD · (D0+resto do mês)/FTD.
-          <br /><strong>M0 Esp. — como é calculado:</strong> M0/FTD esperado no <strong>fechamento do mês</strong>, <strong>ancorado no que a safra JÁ depositou</strong>. Por dia de FTD: <strong>esperado = realizado × G(runway) ÷ G(idade)</strong> — pega o depósito real até hoje e completa só o runway que falta pela forma da curva. <strong>runway</strong> = dias do FTD até o fim do mês · <strong>idade</strong> = dias desde o FTD · <strong>G(n)</strong> = depósito acumulado ÷ FTD em <em>n</em> dias (curva histórica de maio, coortes maduras). Ancorar no realizado evita superprojetar (junho roda abaixo de maio) — em mês fechado o esperado vira o próprio realizado. Safra do fim do mês tem runway curto → múltiplo menor. <strong>G muda por escopo</strong> (Growth desenvolve mais que Total da Casa); canal específico ainda sem curva (→ —). Só na visão <strong>Calendário</strong>.
-          <strong> D1/W1/W2/M0 Ret</strong> (<span style={{ background: 'rgba(250,204,21,0.25)', padding: '0 4px', borderRadius: '3px' }}>amarelo</span>) = retenção acumulada vs D0 — modo <strong>Valor</strong> = $ da janela ÷ D0 em % (pode passar de 100%); modo <strong>Qtd</strong> = % dos FTDs que voltaram a depositar. Canal e data seguem o slicer global do topo; <strong>Coorte Same-day</strong> = só FTDs que depositaram no mesmo dia do cadastro.
-          <br /><strong>M0 Calendário</strong> = depósito até o fim do mês do FTD (visão atual). <strong>Coorte 30d</strong> = janela fixa de 30 dias corridos do FTD, mostrando só as coortes que já fecharam o ciclo (puxa o período sozinho, ~30 dias atrás) — comparação justa, independente do calendário.
-        </div>
       </div>
     </React.Fragment>
   );
