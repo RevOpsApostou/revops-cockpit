@@ -1937,6 +1937,9 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
     { label: cohort ? '30d / FTD' : 'M0 / FTD', act: t.multM0F, m1: null, bp: bpMultM0F, pctBp: pb(t.multM0F, bpMultM0F), fmt: 'multiple' },      // (D0+janela) ÷ FTD
     { label: 'FTD médio do período', act: t.ftdMedio, m1: null, bp: bpFtdMedio, pctBp: pb(t.ftdMedio, bpFtdMedio), fmt: 'brl' },
     { label: 'Payback M0 / CAC', act: paybackM0, m1: null, pctBp: null, fmt: 'multiple' },
+    // D1 / FTD = multiplicador médio PONDERADO por valor: (Σ D0 + Σ dep dia 1) ÷ Σ FTD. Sem BP (o plano
+    // não tem meta de D1), sem M-1 (igual ao card irmão M0/FTD).
+    { label: 'D1 / FTD', act: t.multD1F, m1: null, bp: null, pctBp: null, fmt: 'multiple' },
   ];
   const chLabel = chLabel_(chFilter);
   const coSuffix = cohort ? ` · coorte 30d (FTD até ${completeBefore ? completeBefore.slice(8, 10) + '/' + completeBefore.slice(5, 7) : '—'})` : '';
