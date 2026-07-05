@@ -1291,7 +1291,7 @@ function ggrByVertical_(channels, vertical) {
   });
 }
 
-function TabGgr({ M, ggrChannels, ggrSafra, ggrPayback }) {
+function TabGgr({ M, ggrChannels, ggrSafra, ggrSafraRoas, ggrPayback }) {
   const H = (ggrPayback && ggrPayback.horizonDays) || 90;
   const [ggrViewRaw, setGgrView] = usePersistedState('rvops:ggrView', 'total');
   const ggrView = (ggrViewRaw === 'casino' || ggrViewRaw === 'sportsbook') ? ggrViewRaw : 'total';
@@ -1307,6 +1307,12 @@ function TabGgr({ M, ggrChannels, ggrSafra, ggrPayback }) {
   const safraGgrM1 = safraChans ? safraChans.reduce((a, c) => a + (c.ggrM1 || 0), 0) : null;
   const totalGgr = (M.ggr && M.ggr.act) || null;
   const safraShare = (safraGgr != null && totalGgr) ? safraGgr / totalGgr : null;
+  // ROAS de coorte da safra: invest = spend de aquisição da safra · cumGgr = GGR acumulado desde o FTD
+  // (cohort view, só coortes com mídia paga rastreada). ROAS = cumGgr ÷ invest.
+  const roasChans = (safraActive && ggrSafraRoas) ? (ggrSafraRoas[safra] || []) : null;
+  const safraInvest = roasChans ? roasChans.reduce((a, c) => a + (c.invest || 0), 0) : null;
+  const safraCumGgr = roasChans ? roasChans.reduce((a, c) => a + (c.cumGgr || 0), 0) : null;
+  const safraRoas = (safraInvest > 0 && safraCumGgr != null) ? safraCumGgr / safraInvest : null;
 
   const hasVert = (ggrChannels || []).some(c => c.ggrCasino != null || c.ggrEsporte != null);
   const vLabel = ggrView === 'casino' ? 'Casino' : 'Sportsbook';
@@ -1346,6 +1352,13 @@ function TabGgr({ M, ggrChannels, ggrSafra, ggrPayback }) {
           <div className="hero-grid">
             <Hero metric={vcard('GGR ' + safraLabel, safraGgr, safraGgrM1)} />
             <Hero metric={{ act: safraShare, m1: null, bp: null, pctBp: null, fmt: 'pct', label: '% do GGR total' }} />
+            {roasChans && roasChans.length > 0 && (
+              <React.Fragment>
+                <Hero metric={{ act: safraInvest, m1: null, bp: null, pctBp: null, fmt: 'brl', label: 'Investimento · safra ' + safraLabel }} />
+                <Hero metric={{ act: safraCumGgr, m1: null, bp: null, pctBp: null, fmt: 'brl', label: 'GGR acum. · safra ' + safraLabel }} />
+                <Hero metric={{ act: safraRoas, m1: null, bp: null, pctBp: null, fmt: 'multiple', label: 'ROAS GGR · coorte' }} />
+              </React.Fragment>
+            )}
           </div>
           {safraChans && safraChans.length > 0 && (
             <div className="support">
@@ -1365,6 +1378,7 @@ function TabGgr({ M, ggrChannels, ggrSafra, ggrPayback }) {
               </table></div>
               <div className="ch-note">
                 <strong>Safra {safraLabel}</strong> = GGR (= NGR do painel) gerado nesta janela por jogadores de idade de coorte {safraDesc[safra]}. A soma M0 + M1 + M2 + M3+ = o GGR <strong>Todas</strong>. O card <strong>GGR {safraLabel}</strong> traz o vs M-1 (mesma safra, mesma janela do mês anterior).
+                {roasChans && roasChans.length > 0 && <span> <strong>Investimento</strong> = spend de aquisição da safra ({safra === 'm0' ? 'este mês' : safra === 'm1' ? 'mês passado' : safra === 'm2' ? '2 meses atrás' : '3+ meses atrás'}). <strong>ROAS GGR · coorte</strong> = <strong>GGR acum.</strong> da safra (acumulado desde o FTD, base casino+sport da cohort view) ÷ investimento. Só coortes com mídia paga rastreada (a partir de mar/2026) — por isso o M3+ cobre só as safras pagas, não as orgânicas antigas.</span>}
               </div>
             </div>
           )}
@@ -2817,6 +2831,7 @@ function App({ user, onLogout, config }) {
     retentionChannels: MOCK_RETENTION_CHANNELS,
     ggrChannels: MOCK_GGR_CHANNELS,
     ggrSafra: null,            // GGR por safra (M0/M1/M2/M3+) — live vem de payload.ggrSafra
+    ggrSafraRoas: null,        // invest + GGR acumulado por safra (cohort ROAS) — live vem de payload.ggrSafraRoas
     ggrPayback: MOCK_GGR_PAYBACK,
     dailyCohort: MOCK_DAILY_COHORT,
     retencaoFaixa: MOCK_RETENCAO_FAIXA,
@@ -2858,6 +2873,7 @@ function App({ user, onLogout, config }) {
           retentionChannels: payload.retentionChannels,
           ggrChannels: payload.ggrChannels,
           ggrSafra: payload.ggrSafra || null,
+          ggrSafraRoas: payload.ggrSafraRoas || null,
           ggrPayback: payload.ggrPayback || prev.ggrPayback,
           dailyCohort: payload.dailyCohort || prev.dailyCohort,
           retencaoFaixa: payload.retencaoFaixa || prev.retencaoFaixa,  // cai no mock até o backend mandar (igual às outras abas)
@@ -2935,6 +2951,9 @@ function App({ user, onLogout, config }) {
   const fGgrSafra = state.ggrSafra
     ? Object.keys(state.ggrSafra).reduce((o, b) => { o[b] = filterByChannel(state.ggrSafra[b], null); return o; }, {})
     : null;
+  const fGgrSafraRoas = state.ggrSafraRoas
+    ? Object.keys(state.ggrSafraRoas).reduce((o, b) => { o[b] = filterByChannel(state.ggrSafraRoas[b], null); return o; }, {})
+    : null;
   const fDepM0Channels = filterByChannel(state.depM0Channels, c => c.invest != null);
   // Depósitos do mês por canal (qtd + valor) — derivado do componentsByChannel (player_metrics).
   const depByChannelList = state.componentsByChannel
@@ -2988,7 +3007,7 @@ function App({ user, onLogout, config }) {
   React.useEffect(() => { setVisitedTabs(v => v[activeTabId] ? v : { ...v, [activeTabId]: true }); }, [activeTabId]);
   const tabProps = {
     user, M: displayM, farol: farolMetrics, channels: fChannels, bp: state.bp,
-    retentionChannels: fRetentionChannels, ggrChannels: fGgrChannels, ggrSafra: fGgrSafra, ggrPayback: state.ggrPayback,
+    retentionChannels: fRetentionChannels, ggrChannels: fGgrChannels, ggrSafra: fGgrSafra, ggrSafraRoas: fGgrSafraRoas, ggrPayback: state.ggrPayback,
     dailyCohort: selectDailyCohort_(state.dailyCohort, chFilter), retencaoFaixa: state.retencaoFaixa,
     meta: state.meta, benchmark: state.benchmark, benchmarkSameday: state.benchmarkSameday,
     benchmarkNet: state.benchmarkNet, chFilter, range: appliedRange,
