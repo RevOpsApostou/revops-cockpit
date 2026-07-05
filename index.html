@@ -1291,15 +1291,29 @@ function ggrByVertical_(channels, vertical) {
   });
 }
 
-function TabGgr({ M, ggrChannels, ggrPayback }) {
+function TabGgr({ M, ggrChannels, ggrSafra, ggrPayback }) {
   const H = (ggrPayback && ggrPayback.horizonDays) || 90;
   const [ggrViewRaw, setGgrView] = usePersistedState('rvops:ggrView', 'total');
   const ggrView = (ggrViewRaw === 'casino' || ggrViewRaw === 'sportsbook') ? ggrViewRaw : 'total';
+  // Toggle de SAFRA (idade de coorte). 'todas' = consolidado; senão filtra a aba pro bucket.
+  const [safra, setSafra] = usePersistedState('rvops:ggrSafra', 'todas');
+  const SAFRAS = [{ id: 'todas', label: 'Todas' }, { id: 'm0', label: 'M0' }, { id: 'm1', label: 'M1' }, { id: 'm2', label: 'M2' }, { id: 'm3plus', label: 'M3+' }];
+  const hasSafra = !!(ggrSafra && ggrSafra.m0);
+  const safraActive = hasSafra && safra !== 'todas';
+  const safraLabel = (SAFRAS.find(s => s.id === safra) || {}).label || '';
+  const safraDesc = { m0: 'M0 (FTD no mês)', m1: 'M1 (FTD há 1 mês)', m2: 'M2 (FTD há 2 meses)', m3plus: 'M3+ (FTD há 3+ meses)' };
+  const safraChans = safraActive ? (ggrSafra[safra] || []) : null;
+  const safraGgr = safraChans ? safraChans.reduce((a, c) => a + (c.ggr || 0), 0) : null;
+  const safraGgrM1 = safraChans ? safraChans.reduce((a, c) => a + (c.ggrM1 || 0), 0) : null;
+  const totalGgr = (M.ggr && M.ggr.act) || null;
+  const safraShare = (safraGgr != null && totalGgr) ? safraGgr / totalGgr : null;
+
   const hasVert = (ggrChannels || []).some(c => c.ggrCasino != null || c.ggrEsporte != null);
   const vLabel = ggrView === 'casino' ? 'Casino' : 'Sportsbook';
   const tblChannels = (ggrView !== 'total' && hasVert) ? ggrByVertical_(ggrChannels, ggrView) : ggrChannels;
   const vGgr = (tblChannels || []).reduce((a, c) => a + (c.ggr || 0), 0);
-  const vcard = (label, val) => ({ act: val, m1: null, bp: null, pctBp: null, fmt: 'brl', label });
+  const vcard = (label, val, m1) => ({ act: val, m1: m1 != null ? m1 : null, bp: null, pctBp: null, fmt: 'brl', label });
+
   return (
     <React.Fragment>
       <div className="tab-header">
@@ -1307,30 +1321,74 @@ function TabGgr({ M, ggrChannels, ggrPayback }) {
           <h1>Gestão de GGR</h1>
           <div className="subtitle">Receita bruta, margem e projeção de fechamento</div>
         </div>
-        {hasVert && (
-          <div className="slicer-presets">
-            <button className={`preset-btn ${ggrView === 'total' ? 'active' : ''}`} onClick={() => setGgrView('total')} title="GGR consolidado (= o GGR do painel).">Total</button>
-            <button className={`preset-btn ${ggrView === 'casino' ? 'active' : ''}`} onClick={() => setGgrView('casino')} title="Só Casino (líquido de freespin): GGR e NGR por canal só de casino.">Casino</button>
-            <button className={`preset-btn ${ggrView === 'sportsbook' ? 'active' : ''}`} onClick={() => setGgrView('sportsbook')} title="Só Sportsbook: GGR e NGR por canal só de esporte.">Sportsbook</button>
-          </div>
-        )}
-      </div>
-      <div className="hero-grid">
-        <Hero metric={ggrView === 'total' ? M.ggr : vcard('GGR ' + vLabel, vGgr)} />
-        <Hero metric={M.ggrPerDep} />
-        <Hero metric={M.ggrTrend} />
-      </div>
-      {ggrChannels && ggrChannels.length > 0 && (
-        <div className="support">
-          <div className="support-title">{ggrView === 'total' ? 'GGR por Canal' : `GGR por Canal — ${vLabel}`}</div>
-          <GgrChannelTable channels={tblChannels} payback={ggrPayback} />
-          <div className="ch-note">
-            <strong>NGR</strong> = GGR − bonificações (cash bonus; freespin NÃO é descontado).
-            {ggrView !== 'total' && <span> Vertical: Casino = GGR líquido de freespin · Sportsbook = GGR esporte; o bônus (não vem por vertical no BQ) é rateado pró-rata pelo GGR → casino + sportsbook = o NGR total. </span>}
-            <strong> Payback GGR</strong> = dias até o GGR (NGR) acumulado da safra cobrir o investimento (safras maduras, FTD há ≥{H} dias, horizonte {H}d).
-            <span className="ch-roas-neg">{` >${H}d`}</span> = não atingiu o payback.
-          </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
+          {hasSafra && (
+            <div className="slicer-presets">
+              {SAFRAS.map(s => (
+                <button key={s.id} className={`preset-btn ${safra === s.id ? 'active' : ''}`} onClick={() => setSafra(s.id)}
+                  title={s.id === 'todas' ? 'GGR consolidado (todas as safras).' : `Só o GGR da safra ${s.label} (${safraDesc[s.id]}).`}>
+                  {s.id === 'todas' ? s.label : 'GGR ' + s.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {hasVert && !safraActive && (
+            <div className="slicer-presets">
+              <button className={`preset-btn ${ggrView === 'total' ? 'active' : ''}`} onClick={() => setGgrView('total')} title="GGR consolidado (= o GGR do painel).">Total</button>
+              <button className={`preset-btn ${ggrView === 'casino' ? 'active' : ''}`} onClick={() => setGgrView('casino')} title="Só Casino (líquido de freespin): GGR e NGR por canal só de casino.">Casino</button>
+              <button className={`preset-btn ${ggrView === 'sportsbook' ? 'active' : ''}`} onClick={() => setGgrView('sportsbook')} title="Só Sportsbook: GGR e NGR por canal só de esporte.">Sportsbook</button>
+            </div>
+          )}
         </div>
+      </div>
+      {safraActive ? (
+        <React.Fragment>
+          <div className="hero-grid">
+            <Hero metric={vcard('GGR ' + safraLabel, safraGgr, safraGgrM1)} />
+            <Hero metric={{ act: safraShare, m1: null, bp: null, pctBp: null, fmt: 'pct', label: '% do GGR total' }} />
+          </div>
+          {safraChans && safraChans.length > 0 && (
+            <div className="support">
+              <div className="support-title">GGR por Canal — Safra {safraLabel}</div>
+              <div className="table-scroll"><table className="ch-table">
+                <thead><tr><th>Canal</th><th>GGR</th><th>% do total</th></tr></thead>
+                <tbody>
+                  {safraChans.map((c, i) => (
+                    <tr key={i}>
+                      <td className="ch-name">{c.channel}</td>
+                      <td>{fmtBRL(c.ggr)}</td>
+                      <td>{safraGgr > 0 ? fmtPct((c.ggr || 0) / safraGgr) : '—'}</td>
+                    </tr>
+                  ))}
+                  <tr className="ch-total"><td>Total</td><td>{fmtBRL(safraGgr)}</td><td>100%</td></tr>
+                </tbody>
+              </table></div>
+              <div className="ch-note">
+                <strong>Safra {safraLabel}</strong> = GGR (= NGR do painel) gerado nesta janela por jogadores de idade de coorte {safraDesc[safra]}. A soma M0 + M1 + M2 + M3+ = o GGR <strong>Todas</strong>. O card <strong>GGR {safraLabel}</strong> traz o vs M-1 (mesma safra, mesma janela do mês anterior).
+              </div>
+            </div>
+          )}
+        </React.Fragment>
+      ) : (
+        <React.Fragment>
+          <div className="hero-grid">
+            <Hero metric={ggrView === 'total' ? M.ggr : vcard('GGR ' + vLabel, vGgr)} />
+            <Hero metric={M.ggrPerDep} />
+            <Hero metric={M.ggrTrend} />
+          </div>
+          {ggrChannels && ggrChannels.length > 0 && (
+            <div className="support">
+              <div className="support-title">{ggrView === 'total' ? 'GGR por Canal' : `GGR por Canal — ${vLabel}`}</div>
+              <GgrChannelTable channels={tblChannels} payback={ggrPayback} />
+              <div className="ch-note">
+                <strong>NGR</strong> = GGR − bonificações (cash bonus; freespin NÃO é descontado).
+                {ggrView !== 'total' && <span> Vertical: Casino = GGR líquido de freespin · Sportsbook = GGR esporte; o bônus (não vem por vertical no BQ) é rateado pró-rata pelo GGR → casino + sportsbook = o NGR total. </span>}
+                <strong> Payback GGR</strong> = dias até o GGR (NGR) acumulado da safra cobrir o investimento (safras maduras, FTD há ≥{H} dias, horizonte {H}d).
+                <span className="ch-roas-neg">{` >${H}d`}</span> = não atingiu o payback.
+              </div>
+            </div>
+          )}
+        </React.Fragment>
       )}
     </React.Fragment>
   );
@@ -2761,6 +2819,7 @@ function App({ user, onLogout, config }) {
     channels: MOCK_CHANNELS,
     retentionChannels: MOCK_RETENTION_CHANNELS,
     ggrChannels: MOCK_GGR_CHANNELS,
+    ggrSafra: null,            // GGR por safra (M0/M1/M2/M3+) — live vem de payload.ggrSafra
     ggrPayback: MOCK_GGR_PAYBACK,
     dailyCohort: MOCK_DAILY_COHORT,
     retencaoFaixa: MOCK_RETENCAO_FAIXA,
@@ -2801,6 +2860,7 @@ function App({ user, onLogout, config }) {
           channels: payload.channels,
           retentionChannels: payload.retentionChannels,
           ggrChannels: payload.ggrChannels,
+          ggrSafra: payload.ggrSafra || null,
           ggrPayback: payload.ggrPayback || prev.ggrPayback,
           dailyCohort: payload.dailyCohort || prev.dailyCohort,
           retencaoFaixa: payload.retencaoFaixa || prev.retencaoFaixa,  // cai no mock até o backend mandar (igual às outras abas)
@@ -2874,6 +2934,10 @@ function App({ user, onLogout, config }) {
 
   const fChannels = filterByChannel(state.channels, c => c.spend != null);
   const fGgrChannels = filterByChannel(state.ggrChannels, c => c.spend != null);
+  // GGR por safra: filtra cada bucket pelos mesmos canais (client-side), igual às outras tabelas.
+  const fGgrSafra = state.ggrSafra
+    ? Object.keys(state.ggrSafra).reduce((o, b) => { o[b] = filterByChannel(state.ggrSafra[b], null); return o; }, {})
+    : null;
   const fDepM0Channels = filterByChannel(state.depM0Channels, c => c.invest != null);
   // Depósitos do mês por canal (qtd + valor) — derivado do componentsByChannel (player_metrics).
   const depByChannelList = state.componentsByChannel
@@ -2927,7 +2991,7 @@ function App({ user, onLogout, config }) {
   React.useEffect(() => { setVisitedTabs(v => v[activeTabId] ? v : { ...v, [activeTabId]: true }); }, [activeTabId]);
   const tabProps = {
     user, M: displayM, farol: farolMetrics, channels: fChannels, bp: state.bp,
-    retentionChannels: fRetentionChannels, ggrChannels: fGgrChannels, ggrPayback: state.ggrPayback,
+    retentionChannels: fRetentionChannels, ggrChannels: fGgrChannels, ggrSafra: fGgrSafra, ggrPayback: state.ggrPayback,
     dailyCohort: selectDailyCohort_(state.dailyCohort, chFilter), retencaoFaixa: state.retencaoFaixa,
     meta: state.meta, benchmark: state.benchmark, benchmarkSameday: state.benchmarkSameday,
     benchmarkNet: state.benchmarkNet, chFilter, range: appliedRange,
