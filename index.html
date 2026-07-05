@@ -2643,7 +2643,7 @@ const PRESETS = [
 ];
 
 // Aba Segurança (só admin) — designar quem tem acesso. Login validado no backend (doPost).
-function SegurancaTab({ user }) {
+function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
   const [users, setUsers] = React.useState(null);
   const [err, setErr] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
@@ -2702,12 +2702,47 @@ function SegurancaTab({ user }) {
         </table></div>
         <div className="ch-note">A senha é definida aqui e guardada em <strong>hash</strong> (não dá pra ler depois) — passe ao usuário por um canal seguro. Reenviar com o mesmo e-mail <strong>redefine</strong> a senha. Remover tira o acesso (sessões ativas expiram em até 6h).</div>
       </div>
+      <div className="support" style={{ marginTop: '16px' }}>
+        <div className="support-title">Visibilidade das abas</div>
+        <div className="ch-note" style={{ marginTop: 0, marginBottom: '12px' }}>
+          Desmarque uma aba para <strong>ocultá-la dos não-admins</strong>. Você (admin) continua vendo todas — as ocultas aparecem marcadas com 🚫 no menu. Vale para todos no próximo carregamento do dashboard.
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+          {(allTabs || []).map(t => {
+            const hidden = (hiddenTabs || []).indexOf(t.id) >= 0;
+            return (
+              <label
+                key={t.id}
+                title={hidden ? 'Oculta para não-admins' : 'Visível para todos'}
+                style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '7px 11px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '13px', cursor: 'pointer', background: 'var(--surface)', opacity: hidden ? 0.6 : 1 }}
+              >
+                <input type="checkbox" checked={!hidden} onChange={e => onSetTabHidden(t.id, !e.target.checked)} />
+                {t.label}
+                {hidden && <span style={{ color: 'var(--text-dim)', fontSize: '11px' }}>oculta</span>}
+              </label>
+            );
+          })}
+        </div>
+      </div>
     </React.Fragment>
   );
 }
 
-function App({ user, onLogout }) {
+function App({ user, onLogout, config }) {
   const [tabId, setTabId] = usePersistedState('rvops:tab', 'aquisicao');
+  // Visibilidade de abas (global, editável por admin). hiddenTabs = ids ocultas p/ não-admins.
+  const [hiddenTabs, setHiddenTabsState] = React.useState(() => (config && config.hiddenTabs) || []);
+  React.useEffect(() => { if (config && Array.isArray(config.hiddenTabs)) setHiddenTabsState(config.hiddenTabs); }, [config]);
+  const setTabHidden = React.useCallback((id, hide) => {
+    const session = localStorage.getItem(SESSION_KEY);
+    setHiddenTabsState(prev => {
+      const next = hide ? Array.from(new Set([...prev, id])) : prev.filter(x => x !== id);
+      apiPost_({ action: 'setHiddenTabs', session, tabs: next })
+        .then(j => { if (j && j.ok && j.config && Array.isArray(j.config.hiddenTabs)) setHiddenTabsState(j.config.hiddenTabs); else setHiddenTabsState(prev); })
+        .catch(() => setHiddenTabsState(prev));
+      return next;
+    });
+  }, []);
   const initialRange = PRESETS[0].range();
   const [pendingRange, setPendingRange] = useState(initialRange);
   const [appliedRange, setAppliedRange] = useState(initialRange);
@@ -2880,7 +2915,11 @@ function App({ user, onLogout }) {
   const isDirty = pendingRange.from !== appliedRange.from || pendingRange.to !== appliedRange.to;
 
   // Aba Segurança só aparece p/ admin. Fallback p/ 1ª aba se o tabId persistido não existir no escopo.
-  const visibleTabs = (user && user.admin) ? TABS.concat([{ id: 'seguranca', label: 'Segurança', component: SegurancaTab }]) : TABS;
+  // Admin vê TODAS as abas (ocultas marcadas no nav); não-admin não vê as abas ocultas.
+  const isAdmin = !!(user && user.admin);
+  const visibleTabs = isAdmin
+    ? TABS.concat([{ id: 'seguranca', label: 'Segurança', component: SegurancaTab }])
+    : TABS.filter(t => hiddenTabs.indexOf(t.id) < 0);
   const activeTabId = visibleTabs.find(t => t.id === tabId) ? tabId : visibleTabs[0].id;
   // Abas já visitadas ficam MONTADAS (escondidas via CSS) — não refazem fetch nem perdem estado/datas ao trocar.
   // Montagem é LAZY: só monta a aba na 1ª visita (não dispara o fetch de todas no load).
@@ -2894,6 +2933,7 @@ function App({ user, onLogout }) {
     benchmarkNet: state.benchmarkNet, chFilter, range: appliedRange,
     depM0Channels: fDepM0Channels, depByChannel: fDepByChannel, rolloverMatrix: fRolloverMatrix,
     isLive: state.isLive,
+    allTabs: TABS, hiddenTabs, onSetTabHidden: setTabHidden,   // controle de visibilidade (Segurança)
   };
 
   return (
@@ -2986,15 +3026,21 @@ function App({ user, onLogout }) {
         <button className="apply-btn" disabled={!isDirty} onClick={applyManual}>Aplicar</button>
       </div>
       <nav className="tabs">
-        {visibleTabs.map(t => (
-          <button
-            key={t.id}
-            className={`tab-btn ${tabId === t.id ? 'active' : ''}`}
-            onClick={() => setTabId(t.id)}
-          >
-            {t.label}
-          </button>
-        ))}
+        {visibleTabs.map(t => {
+          const tabHidden = isAdmin && hiddenTabs.indexOf(t.id) >= 0;
+          return (
+            <button
+              key={t.id}
+              className={`tab-btn ${tabId === t.id ? 'active' : ''}`}
+              style={tabHidden ? { opacity: 0.5 } : undefined}
+              title={tabHidden ? 'Oculta para não-admins (só você vê)' : undefined}
+              onClick={() => setTabId(t.id)}
+            >
+              {tabHidden && <span aria-hidden="true" style={{ marginRight: '4px' }}>🚫</span>}
+              {t.label}
+            </button>
+          );
+        })}
       </nav>
       <main>
         {visibleTabs.filter(t => visitedTabs[t.id] || t.id === activeTabId).map(t => {
@@ -3030,7 +3076,7 @@ function Login({ onLogin }) {
   const submit = (ev) => {
     ev.preventDefault(); setBusy(true); setErr(null);
     apiPost_({ action: 'login', email, senha })
-      .then(j => { if (j && j.ok) onLogin(j.session, j.user); else { setErr((j && j.error) || 'Falha no login'); setBusy(false); } })
+      .then(j => { if (j && j.ok) onLogin(j.session, j.user, j.config); else { setErr((j && j.error) || 'Falha no login'); setBusy(false); } })
       .catch(() => { setErr('Erro de conexão'); setBusy(false); });
   };
   return (
@@ -3052,19 +3098,20 @@ function Root() {
   const [session, setSession] = React.useState(() => localStorage.getItem(SESSION_KEY) || null);
   const [user, setUser] = React.useState(() => { try { return JSON.parse(localStorage.getItem(USER_KEY) || 'null'); } catch (e) { return null; } });
   const [checking, setChecking] = React.useState(!!session);
+  const [config, setConfig] = React.useState(null);   // { hiddenTabs: [...] } — vem do backend no me/login
 
   React.useEffect(() => {
     if (!session) { setChecking(false); return; }
     apiPost_({ action: 'me', session }).then(j => {
-      if (j && j.ok) { setUser(j.user); localStorage.setItem(USER_KEY, JSON.stringify(j.user)); }
+      if (j && j.ok) { setUser(j.user); localStorage.setItem(USER_KEY, JSON.stringify(j.user)); setConfig(j.config || { hiddenTabs: [] }); }
       else { localStorage.removeItem(SESSION_KEY); localStorage.removeItem(USER_KEY); setSession(null); setUser(null); }
       setChecking(false);
     }).catch(() => setChecking(false));
   }, []);
 
-  const onLogin = (tok, u) => {
+  const onLogin = (tok, u, cfg) => {
     localStorage.setItem(SESSION_KEY, tok); localStorage.setItem(USER_KEY, JSON.stringify(u));
-    setSession(tok); setUser(u);
+    setSession(tok); setUser(u); setConfig(cfg || { hiddenTabs: [] });
   };
   const onLogout = () => {
     const tok = localStorage.getItem(SESSION_KEY);
@@ -3076,7 +3123,7 @@ function Root() {
   // Modo dev (sem ENDPOINT_URL) não exige login.
   if (ENDPOINT_URL && !session) return <Login onLogin={onLogin} />;
   if (ENDPOINT_URL && checking) return <div className="login-wrap"><div className="login-card"><div className="login-sub">Verificando sessão…</div></div></div>;
-  return <App user={user} onLogout={onLogout} />;
+  return <App user={user} onLogout={onLogout} config={config} />;
 }
 
 ReactDOM.createRoot(document.getElementById('app')).render(<Root />);
