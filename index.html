@@ -1156,6 +1156,136 @@ function FtdBridge({ channels, bp }) {
   );
 }
 
+// Waterfall de variância do multiplicador M0/FTD vs BP — explica, do BP → Realizado, quanto cada
+// CANAL (default) ou FAIXA de FTD contribui pra diferença do múltiplo ponderado por FTD$.
+//   contribuição_i = n_act_i/ΣFTD$_act − n_bp_i/ΣFTD$_bp   (n = M0 = d0+vm0)
+// Canal usa BP per-canal (bp.byChannel) + balde "Outros" (resíduo: não-growth + canais sem plano).
+// Faixa não tem BP próprio → baseline = BP geral: contrib_faixa = peso_FTD$ × (mult_faixa − BP geral).
+// Ambos somam exatamente (Realizado − BP). Usa a base calendário/todas-faixas (não o same-day/coorte
+// da tabela) p/ comparação válida com o plano; segue o escopo Growth/Total do slicer.
+function MultBridge({ retencaoFaixa, chFilter, bp, bpScope }) {
+  const [dim, setDim] = usePersistedState('rvops:multBridgeDim', 'canal');
+  const [axis, setAxis] = React.useState('zoom');
+  const bpMult = (bpScope && bpScope.ftdAmount > 0 && bpScope.m0 != null) ? bpScope.m0 / bpScope.ftdAmount : null;
+  const bpFtd = bpScope ? bpScope.ftdAmount : 0;
+  const rows = benchApostouRows_(retencaoFaixa);
+  const selCh = chSelector_(chFilter);
+  const byKey = {};
+  let totN = 0, totF = 0;
+  (rows || []).forEach(r => {
+    if (!selCh(r.canal)) return;
+    const key = dim === 'faixa' ? r.faixa : r.canal;
+    const o = byKey[key] || (byKey[key] = { key, n: 0, f: 0 });
+    const n = (r.d0 || 0) + (r.vm0 || 0), f = (r.ftd || 0);
+    o.n += n; o.f += f; totN += n; totF += f;
+  });
+  const actMult = totF > 0 ? totN / totF : null;
+  const byCh = (bp && bp.byChannel) || {};
+  const Toggle = (
+    <span className="bridge-toggle" style={{ marginRight: 'auto' }}>
+      <button className={dim === 'canal' ? 'active' : ''} onClick={() => setDim('canal')} title="Quebra a variância por canal (usa o BP per-canal)">Canal</button>
+      <button className={dim === 'faixa' ? 'active' : ''} onClick={() => setDim('faixa')} title="Quebra por faixa de FTD (baseline = BP geral, sem meta por faixa)">Faixa</button>
+    </span>
+  );
+  if (bpMult == null || bpFtd <= 0 || actMult == null) {
+    return <div className="bridge-head">{Toggle}<span className="b-extra">Ponte indisponível — sem BP de M0/FTD neste escopo (o plano cobre Total da Casa / Growth). Escolha “Canais Growth” ou “Total Casa” no slicer.</span></div>;
+  }
+  const steps = [];
+  if (dim === 'canal') {
+    let sumBlocks = 0;
+    Object.keys(byKey).forEach(k => {
+      const o = byKey[k], b = byCh[k];
+      if (b && b.ftdAmount > 0 && b.depM0 != null) {
+        const contrib = o.n / totF - b.depM0 / bpFtd;
+        steps.push({ name: k, delta: contrib });
+        sumBlocks += contrib;
+      }
+    });
+    const outros = (actMult - bpMult) - sumBlocks;
+    if (Math.abs(outros) > 0.0005) steps.push({ name: 'Outros', delta: outros, bucket: true });
+  } else {
+    Object.keys(byKey).forEach(k => { const o = byKey[k]; steps.push({ name: fxLabel_(k), delta: (o.n - o.f * bpMult) / totF }); });
+  }
+  steps.sort((a, b) => b.delta - a.delta);
+
+  const bars = [{ kind: 'bp', name: 'BP (plano)', value: bpMult, endLevel: bpMult, lo: 0, hi: bpMult }];
+  let run = bpMult;
+  steps.forEach(s => { const next = run + s.delta; bars.push({ kind: 'step', name: s.name, delta: s.delta, bucket: s.bucket, lo: Math.min(run, next), hi: Math.max(run, next), endLevel: next }); run = next; });
+  bars.push({ kind: 'act', name: 'Realizado', value: actMult, endLevel: actMult, lo: 0, hi: actMult });
+
+  let domMin, domMax;
+  if (axis === 'zoom') {
+    const lo = Math.min.apply(null, bars.map(b => b.lo)), hi = Math.max.apply(null, bars.map(b => b.hi));
+    const pad = Math.max((hi - lo) * 0.16, hi * 0.02);
+    domMin = lo - pad; domMax = hi + pad;
+  } else {
+    const allLevels = bars.map(b => b.hi).concat(bars.map(b => b.lo)).concat([0]);
+    domMin = Math.min(0, Math.min.apply(null, allLevels));
+    domMax = Math.max.apply(null, allLevels) * 1.14;
+  }
+  const PH = 240, topPad = 44, botPad = 72, slotW = 108, barW = 60;
+  const W = bars.length * slotW, H = PH + topPad + botPad;
+  const yName = topPad + PH + 24;
+  const yv = (v) => topPad + (1 - (v - domMin) / (domMax - domMin)) * PH;
+  const cx = (i) => i * slotW + slotW / 2;
+  const fmtD = (n) => (n > 0 ? '+' : '') + fmtMultiple(n);
+  const colorOf = (b) => {
+    if (b.kind === 'bp') return { fill: 'rgba(136,136,136,.16)', stroke: 'var(--text-muted)' };
+    if (b.kind === 'act') return { fill: 'rgba(250,204,21,.16)', stroke: 'var(--accent-yellow)' };
+    if (b.bucket) return { fill: 'rgba(96,165,250,.18)', stroke: 'var(--accent)' };
+    return b.delta >= 0 ? { fill: 'rgba(74,222,128,.20)', stroke: 'var(--positive)' } : { fill: 'rgba(248,113,113,.20)', stroke: 'var(--negative)' };
+  };
+  const net = actMult - bpMult;
+  const pct = bpMult > 0 ? actMult / bpMult : null;
+  const band = farolFromPct(pct);
+  return (
+    <React.Fragment>
+      <div className="bridge-head">
+        {Toggle}
+        <span className="b-act">{fmtMultiple(actMult)}</span>
+        <span className="b-bp">vs BP {fmtMultiple(bpMult)}</span>
+        <span className={`b-delta ${band}`}>{fmtD(net)} · {fmtPct(pct)} do plano</span>
+        <span className="bridge-toggle">
+          <button className={axis === 'zoom' ? 'active' : ''} onClick={() => setAxis('zoom')} title="Amplia os degraus — eixo não começa no zero">Zoom</button>
+          <button className={axis === 'zero' ? 'active' : ''} onClick={() => setAxis('zero')} title="Eixo começa no zero — proporção real">Zero</button>
+        </span>
+      </div>
+      <div className="table-scroll">
+        <svg className="bridge-svg" viewBox={`0 0 ${W} ${H}`} width={W} style={{ width: '100%', maxWidth: W, minWidth: Math.min(W, 560), height: 'auto' }} preserveAspectRatio="xMidYMid meet">
+          <line x1={0} x2={W} y1={yv(bpMult)} y2={yv(bpMult)} stroke="var(--border-strong)" strokeWidth="1" strokeDasharray="2 4" />
+          <text x={W - 4} y={yv(bpMult) - 5} textAnchor="end" fontSize="9.5" fill="var(--text-dim)">plano</text>
+          {bars.slice(0, -1).map((b, i) => (
+            <line key={`c${i}`} x1={cx(i) + barW / 2} x2={cx(i + 1) - barW / 2} y1={yv(b.endLevel)} y2={yv(b.endLevel)} stroke="var(--text-dim)" strokeWidth="1" strokeDasharray="3 3" />
+          ))}
+          {axis === 'zero'
+            ? <line x1={0} x2={W} y1={yv(0)} y2={yv(0)} stroke="var(--border)" strokeWidth="1" />
+            : <text x={2} y={topPad + PH + 46} fontSize="10.5" fill="var(--text-dim)">eixo inicia em {fmtMultiple(domMin)} — degraus ampliados</text>}
+          {bars.map((b, i) => {
+            const col = colorOf(b);
+            const top = yv(b.hi), h = Math.max(2, (b.kind === 'step' ? yv(b.lo) : yv(domMin)) - yv(b.hi));
+            const isTotal = b.kind === 'bp' || b.kind === 'act';
+            const labelVal = isTotal ? fmtMultiple(b.value) : fmtD(b.delta);
+            return (
+              <g key={i}>
+                <rect x={cx(i) - barW / 2} y={top} width={barW} height={h} rx="2" fill={col.fill} stroke={col.stroke} strokeWidth="1.5" />
+                <text x={cx(i)} y={top - 8} textAnchor="middle" fontSize="11" fontWeight={isTotal ? 700 : 600} fill={isTotal ? 'var(--text)' : col.stroke}>{labelVal}</text>
+                <text x={cx(i)} y={yName} textAnchor="middle" fontSize="10" fill="var(--text-muted)">{b.name}</text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      <div className="ch-note">
+        <strong>Ponte de variância do multiplicador M0/FTD vs BP:</strong> parte do <strong>BP</strong> ({fmtMultiple(bpMult)}) e acumula, bloco a bloco, quanto cada <strong>{dim === 'canal' ? 'canal' : 'faixa de FTD'}</strong> puxa pra cima (verde) ou pra baixo (vermelho) até o <strong>Realizado</strong> ({fmtMultiple(actMult)}). Cada bloco = participação da {dim === 'canal' ? 'canal' : 'faixa'} no delta do múltiplo, ponderada por FTD$.
+        {dim === 'canal'
+          ? <> O balde <strong>“Outros”</strong> reúne canais sem plano de mídia (orgânico/afiliados) + o resíduo não-growth quando o escopo é Total da Casa.</>
+          : <> Faixa não tem meta própria no plano → cada faixa é medida contra o <strong>BP geral</strong> como baseline, ponderada pelo FTD$.</>}
+        {' '}Usa a base calendário / todas as faixas (independe do same-day e da faixa selecionada acima); segue o escopo Growth/Total Casa do slicer.
+      </div>
+    </React.Fragment>
+  );
+}
+
 function TabAquisicao({ M, channels, bp }) {
   return (
     <React.Fragment>
@@ -2013,6 +2143,10 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
       <div className="support">
         <div className="support-title">Safra por {gran === 'week' ? 'Semana' : 'Dia'} · {chLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}{sameday ? ' · same-day' : ''}{coSuffix}{loadingRF ? ' · carregando…' : ''}{errorRF ? ' · erro ao carregar' : ''}</div>
         <RetFaixaTable data={data} dateLabel={gran === 'week' ? 'Semana' : 'Data FTD'} m0Label={cohort ? '30d' : 'M0'} />
+      </div>
+      <div className="support">
+        <div className="support-title">Ponte de variância · Multiplicador M0/FTD: BP → Realizado (por Canal ou Faixa)</div>
+        <MultBridge retencaoFaixa={retencaoFaixa} chFilter={chFilter} bp={bp} bpScope={bpScope} />
       </div>
     </React.Fragment>
   );
