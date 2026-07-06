@@ -2313,10 +2313,8 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
           <thead>
             <tr>
               <th>Canal</th>
-              <th title="Média de D1 (redepósito do dia 1) por FTD do mês corrente (MTD): Σ val_d1 ÷ Σ FTDs, sem D0">D1/FTD</th>
-              <th title="Razão redepósito M0 ÷ redepósito D1 do mês anterior (sem D0) — o multiplicador de projeção">Mult. M0/D1</th>
-              <th title="D1/FTD × Mult. M0/D1 = depósito M0 estimado por FTD">M0 est/FTD</th>
-              <th title="M0 est/FTD × margem GGR ÷ meta ROAS GGR M0 = máximo CAC que mantém a meta">Teto CAC</th>
+              <th title="Razão redepósito M0(30d) ÷ redepósito D1 do último coorte de 30 dias fechado (sem D0) — o multiplicador de projeção">Mult. M0/D1</th>
+              <th title="D1 médio (MTD) × Mult. M0/D1 × margem GGR ÷ meta ROAS GGR M0 = máximo CAC que mantém a meta">Teto CAC</th>
               <th title="CAC realizado = Investimento ÷ FTD qtd (janela do slicer)">CAC atual</th>
               <th title="Teto CAC − CAC atual. Verde = folga p/ pagar mais; vermelho = pagando acima do teto">Folga</th>
               <th style={divCol} title="Investimento do canal (mesma fonte do Farol: tbl_performance_daily, com imposto Meta)">Investimento</th>
@@ -2330,9 +2328,7 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
             {rows.map((r, i) => (
               <tr key={i}>
                 <td className="ch-name">{r.ch}</td>
-                <td>{fmtBRL(r.ticket)}</td>
                 <td style={{ color: ORANGE, fontWeight: 600 }}>{fmtMultiple(r.mult)}</td>
-                <td>{fmtBRL(r.m0proj)}</td>
                 <td style={{ fontWeight: 700 }}>{fmtBRL(r.teto)}</td>
                 <td>{fmtBRL(r.cac)}</td>
                 <td className={r.ratio != null ? 'ch-band-' + farolFromPct(r.ratio) : ''}>{r.folga != null ? fmtBRL(r.folga) : '—'}</td>
@@ -2348,8 +2344,6 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
             <tr>
               <td>Total · Crescimento</td>
               <td>—</td>
-              <td>—</td>
-              <td>{fmtBRL(totTicketM0)}</td>
               <td style={{ fontWeight: 700 }}>{fmtBRL(totTeto)}</td>
               <td>{fmtBRL(totCac)}</td>
               <td className={totRatio != null ? 'ch-band-' + farolFromPct(totRatio) : ''}>{totFolga != null ? fmtBRL(totFolga) : '—'}</td>
