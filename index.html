@@ -1169,12 +1169,13 @@ function MultBridge({ rows: srcRows, chFilter, faixa = 'all', sameday, cohort, b
   const bpFtd = bpScope ? bpScope.ftdAmount : 0;
   const rows = benchApostouRows_(srcRows);
   const selCh = chSelector_(chFilter);
-  const faixaOne = faixa && faixa !== 'all';
+  const faixaArr = Array.isArray(faixa) ? faixa : (faixa && faixa !== 'all' ? [faixa] : []);   // [] = todas
+  const faixaLbl = faixaArr.length === 0 ? 'todas as faixas' : (faixaArr.length <= 2 ? faixaArr.map(fxLabel_).join(' + ') : faixaArr.length + ' faixas');
   const byKey = {};
   let totN = 0, totF = 0;
   (rows || []).forEach(r => {
     if (!selCh(r.canal)) return;
-    if (faixaOne && r.faixa !== faixa) return;   // segue a faixa selecionada no slicer laranja
+    if (faixaArr.length && !faixaArr.includes(r.faixa)) return;   // segue as faixas selecionadas no slicer laranja
     const key = dim === 'faixa' ? r.faixa : r.canal;
     const o = byKey[key] || (byKey[key] = { key, n: 0, f: 0 });
     const n = (r.d0 || 0) + (r.vm0 || 0), f = (r.ftd || 0);
@@ -1257,7 +1258,7 @@ function MultBridge({ rows: srcRows, chFilter, faixa = 'all', sameday, cohort, b
       </div>
       <div className="ch-note">
         <strong>Ponte de variância do multiplicador M0/FTD vs BP:</strong> parte do <strong>BP</strong> ({fmtMultiple(bpMult)}) e acumula, bloco a bloco, até o <strong>Realizado</strong> ({fmtMultiple(actMult)}). Cada bloco = <strong>M0 realizado do {dim === 'canal' ? 'canal' : 'faixa'} − o M0 que ele geraria no ritmo do plano</strong> ({fmtMultiple(bpMult)}), sobre o FTD$ total = <strong>peso × (mult. realizado − mult. do plano)</strong>. Logo: rende <strong>acima do plano → verde</strong>; <strong>abaixo → vermelho</strong> — o volume só muda o tamanho da barra, não o sinal (canal ineficiente sempre aparece vermelho). A soma dos blocos fecha exato no Realizado, sem balde “Outros”.
-        {' '}Acompanha os slicers laranja: <strong>{sameday ? 'coorte same-day' : 'todos os FTDs'}{cohort ? ' · janela 30d' : ''} · {faixa === 'all' ? 'todas as faixas' : 'faixa ' + fxLabel_(faixa)}</strong> · escopo Growth/Total Casa do topo. O <strong>BP é o plano cheio do mês</strong> (não há meta same-day nem por faixa) — a diferença de definição vira variância.
+        {' '}Acompanha os slicers laranja: <strong>{sameday ? 'coorte same-day' : 'todos os FTDs'}{cohort ? ' · janela 30d' : ''} · {faixaLbl}</strong> · escopo Growth/Total Casa do topo. O <strong>BP é o plano cheio do mês</strong> (não há meta same-day nem por faixa) — a diferença de definição vira variância.
       </div>
     </React.Fragment>
   );
@@ -1726,7 +1727,7 @@ function chSelector_(filter) {
 
 // Dropdown multiselect de canais (botão + painel de checkboxes; fecha ao clicar fora).
 // selected = array; onChange recebe o novo array. [] = "Todos" (cai no escopo Growth/Total).
-function ChannelMultiSelect({ options, selected, onChange }) {
+function ChannelMultiSelect({ options, selected, onChange, labelOf, allLabel, countNoun }) {
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef(null);
   React.useEffect(() => {
@@ -1735,9 +1736,12 @@ function ChannelMultiSelect({ options, selected, onChange }) {
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [open]);
+  const lf = labelOf || (x => x);           // rótulo de exibição (default = o próprio valor)
+  const allTxt = allLabel || 'Todos';
+  const noun = countNoun || 'canais';
   const sel = selected || [];
   const toggle = (ch) => onChange(sel.includes(ch) ? sel.filter(c => c !== ch) : [...sel, ch]);
-  const label = sel.length === 0 ? 'Todos' : (sel.length <= 2 ? sel.join(', ') : sel.length + ' canais');
+  const label = sel.length === 0 ? allTxt : (sel.length <= 2 ? sel.map(lf).join(', ') : sel.length + ' ' + noun);
   const optBtn = (on) => ({ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', textAlign: 'left', background: on ? 'rgba(250,204,21,.12)' : 'transparent', border: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: '12px', padding: '7px 10px', borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap' });
   return (
     <div ref={ref} style={{ position: 'relative' }}>
@@ -1749,14 +1753,14 @@ function ChannelMultiSelect({ options, selected, onChange }) {
         <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 50, minWidth: '200px', maxHeight: '320px', overflowY: 'auto', background: 'var(--surface)', border: '1px solid rgba(250,204,21,.45)', borderRadius: '8px', padding: '4px', boxShadow: '0 8px 24px rgba(0,0,0,.5)' }}>
           <button type="button" onClick={() => onChange([])} style={optBtn(sel.length === 0)}>
             <span style={{ width: '14px', flexShrink: 0, color: 'var(--accent-yellow)', textAlign: 'center' }}>{sel.length === 0 ? '✓' : ''}</span>
-            <span>Todos</span>
+            <span>{allTxt}</span>
           </button>
           {(options || []).map((ch, i) => {
             const on = sel.includes(ch);
             return (
               <button key={i} type="button" onClick={() => toggle(ch)} style={optBtn(on)}>
                 <span style={{ width: '14px', height: '14px', borderRadius: '3px', border: '1px solid ' + (on ? 'var(--accent-yellow)' : 'var(--border)'), background: on ? 'var(--accent-yellow)' : 'transparent', color: '#000', fontSize: '10px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{on ? '✓' : ''}</span>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{ch}</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{lf(ch)}</span>
               </button>
             );
           })}
@@ -1839,7 +1843,8 @@ function isoDiffDays_(a, b) {
 function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, dataMax, dim) {
   const rows = benchApostouRows_(retencaoFaixa);
   const selCh = chSelector_(chFilter);
-  const selFx = (fx) => faixa === 'all' || fx === faixa;
+  const faixaArr = Array.isArray(faixa) ? faixa : (faixa && faixa !== 'all' ? [faixa] : []);   // [] = todas
+  const selFx = (fx) => faixaArr.length === 0 || faixaArr.includes(fx);
   const keys = ['qtd','ftd','d0','cd1','vd1','cw1','vw1','cw2','vw2','cm0','vm0','ggrM0'];
   const zero = () => { const o = {}; keys.forEach(k => o[k] = 0); o._esp = 0; o._espFtd = 0; o._rwMin = null; o._rwMax = null; return o; };
   const weekly = gran === 'week';
@@ -1983,13 +1988,15 @@ function RetFaixaPrevRow({ row, label, loading, error }) {
 }
 
 function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
-  const [faixa, setFaixa] = React.useState('all');
+  const [faixaSel, setFaixaSel] = React.useState([]);   // multi-select de faixas de FTD; [] = todas
   const [mode, setMode] = React.useState('val');   // default Valor · 'val' (% do depósito sobre o D0) | 'qtd' (% redepositou)
   const [sameday, setSameday] = React.useState(true);   // default Same-day · só FTDs que depositaram no MESMO dia do cadastro
   const [gran, setGran] = React.useState('week');       // default Semanal · 'day' | 'week' (colapsa em médias semanais)
   const [tableDim, setTableDim] = React.useState('periodo'); // tabela de baixo: 'periodo' (por dia/semana) | 'canal' | 'faixa'
   const [view, setView] = React.useState('calendario'); // 'calendario' (M0 = fim do mês) | 'coorte' (M0 = 30 dias corridos, só coortes fechadas)
   const cohort = view === 'coorte';
+  const faixaAll = faixaSel.length === 0;
+  const faixaLabelTxt = faixaAll ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
   // Same-day puxado sob demanda (only=retfaixa&sameday=1) p/ a MESMA janela global; sem custo extra quando off.
   const [sdFetch, setSdFetch] = React.useState({ rows: null, loading: false, error: null });
   const winFrom = meta && meta.from, winTo = meta && meta.to;
@@ -2041,13 +2048,13 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   // Coluna "M0 Esperado": curva G do escopo (Total/Growth; canal específico → null). Same-day usa
   // curva própria (m0Curve_ escolhe). OFF só na Coorte 30d (janela fixa de 30d ≠ mês-calendário → runway não se aplica).
   const gCurve = !cohort ? m0Curve_(chFilter, sameday) : null;
-  const data = aggRetFaixaBench_(srcRF, chFilter, faixa, mode, gran, gCurve, dataMax);
+  const data = aggRetFaixaBench_(srcRF, chFilter, faixaSel, mode, gran, gCurve, dataMax);
   const t = data.totals || {};
   // Tabela de baixo: mesma base, reagrupada por canal/faixa quando o toggle "Ver por" não é "período".
   // Totais são idênticos (mesmo recorte filtrado) — só muda a quebra das linhas.
-  const tableData = tableDim === 'periodo' ? data : aggRetFaixaBench_(srcRF, chFilter, faixa, mode, gran, gCurve, dataMax, tableDim);
+  const tableData = tableDim === 'periodo' ? data : aggRetFaixaBench_(srcRF, chFilter, faixaSel, mode, gran, gCurve, dataMax, tableDim);
   // Mês anterior fechado: mesmo recorte (canal/faixa/modo) num único agregado (.totals). Sem curva (já maduro).
-  const pmRow = pmFetch.rows ? aggRetFaixaBench_(pmFetch.rows, chFilter, faixa, mode, 'day').totals : null;
+  const pmRow = pmFetch.rows ? aggRetFaixaBench_(pmFetch.rows, chFilter, faixaSel, mode, 'day').totals : null;
   // BP do escopo (Total/Growth/canal). Só faz sentido p/ "Todas as faixas" — o plano não tem meta
   // por faixa de FTD. M0/FTD do plano = depM0÷ftdAmount · FTD médio do plano = ftdAmount÷ftd.
   // Total da Casa usa os totais "tt" do house (M0 tt / FTD tt — inclui não-growth, bate com o ACT
@@ -2067,7 +2074,7 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
       bpScope = { m0: h.m0tt, ftdAmount: h.ftdAmountTt, ftd: h.ftdTt };
     }
   }
-  const showBp = faixa === 'all' && bpScope && !sameday && !cohort;   // sem figura de plano p/ same-day nem janela de 30d → farol off
+  const showBp = faixaAll && bpScope && !sameday && !cohort;   // sem figura de plano p/ same-day nem janela de 30d nem faixa filtrada → farol off
   const bpMultM0F  = (showBp && bpScope.ftdAmount > 0) ? bpScope.m0 / bpScope.ftdAmount : null;
   const bpFtdMedio = (showBp && bpScope.ftd > 0) ? bpScope.ftdAmount / bpScope.ftd : null;
   const pb = (act, bpv) => (bpv && act != null) ? act / bpv : null;
@@ -2092,10 +2099,7 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
         </div>
         <div className="slicer-group">
           <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Faixa FTD</label>
-          <select value={faixa} onChange={e => setFaixa(e.target.value)} style={selStyle}>
-            <option value="all">Todas</option>
-            {FAIXA_LIST.map((f, i) => <option key={i} value={f}>{fxLabel_(f)}</option>)}
-          </select>
+          <ChannelMultiSelect options={FAIXA_LIST} selected={faixaSel} onChange={setFaixaSel} labelOf={fxLabel_} allLabel="Todas" countNoun="faixas" />
           <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>Retenção</label>
           <div className="slicer-presets">
             <button className={`preset-btn ${mode === 'val' ? 'active' : ''}`} onClick={() => setMode('val')} title="Retenção por VALOR: $ depositado na janela ÷ depósito do D0 (em %, pode passar de 100%)">Valor</button>
@@ -2128,17 +2132,17 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
         {heroes.map((m, i) => <Hero key={i} metric={m} />)}
       </div>
       <div className="support">
-        <div className="support-title">Mês anterior · {monthLabelPt_(pm.from)} · {chLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}{sameday ? ' · same-day' : ''}{pmFetch.loading ? ' · carregando…' : ''}{pmFetch.error ? ' · erro ao carregar' : ''}</div>
+        <div className="support-title">Mês anterior · {monthLabelPt_(pm.from)} · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''}{pmFetch.loading ? ' · carregando…' : ''}{pmFetch.error ? ' · erro ao carregar' : ''}</div>
         <RetFaixaPrevRow row={pmRow} label={monthLabelPt_(pm.from)} loading={pmFetch.loading} error={pmFetch.error} />
         <div className="ch-note">Mês-calendário <strong>anterior ao período selecionado</strong> no slicer ({monthLabelPt_(pm.from)}), agregado num único registro, no mesmo recorte de canal/faixa/modo. O M0 é sempre mês-calendário (não muda com o toggle Calendário/Coorte).</div>
       </div>
       <div className="support">
-        <div className="support-title">Safra {tableDim === 'periodo' ? 'por ' + (gran === 'week' ? 'Semana' : 'Dia') : 'por ' + (tableDim === 'canal' ? 'Canal' : 'Faixa')} · {chLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}{sameday ? ' · same-day' : ''}{coSuffix}{loadingRF ? ' · carregando…' : ''}{errorRF ? ' · erro ao carregar' : ''}</div>
+        <div className="support-title">Safra {tableDim === 'periodo' ? 'por ' + (gran === 'week' ? 'Semana' : 'Dia') : 'por ' + (tableDim === 'canal' ? 'Canal' : 'Faixa')} · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''}{coSuffix}{loadingRF ? ' · carregando…' : ''}{errorRF ? ' · erro ao carregar' : ''}</div>
         <RetFaixaTable data={tableData} dateLabel={tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : (gran === 'week' ? 'Semana' : 'Data FTD')} m0Label={cohort ? '30d' : 'M0'} />
       </div>
       <div className="support">
-        <div className="support-title">Ponte de variância · Multiplicador {cohort ? '30d' : 'M0'}/FTD: BP → Realizado (por Canal ou Faixa){sameday ? ' · same-day' : ''}{faixa === 'all' ? '' : ' · ' + fxLabel_(faixa)}</div>
-        <MultBridge rows={srcRF} faixa={faixa} sameday={sameday} cohort={cohort} chFilter={chFilter} bp={bp} bpScope={bpScope} />
+        <div className="support-title">Ponte de variância · Multiplicador {cohort ? '30d' : 'M0'}/FTD: BP → Realizado (por Canal ou Faixa){sameday ? ' · same-day' : ''}{faixaAll ? '' : ' · ' + faixaLabelTxt}</div>
+        <MultBridge rows={srcRF} faixa={faixaSel} sameday={sameday} cohort={cohort} chFilter={chFilter} bp={bp} bpScope={bpScope} />
       </div>
     </React.Fragment>
   );
