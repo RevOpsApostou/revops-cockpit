@@ -1993,8 +1993,8 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   const [sameday, setSameday] = React.useState(true);   // default Same-day · só FTDs que depositaram no MESMO dia do cadastro
   const [gran, setGran] = React.useState('week');       // default Semanal · 'day' | 'week' (colapsa em médias semanais)
   const [tableDim, setTableDim] = React.useState('periodo'); // tabela de baixo: 'periodo' (por dia/semana) | 'canal' | 'faixa'
-  const [view, setView] = React.useState('calendario'); // 'calendario' (M0 = fim do mês) | 'coorte' (M0 = 30 dias corridos, só coortes fechadas)
-  const cohort = view === 'coorte';
+  const [cohortDays, setCohortDays] = React.useState(0); // 0 = calendário (M0 = fim do mês) | 30|60|90 = janela fixa de N dias corridos (só coortes fechadas)
+  const cohort = cohortDays > 0;
   const faixaAll = faixaSel.length === 0;
   const faixaLabelTxt = faixaAll ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
   // Same-day puxado sob demanda (only=retfaixa&sameday=1) p/ a MESMA janela global; sem custo extra quando off.
@@ -2008,21 +2008,21 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
       .then(j => { if (j.error) throw new Error(j.error); setSdFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
       .catch(e => setSdFetch({ rows: null, loading: false, error: String(e.message || e) }));
   }, [cohort, sameday, winFrom, winTo]);
-  // Cohort view: puxa o PRÓPRIO último ciclo de 30 dias FECHADO (independe do slicer global, igual ao Benchmark).
-  // Busca [dataMax-60, dataMax]; mostra só coortes com FTD <= dataMax-30 (já fecharam os 30 dias) e troca o
-  // M0 da tabela pela janela fixa de 30 dias (cntD30/valD30).
+  // Cohort view: puxa o PRÓPRIO último ciclo de N dias FECHADO (independe do slicer global, igual ao Benchmark).
+  // Busca [dataMax-(N+30), dataMax]; mostra só coortes com FTD <= dataMax-N (já fecharam os N dias) e troca o
+  // M0 da tabela pela janela fixa de N dias (cntD{N}/valD{N}). N = 30|60|90 pelo toggle.
   const dataMax = meta && meta.dataMaxDate;
-  const completeBefore = dataMax ? isoAddDays_(dataMax, -30) : null;
+  const completeBefore = (dataMax && cohort) ? isoAddDays_(dataMax, -cohortDays) : null;
   const [coFetch, setCoFetch] = React.useState({ rows: null, loading: false, error: null });
   React.useEffect(() => {
     if (!cohort || !dataMax || !ENDPOINT_URL) return;
-    const from = isoAddDays_(dataMax, -60), to = dataMax;
+    const from = isoAddDays_(dataMax, -(cohortDays + 30)), to = dataMax;
     setCoFetch(s => ({ ...s, loading: true, error: null }));
     fetch(`${ENDPOINT_URL}?${authParam_()}&from=${from}&to=${to}&only=retfaixa${sameday ? '&sameday=1' : ''}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(j => { if (j.error) throw new Error(j.error); setCoFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
       .catch(e => setCoFetch({ rows: null, loading: false, error: String(e.message || e) }));
-  }, [cohort, dataMax, sameday]);
+  }, [cohortDays, dataMax, sameday]);
   // Linha de referência do MÊS-CALENDÁRIO ANTERIOR ao período selecionado no slicer (jun→mai, mai→abr).
   // Âncora = fim da janela global (winTo). Puxa o próprio período via only=retfaixa; respeita o toggle
   // same-day. M0 sempre calendário. Sem custo quando o backend já cacheou a janela.
@@ -2040,8 +2040,8 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   let srcRF;
   if (cohort) {
     srcRF = (coFetch.rows || [])
-      .filter(r => completeBefore && r.date <= completeBefore)     // só coortes que já fecharam os 30 dias
-      .map(r => ({ ...r, cntM0: r.cntD30, valM0: r.valD30 }));     // M0 da tabela = janela fixa de 30 dias
+      .filter(r => completeBefore && r.date <= completeBefore)                             // só coortes que já fecharam os N dias
+      .map(r => ({ ...r, cntM0: r['cntD' + cohortDays], valM0: r['valD' + cohortDays] })); // M0 da tabela = janela fixa de N dias
   } else {
     srcRF = sameday ? (sdFetch.rows || []) : retencaoFaixa;
   }
@@ -2086,7 +2086,7 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
     { label: 'D1 / FTD', act: t.multD1F, m1: null, bp: null, pctBp: null, fmt: 'multiple' },
   ];
   const chLabel = chLabel_(chFilter);
-  const coSuffix = cohort ? ` · coorte 30d (FTD até ${completeBefore ? completeBefore.slice(8, 10) + '/' + completeBefore.slice(5, 7) : '—'})` : '';
+  const coSuffix = cohort ? ` · coorte ${cohortDays}d (FTD até ${completeBefore ? completeBefore.slice(8, 10) + '/' + completeBefore.slice(5, 7) : '—'})` : '';
   const loadingRF = (cohort && coFetch.loading) || (sameday && sdFetch.loading);
   const errorRF = (cohort && coFetch.error) || (sameday && sdFetch.error);
   const selStyle = { background: 'var(--surface)', border: '1px solid rgba(249,115,22,.5)', color: 'var(--text)', padding: '6px 10px', borderRadius: '6px', fontSize: '12px', fontFamily: 'inherit' };
@@ -2123,8 +2123,10 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
           </div>
           <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>M0</label>
           <div className="slicer-presets">
-            <button className={`preset-btn ${!cohort ? 'active' : ''}`} onClick={() => setView('calendario')} title="M0 = depósito do dia do FTD até o FIM do mês-calendário (visão atual; coortes recentes ficam curtas).">Calendário</button>
-            <button className={`preset-btn ${cohort ? 'active' : ''}`} onClick={() => setView('coorte')} title="M0 = janela FIXA de 30 dias corridos do FTD; mostra só coortes que já fecharam os 30 dias (a mais recente ~30 dias atrás). Puxa o período sozinho, independe do slicer do topo.">Coorte 30d</button>
+            <button className={`preset-btn ${!cohort ? 'active' : ''}`} onClick={() => setCohortDays(0)} title="M0 = depósito do dia do FTD até o FIM do mês-calendário (visão atual; coortes recentes ficam curtas).">Calendário</button>
+            <button className={`preset-btn ${cohortDays === 30 ? 'active' : ''}`} onClick={() => setCohortDays(30)} title="M0 = janela FIXA de 30 dias corridos do FTD; só coortes que já fecharam os 30 dias (a mais recente ~30 dias atrás). Puxa o período sozinho, independe do slicer do topo.">Coorte 30d</button>
+            <button className={`preset-btn ${cohortDays === 60 ? 'active' : ''}`} onClick={() => setCohortDays(60)} title="Mesma ideia, janela FIXA de 60 dias corridos do FTD; só coortes que já fecharam os 60 dias (a mais recente ~60 dias atrás).">60d</button>
+            <button className={`preset-btn ${cohortDays === 90 ? 'active' : ''}`} onClick={() => setCohortDays(90)} title="Mesma ideia, janela FIXA de 90 dias corridos do FTD; só coortes que já fecharam os 90 dias (a mais recente ~90 dias atrás).">90d</button>
           </div>
         </div>
       </div>
@@ -2138,10 +2140,10 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
       </div>
       <div className="support">
         <div className="support-title">Safra {tableDim === 'periodo' ? 'por ' + (gran === 'week' ? 'Semana' : 'Dia') : 'por ' + (tableDim === 'canal' ? 'Canal' : 'Faixa')} · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''}{coSuffix}{loadingRF ? ' · carregando…' : ''}{errorRF ? ' · erro ao carregar' : ''}</div>
-        <RetFaixaTable data={tableData} dateLabel={tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : (gran === 'week' ? 'Semana' : 'Data FTD')} m0Label={cohort ? '30d' : 'M0'} />
+        <RetFaixaTable data={tableData} dateLabel={tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : (gran === 'week' ? 'Semana' : 'Data FTD')} m0Label={cohort ? cohortDays + 'd' : 'M0'} />
       </div>
       <div className="support">
-        <div className="support-title">Ponte de variância · Multiplicador {cohort ? '30d' : 'M0'}/FTD: BP → Realizado (por Canal ou Faixa){sameday ? ' · same-day' : ''}{faixaAll ? '' : ' · ' + faixaLabelTxt}</div>
+        <div className="support-title">Ponte de variância · Multiplicador {cohort ? cohortDays + 'd' : 'M0'}/FTD: BP → Realizado (por Canal ou Faixa){sameday ? ' · same-day' : ''}{faixaAll ? '' : ' · ' + faixaLabelTxt}</div>
         <MultBridge rows={srcRF} faixa={faixaSel} sameday={sameday} cohort={cohort} chFilter={chFilter} bp={bp} bpScope={bpScope} />
       </div>
     </React.Fragment>
