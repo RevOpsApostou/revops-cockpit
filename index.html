@@ -2159,26 +2159,27 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
 //     M0 proj/FTD = Ticket FTD × Mult  → GGR/FTD = × margem GGR → Teto CAC = ÷ meta ROAS GGR M0
 //   Compara o Teto contra o CAC realizado (Investimento ÷ FTD qtd, da tabela de canais).
 // ============================================================
-function TabCacCalculator({ retencaoFaixa, channels, chFilter, meta }) {
+function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilter, meta }) {
   const [faixaSel, setFaixaSel] = React.useState([]);        // multi-select de faixas; [] = todas
   const [margem, setMargem] = React.useState(15);            // % margem GGR (editável)
   const [metaRoas, setMetaRoas] = React.useState(23.72);     // % meta ROAS GGR M0 (editável)
 
-  const winTo = meta && meta.to;
-  const pm = React.useMemo(() => prevMonthRangeOf_(winTo), [winTo]);
-
-  // Fetch do MÊS ANTERIOR (retfaixa) p/ a razão M0/D1 por canal — âncora = fim da janela do slicer.
-  const [pmFetch, setPmFetch] = React.useState({ rows: null, loading: false, error: null });
+  const dataMax = meta && meta.dataMaxDate;
+  // Mult M0/D1 = razão do ÚLTIMO COORTE DE 30 DIAS FECHADO (mesma lógica da Ret. Faixa "Coorte 30d"):
+  // fetch [dataMax-60, dataMax], usa só coortes com FTD ≤ dataMax-30 (já fecharam os 30d); M0 = val_d30 (janela fixa).
+  const coFrom = dataMax ? isoAddDays_(dataMax, -60) : null;
+  const completeBefore = dataMax ? isoAddDays_(dataMax, -30) : null;
+  const [coFetch, setCoFetch] = React.useState({ rows: null, loading: false, error: null });
   React.useEffect(() => {
-    if (!ENDPOINT_URL || !pm) return;
-    setPmFetch(s => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${pm.from}&to=${pm.to}&only=retfaixa`)
+    if (!ENDPOINT_URL || !dataMax) return;
+    setCoFetch(s => ({ ...s, loading: true, error: null }));
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${coFrom}&to=${dataMax}&only=retfaixa`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
-      .then(j => { if (j.error) throw new Error(j.error); setPmFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
-      .catch(e => setPmFetch({ rows: null, loading: false, error: String(e.message || e) }));
-  }, [pm && pm.from, pm && pm.to]);
-  // Em modo mock/dev (sem endpoint) reusa a própria base atual como "mês anterior" só p/ a tela não ficar vazia.
-  const pmRows = pmFetch.rows || (!ENDPOINT_URL ? (retencaoFaixa || []) : null);
+      .then(j => { if (j.error) throw new Error(j.error); setCoFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
+      .catch(e => setCoFetch({ rows: null, loading: false, error: String(e.message || e) }));
+  }, [coFrom, dataMax]);
+  // Mock/dev (sem endpoint): reusa a base atual só p/ a tela não ficar vazia.
+  const coRows = coFetch.rows || (!ENDPOINT_URL ? (retencaoFaixa || []) : null);
 
   const faixaKey = faixaSel.join('|');
   const faixaSet = faixaSel.length ? new Set(faixaSel) : null;
@@ -2186,17 +2187,18 @@ function TabCacCalculator({ retencaoFaixa, channels, chFilter, meta }) {
   const faixaAll = faixaSel.length === 0;
   const faixaLabelTxt = faixaAll ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
 
-  // Mult M0/D1 do MÊS ANTERIOR por canal: Σ(D0 + redep.M0) ÷ Σ(D0 + redep.D1), na faixa filtrada.
+  // Mult M0/D1 = Σ redep.M0(30d) ÷ Σ redep.D1 do ÚLTIMO COORTE DE 30 DIAS FECHADO (FTD ≤ dataMax-30), por canal.
   const pmByCh = React.useMemo(() => {
     const m = {};
-    (pmRows || []).forEach(r => {
+    (coRows || []).forEach(r => {
       if (!selFx(r.faixa)) return;
+      if (completeBefore && r.date > completeBefore) return;   // só coortes que já fecharam os 30 dias
       const o = m[r.canal] || (m[r.canal] = { m0: 0, d1: 0 });
-      o.m0 += (r.valM0 || 0);   // redepósito M0 (dias 1+, mês-calendário) — SEM D0
-      o.d1 += (r.valD1 || 0);   // redepósito do dia 1 — SEM D0
+      o.m0 += (r.valD30 != null ? r.valD30 : r.valM0) || 0;    // redep 30d (janela fixa); fallback valM0 no mock
+      o.d1 += (r.valD1 || 0);                                  // redepósito do dia 1
     });
     return m;
-  }, [pmRows, faixaKey]);
+  }, [coRows, faixaKey, completeBefore]);
 
   const margemF = (typeof margem === 'number' && !isNaN(margem)) ? margem / 100 : 0;
   const metaF   = (typeof metaRoas === 'number' && !isNaN(metaRoas)) ? metaRoas / 100 : 0;
@@ -2219,18 +2221,22 @@ function TabCacCalculator({ retencaoFaixa, channels, chFilter, meta }) {
   // Uma linha por canal — SÓ canais de crescimento (Meta, Google, TikTok, Kwai, Programática).
   const rows = (channels || []).filter(c => isGrowthCh_(c.channel)).map(c => {
     const pmc = pmByCh[c.channel], win = winByCh[c.channel];
-    const mult    = (pmc && pmc.d1 > 0) ? pmc.m0 / pmc.d1 : null;                 // Mult M0/D1 (mês ant.) = redep.M0 ÷ redep.D1
+    const cmp = componentsByChannel && componentsByChannel[c.channel] && componentsByChannel[c.channel].mtd;
+    const spend   = (cmp && cmp.spend != null) ? cmp.spend : c.spend;            // Investimento = spend do FAROL (tbl_performance_daily); fallback channels no mock
+    const ftdQtyC = (cmp && cmp.ftdQty) ? cmp.ftdQty : c.ftdQty;                 // FTD qtd do mesmo escopo do spend (p/ CAC bater com o Farol)
+    const mult    = (pmc && pmc.d1 > 0) ? pmc.m0 / pmc.d1 : null;                 // Mult M0/D1 = redep.M0(30d) ÷ redep.D1 (último coorte 30d fechado)
     const winFtd  = win ? win.ftdQty : 0;                                        // nº de FTDs do canal (MTD)
     const ticket  = (win && winFtd > 0) ? win.d1 / winFtd : null;                // D1/FTD = média de D1 (redep. dia 1) do mês corrente por FTD
     const m0proj  = (mult != null && ticket != null) ? mult * ticket : null;     // M0 estimado / FTD = Mult × D1
     const teto    = (m0proj != null && metaF > 0) ? (m0proj * margemF) / metaF : null;  // Teto CAC
-    const cac     = (c.spend != null && c.spend > 0 && c.ftdQty > 0) ? c.spend / c.ftdQty : null;
+    const cac     = (spend != null && spend > 0 && ftdQtyC > 0) ? spend / ftdQtyC : null;
     const folga   = (teto != null && cac != null) ? teto - cac : null;
     const ratio   = (teto != null && cac != null && cac > 0) ? teto / cac : null;
     const ftdTot  = win ? win.ftdTotal : null;                                   // valor total de FTD do canal (MTD)
-    const m0Total = (m0proj != null && winFtd > 0) ? m0proj * winFtd : null;     // M0 total projetado (montante)
-    const ggrTot  = (m0Total != null) ? m0Total * margemF : null;                // GGR total projetado = M0 total × margem
-    return { ch: c.channel, mult, ticket, m0proj, teto, cac, folga, ratio, ftd: winFtd, spend: c.spend, ftdQty: c.ftdQty, ftdTot, m0Total, ggrTot };
+    const m0Total = (m0proj != null && winFtd > 0) ? m0proj * winFtd : null;     // M0 total estimado (montante)
+    const ggrTot  = (m0Total != null) ? m0Total * margemF : null;                // GGR total estimado = M0 total × margem
+    const roas    = (ggrTot != null && spend != null && spend > 0) ? ggrTot / spend : null;  // ROAS = GGR total estimado ÷ Investimento
+    return { ch: c.channel, mult, ticket, m0proj, teto, cac, folga, ratio, ftd: winFtd, spend, ftdQty: ftdQtyC, ftdTot, m0Total, ggrTot, roas };
   }).sort((a, b) => (b.ftdTot || 0) - (a.ftdTot || 0));
 
   // Totais: per-FTD blended (mult × nível D1 ÷ Σ FTDs) + somas de montante (Investimento/FTD/M0/GGR total).
@@ -2247,6 +2253,7 @@ function TabCacCalculator({ retencaoFaixa, channels, chFilter, meta }) {
   const totCac = T.ftdQty > 0 ? T.spend / T.ftdQty : null;
   const totFolga = (totTeto != null && totCac != null) ? totTeto - totCac : null;
   const totRatio = (totTeto != null && totCac != null && totCac > 0) ? totTeto / totCac : null;
+  const totRoas = (T.spend > 0) ? T.ggrTot / T.spend : null;   // ROAS blended = Σ GGR total ÷ Σ Investimento
 
   const GREEN = '#34d399', ORANGE = '#f97316', divCol = { borderLeft: '2px solid var(--border)' };
   const pctInput = (val, set, color) => (
@@ -2294,9 +2301,9 @@ function TabCacCalculator({ retencaoFaixa, channels, chFilter, meta }) {
         </div>
         <div className="ch-note" style={{ marginTop: '12px' }}>
           <strong>D1 médio (MTD)</strong> = média de D1 (redepósito do dia 1) por FTD do <strong>mês corrente</strong> = Σ val_d1 ÷ Σ FTDs na janela do slicer (sem D0).
-          <strong> Mult. M0/D1</strong> = razão redepósito M0 ÷ redepósito D1 do <strong>mês anterior</strong> (<strong>{monthLabelPt_(pm.from)}</strong>) por canal, na faixa filtrada (sem D0). M0 estimado/FTD = Mult × D1; GGR/FTD = M0 estimado × margem (racional da Ret. Faixa FTD).
+          <strong> Mult. M0/D1</strong> = razão redepósito M0(30d) ÷ redepósito D1 do <strong>último coorte de 30 dias fechado</strong> (FTD até {completeBefore ? completeBefore.slice(8,10)+'/'+completeBefore.slice(5,7) : '—'}) por canal, na faixa filtrada (sem D0). M0 estimado/FTD = Mult × D1; GGR estimado = M0 estimado × margem (racional da Ret. Faixa FTD).
           <strong> Margem GGR</strong> e <strong>meta ROAS GGR M0</strong> são editáveis acima.
-          {pmFetch.loading ? ' · carregando mês anterior…' : ''}{pmFetch.error ? ' · erro ao carregar mês anterior' : ''}
+          {coFetch.loading ? ' · carregando coorte…' : ''}{coFetch.error ? ' · erro ao carregar coorte' : ''}
         </div>
       </div>
 
@@ -2309,13 +2316,14 @@ function TabCacCalculator({ retencaoFaixa, channels, chFilter, meta }) {
               <th title="Média de D1 (redepósito do dia 1) por FTD do mês corrente (MTD): Σ val_d1 ÷ Σ FTDs, sem D0">D1/FTD</th>
               <th title="Razão redepósito M0 ÷ redepósito D1 do mês anterior (sem D0) — o multiplicador de projeção">Mult. M0/D1</th>
               <th title="D1/FTD × Mult. M0/D1 = depósito M0 estimado por FTD">M0 est/FTD</th>
-              <th title="M0 proj/FTD × margem GGR ÷ meta ROAS GGR M0 = máximo CAC que mantém a meta">Teto CAC</th>
+              <th title="M0 est/FTD × margem GGR ÷ meta ROAS GGR M0 = máximo CAC que mantém a meta">Teto CAC</th>
               <th title="CAC realizado = Investimento ÷ FTD qtd (janela do slicer)">CAC atual</th>
               <th title="Teto CAC − CAC atual. Verde = folga p/ pagar mais; vermelho = pagando acima do teto">Folga</th>
-              <th style={divCol} title="Investimento realizado do canal (janela do slicer)">Investimento</th>
+              <th style={divCol} title="Investimento do canal (mesma fonte do Farol: tbl_performance_daily, com imposto Meta)">Investimento</th>
               <th title="Valor total de FTD (1º depósito) do canal na janela">FTD total</th>
               <th title="M0 est/FTD × nº de FTDs do canal na janela = depósito M0 total estimado">M0 total proj</th>
-              <th title="M0 total projetado × margem GGR = GGR total projetado">GGR total proj</th>
+              <th title="M0 total estimado × margem GGR = GGR total estimado">GGR total proj</th>
+              <th title="ROAS = GGR total estimado ÷ Investimento">ROAS</th>
             </tr>
           </thead>
           <tbody>
@@ -2332,6 +2340,7 @@ function TabCacCalculator({ retencaoFaixa, channels, chFilter, meta }) {
                 <td>{fmtBRL(r.ftdTot)}</td>
                 <td>{fmtBRL(r.m0Total)}</td>
                 <td style={{ color: GREEN, fontWeight: 600 }}>{fmtBRL(r.ggrTot)}</td>
+                <td style={{ fontWeight: 600 }}>{fmtMultiple(r.roas)}</td>
               </tr>
             ))}
           </tbody>
@@ -2348,13 +2357,14 @@ function TabCacCalculator({ retencaoFaixa, channels, chFilter, meta }) {
               <td>{fmtBRL(T.ftdTot || null)}</td>
               <td>{fmtBRL(T.m0Total || null)}</td>
               <td style={{ color: GREEN, fontWeight: 700 }}>{fmtBRL(T.ggrTot || null)}</td>
+              <td style={{ fontWeight: 700 }}>{fmtMultiple(totRoas)}</td>
             </tr>
           </tfoot>
         </table></div>
         <div className="ch-note">
           Só <strong>canais de crescimento</strong> (Meta, Google, TikTok, Kwai, Programática). O <strong>Teto CAC</strong> é o quanto dá pra pagar por FTD para o ROAS GGR M0 bater a meta;
           a coluna <strong>Folga</strong> compara com o CAC realizado (verde ≥ teto, vermelho abaixo). O M0 estimado é <strong>puro redepósito</strong> (M0/D1 × D1, sem D0); a margem GGR corre sobre todo o M0 estimado.
-          <strong> Investimento</strong> = spend realizado do canal · <strong>FTD total</strong> = valor do 1º depósito do canal na janela · <strong>M0 total proj</strong> = M0 est/FTD × nº de FTDs do canal · <strong>GGR total proj</strong> = M0 total × margem GGR.
+          <strong> Investimento</strong> = spend do canal (mesma fonte do Farol: <code>tbl_performance_daily</code>, com imposto Meta +13,83%) · <strong>FTD total</strong> = valor do 1º depósito do canal na janela · <strong>M0 total proj</strong> = M0 est/FTD × nº de FTDs do canal · <strong>GGR total proj</strong> = M0 total × margem GGR · <strong>ROAS</strong> = GGR total estimado ÷ Investimento.
           Filtrar por faixa recalcula a projeção; Investimento e CAC realizado são do canal inteiro (o spend não é rateado por faixa).
         </div>
       </div>
@@ -3434,6 +3444,7 @@ function App({ user, onLogout, config }) {
     user, M: displayM, farol: farolMetrics, channels: fChannels, bp: state.bp,
     retentionChannels: fRetentionChannels, ggrChannels: fGgrChannels, ggrSafra: fGgrSafra, ggrSafraRoas: fGgrSafraRoas, ggrPayback: state.ggrPayback,
     dailyCohort: selectDailyCohort_(state.dailyCohort, chFilter), retencaoFaixa: state.retencaoFaixa,
+    componentsByChannel: state.componentsByChannel,   // spend/ftd por canal (tbl_performance_daily) — aba CAC usa p/ Investimento bater com o Farol
     meta: state.meta, benchmark: state.benchmark, benchmarkSameday: state.benchmarkSameday,
     benchmarkNet: state.benchmarkNet, chFilter, range: appliedRange,
     depM0Channels: fDepM0Channels, depByChannel: fDepByChannel, rolloverMatrix: fRolloverMatrix,
