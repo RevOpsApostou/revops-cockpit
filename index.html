@@ -2192,8 +2192,8 @@ function TabCacCalculator({ retencaoFaixa, channels, chFilter, meta }) {
     (pmRows || []).forEach(r => {
       if (!selFx(r.faixa)) return;
       const o = m[r.canal] || (m[r.canal] = { m0: 0, d1: 0 });
-      o.m0 += (r.depD0 || 0) + (r.valM0 || 0);
-      o.d1 += (r.depD0 || 0) + (r.valD1 || 0);
+      o.m0 += (r.valM0 || 0);   // redepósito M0 (dias 1+, mês-calendário) — SEM D0
+      o.d1 += (r.valD1 || 0);   // redepósito do dia 1 — SEM D0
     });
     return m;
   }, [pmRows, faixaKey]);
@@ -2202,14 +2202,14 @@ function TabCacCalculator({ retencaoFaixa, channels, chFilter, meta }) {
   const metaF   = (typeof metaRoas === 'number' && !isNaN(metaRoas)) ? metaRoas / 100 : 0;
 
   // Base do MÊS CORRENTE (MTD = janela do slicer) por canal, na faixa filtrada:
-  //   d1lvl = Σ(D0 + redep.D1) · ftdQty = Σ FTDs · ftdTotal = Σ valor do 1º depósito.
-  // Ticket FTD = média de D1 do mês corrente = d1lvl ÷ ftdQty (racional da Ret. Faixa: M0/D1 mês ant. × D1 MTD).
+  //   d1 = Σ redep. do dia 1 (SEM D0) · ftdQty = Σ FTDs · ftdTotal = Σ valor do 1º depósito.
+  // D1/FTD = d1 ÷ ftdQty (racional da Ret. Faixa: M0/D1 do mês ant. × D1 médio do mês corrente).
   const winByCh = React.useMemo(() => {
     const m = {};
     (retencaoFaixa || []).forEach(r => {
       if (!selFx(r.faixa)) return;
-      const o = m[r.canal] || (m[r.canal] = { d1lvl: 0, ftdTotal: 0, ftdQty: 0 });
-      o.d1lvl += (r.depD0 || 0) + (r.valD1 || 0);
+      const o = m[r.canal] || (m[r.canal] = { d1: 0, ftdTotal: 0, ftdQty: 0 });
+      o.d1 += (r.valD1 || 0);   // redepósito do dia 1 — SEM D0
       o.ftdTotal += r.ftdTotal || 0;
       o.ftdQty += r.qtdFtds || 0;
     });
@@ -2219,10 +2219,10 @@ function TabCacCalculator({ retencaoFaixa, channels, chFilter, meta }) {
   // Uma linha por canal — SÓ canais de crescimento (Meta, Google, TikTok, Kwai, Programática).
   const rows = (channels || []).filter(c => isGrowthCh_(c.channel)).map(c => {
     const pmc = pmByCh[c.channel], win = winByCh[c.channel];
-    const mult    = (pmc && pmc.d1 > 0) ? pmc.m0 / pmc.d1 : null;                 // Mult M0/D1 (mês ant.)
+    const mult    = (pmc && pmc.d1 > 0) ? pmc.m0 / pmc.d1 : null;                 // Mult M0/D1 (mês ant.) = redep.M0 ÷ redep.D1
     const winFtd  = win ? win.ftdQty : 0;                                        // nº de FTDs do canal (MTD)
-    const ticket  = (win && winFtd > 0) ? win.d1lvl / winFtd : null;             // Ticket FTD = média de D1 do mês corrente (MTD) por FTD
-    const m0proj  = (mult != null && ticket != null) ? mult * ticket : null;     // M0 proj / FTD = Mult × Ticket
+    const ticket  = (win && winFtd > 0) ? win.d1 / winFtd : null;                // D1/FTD = média de D1 (redep. dia 1) do mês corrente por FTD
+    const m0proj  = (mult != null && ticket != null) ? mult * ticket : null;     // M0 estimado / FTD = Mult × D1
     const teto    = (m0proj != null && metaF > 0) ? (m0proj * margemF) / metaF : null;  // Teto CAC
     const cac     = (c.spend != null && c.spend > 0 && c.ftdQty > 0) ? c.spend / c.ftdQty : null;
     const folga   = (teto != null && cac != null) ? teto - cac : null;
@@ -2279,7 +2279,7 @@ function TabCacCalculator({ retencaoFaixa, channels, chFilter, meta }) {
           </div>
           <div style={{ textAlign: 'center' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', fontSize: '15px', paddingBottom: '8px' }}>
-              <span>Ticket FTD</span>
+              <span>D1 médio (MTD)</span>
               <span style={{ color: 'var(--text-muted)' }}>×</span>
               <b style={{ color: ORANGE }}>Mult. M0/D1 do canal</b>
               <span style={{ color: 'var(--text-muted)' }}>×</span>
@@ -2293,8 +2293,8 @@ function TabCacCalculator({ retencaoFaixa, channels, chFilter, meta }) {
           </div>
         </div>
         <div className="ch-note" style={{ marginTop: '12px' }}>
-          <strong>Ticket FTD</strong> = média de D1 por FTD do <strong>mês corrente (MTD)</strong> = Σ(D0 + redepósito do dia 1) ÷ Σ FTDs na janela do slicer.
-          <strong> Mult. M0/D1</strong> = razão M0÷D1 do <strong>mês anterior</strong> (<strong>{monthLabelPt_(pm.from)}</strong>) por canal, na faixa filtrada. M0 proj/FTD = Mult × Ticket (racional da Ret. Faixa FTD).
+          <strong>D1 médio (MTD)</strong> = média de D1 (redepósito do dia 1) por FTD do <strong>mês corrente</strong> = Σ val_d1 ÷ Σ FTDs na janela do slicer (sem D0).
+          <strong> Mult. M0/D1</strong> = razão redepósito M0 ÷ redepósito D1 do <strong>mês anterior</strong> (<strong>{monthLabelPt_(pm.from)}</strong>) por canal, na faixa filtrada (sem D0). M0 estimado/FTD = Mult × D1; GGR/FTD = M0 estimado × margem (racional da Ret. Faixa FTD).
           <strong> Margem GGR</strong> e <strong>meta ROAS GGR M0</strong> são editáveis acima.
           {pmFetch.loading ? ' · carregando mês anterior…' : ''}{pmFetch.error ? ' · erro ao carregar mês anterior' : ''}
         </div>
@@ -2306,15 +2306,15 @@ function TabCacCalculator({ retencaoFaixa, channels, chFilter, meta }) {
           <thead>
             <tr>
               <th>Canal</th>
-              <th title="Ticket FTD = média de D1 por FTD do mês corrente (MTD): Σ(D0 + redep. dia 1) ÷ Σ FTDs">Ticket FTD</th>
-              <th title="Razão M0÷D1 do mês anterior (níveis, incl. D0) — o multiplicador de projeção">Mult. M0/D1</th>
-              <th title="Ticket FTD × Mult. M0/D1 = depósito M0 projetado por FTD">M0 proj/FTD</th>
+              <th title="Média de D1 (redepósito do dia 1) por FTD do mês corrente (MTD): Σ val_d1 ÷ Σ FTDs, sem D0">D1/FTD</th>
+              <th title="Razão redepósito M0 ÷ redepósito D1 do mês anterior (sem D0) — o multiplicador de projeção">Mult. M0/D1</th>
+              <th title="D1/FTD × Mult. M0/D1 = depósito M0 estimado por FTD">M0 est/FTD</th>
               <th title="M0 proj/FTD × margem GGR ÷ meta ROAS GGR M0 = máximo CAC que mantém a meta">Teto CAC</th>
               <th title="CAC realizado = Investimento ÷ FTD qtd (janela do slicer)">CAC atual</th>
               <th title="Teto CAC − CAC atual. Verde = folga p/ pagar mais; vermelho = pagando acima do teto">Folga</th>
               <th style={divCol} title="Investimento realizado do canal (janela do slicer)">Investimento</th>
               <th title="Valor total de FTD (1º depósito) do canal na janela">FTD total</th>
-              <th title="M0 proj/FTD × nº de FTDs do canal na janela = depósito M0 total projetado">M0 total proj</th>
+              <th title="M0 est/FTD × nº de FTDs do canal na janela = depósito M0 total estimado">M0 total proj</th>
               <th title="M0 total projetado × margem GGR = GGR total projetado">GGR total proj</th>
             </tr>
           </thead>
@@ -2353,8 +2353,8 @@ function TabCacCalculator({ retencaoFaixa, channels, chFilter, meta }) {
         </table></div>
         <div className="ch-note">
           Só <strong>canais de crescimento</strong> (Meta, Google, TikTok, Kwai, Programática). O <strong>Teto CAC</strong> é o quanto dá pra pagar por FTD para o ROAS GGR M0 bater a meta;
-          a coluna <strong>Folga</strong> compara com o CAC realizado (verde ≥ teto, vermelho abaixo). D0 está incluído nos níveis D1/M0 (mesma convenção dos multiplicadores D1/FTD e M0/FTD da aba Ret. Faixa).
-          <strong> Investimento</strong> = spend realizado do canal · <strong>FTD total</strong> = valor do 1º depósito do canal na janela · <strong>M0 total proj</strong> = M0 proj/FTD × nº de FTDs do canal · <strong>GGR total proj</strong> = M0 total × margem GGR.
+          a coluna <strong>Folga</strong> compara com o CAC realizado (verde ≥ teto, vermelho abaixo). O M0 estimado é <strong>puro redepósito</strong> (M0/D1 × D1, sem D0); a margem GGR corre sobre todo o M0 estimado.
+          <strong> Investimento</strong> = spend realizado do canal · <strong>FTD total</strong> = valor do 1º depósito do canal na janela · <strong>M0 total proj</strong> = M0 est/FTD × nº de FTDs do canal · <strong>GGR total proj</strong> = M0 total × margem GGR.
           Filtrar por faixa recalcula a projeção; Investimento e CAC realizado são do canal inteiro (o spend não é rateado por faixa).
         </div>
       </div>
