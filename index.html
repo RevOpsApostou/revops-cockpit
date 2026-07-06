@@ -1118,7 +1118,7 @@ function FtdBridge({ channels, bp }) {
         </span>
       </div>
       <div className="table-scroll">
-        <svg className="bridge-svg" viewBox={`0 0 ${W} ${H}`} width={W} style={{ width: '100%', maxWidth: W, minWidth: Math.min(W, 560), height: 'auto' }} preserveAspectRatio="xMidYMid meet">
+        <svg className="bridge-svg" viewBox={`0 0 ${W} ${H}`} width={W} style={{ width: '100%', maxWidth: W, minWidth: Math.min(W, 560), height: 'auto', display: 'block', margin: '0 auto' }} preserveAspectRatio="xMidYMid meet">
           {/* linha de referência do plano (BP) */}
           <line x1={0} x2={W} y1={y(bpTotal)} y2={y(bpTotal)} stroke="var(--border-strong)" strokeWidth="1" strokeDasharray="2 4" />
           <text x={W - 4} y={y(bpTotal) - 5} textAnchor="end" fontSize="9.5" fill="var(--text-dim)">plano</text>
@@ -1163,17 +1163,19 @@ function FtdBridge({ channels, bp }) {
 // Faixa não tem BP próprio → baseline = BP geral: contrib_faixa = peso_FTD$ × (mult_faixa − BP geral).
 // Ambos somam exatamente (Realizado − BP). Usa a base calendário/todas-faixas (não o same-day/coorte
 // da tabela) p/ comparação válida com o plano; segue o escopo Growth/Total do slicer.
-function MultBridge({ retencaoFaixa, chFilter, bp, bpScope }) {
+function MultBridge({ rows: srcRows, chFilter, faixa = 'all', sameday, cohort, bp, bpScope }) {
   const [dim, setDim] = usePersistedState('rvops:multBridgeDim', 'canal');
   const [axis, setAxis] = React.useState('zoom');
   const bpMult = (bpScope && bpScope.ftdAmount > 0 && bpScope.m0 != null) ? bpScope.m0 / bpScope.ftdAmount : null;
   const bpFtd = bpScope ? bpScope.ftdAmount : 0;
-  const rows = benchApostouRows_(retencaoFaixa);
+  const rows = benchApostouRows_(srcRows);
   const selCh = chSelector_(chFilter);
+  const faixaOne = faixa && faixa !== 'all';
   const byKey = {};
   let totN = 0, totF = 0;
   (rows || []).forEach(r => {
     if (!selCh(r.canal)) return;
+    if (faixaOne && r.faixa !== faixa) return;   // segue a faixa selecionada no slicer laranja
     const key = dim === 'faixa' ? r.faixa : r.canal;
     const o = byKey[key] || (byKey[key] = { key, n: 0, f: 0 });
     const n = (r.d0 || 0) + (r.vm0 || 0), f = (r.ftd || 0);
@@ -1251,7 +1253,7 @@ function MultBridge({ retencaoFaixa, chFilter, bp, bpScope }) {
         </span>
       </div>
       <div className="table-scroll">
-        <svg className="bridge-svg" viewBox={`0 0 ${W} ${H}`} width={W} style={{ width: '100%', maxWidth: W, minWidth: Math.min(W, 560), height: 'auto' }} preserveAspectRatio="xMidYMid meet">
+        <svg className="bridge-svg" viewBox={`0 0 ${W} ${H}`} width={W} style={{ width: '100%', maxWidth: W, minWidth: Math.min(W, 560), height: 'auto', display: 'block', margin: '0 auto' }} preserveAspectRatio="xMidYMid meet">
           <line x1={0} x2={W} y1={yv(bpMult)} y2={yv(bpMult)} stroke="var(--border-strong)" strokeWidth="1" strokeDasharray="2 4" />
           <text x={W - 4} y={yv(bpMult) - 5} textAnchor="end" fontSize="9.5" fill="var(--text-dim)">plano</text>
           {bars.slice(0, -1).map((b, i) => (
@@ -1280,7 +1282,7 @@ function MultBridge({ retencaoFaixa, chFilter, bp, bpScope }) {
         {dim === 'canal'
           ? <> O balde <strong>“Outros”</strong> reúne canais sem plano de mídia (orgânico/afiliados) + o resíduo não-growth quando o escopo é Total da Casa.</>
           : <> Faixa não tem meta própria no plano → cada faixa é medida contra o <strong>BP geral</strong> como baseline, ponderada pelo FTD$.</>}
-        {' '}Usa a base calendário / todas as faixas (independe do same-day e da faixa selecionada acima); segue o escopo Growth/Total Casa do slicer.
+        {' '}Acompanha os slicers laranja: <strong>{sameday ? 'coorte same-day' : 'todos os FTDs'}{cohort ? ' · janela 30d' : ''} · {faixa === 'all' ? 'todas as faixas' : 'faixa ' + fxLabel_(faixa)}</strong> · escopo Growth/Total Casa do topo. O <strong>BP é sempre o plano cheio do mês</strong> (não existe meta same-day nem por faixa) — a diferença de definição vira variância, e o balde “Outros” fecha a conta.
       </div>
     </React.Fragment>
   );
@@ -2145,8 +2147,8 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
         <RetFaixaTable data={data} dateLabel={gran === 'week' ? 'Semana' : 'Data FTD'} m0Label={cohort ? '30d' : 'M0'} />
       </div>
       <div className="support">
-        <div className="support-title">Ponte de variância · Multiplicador M0/FTD: BP → Realizado (por Canal ou Faixa)</div>
-        <MultBridge retencaoFaixa={retencaoFaixa} chFilter={chFilter} bp={bp} bpScope={bpScope} />
+        <div className="support-title">Ponte de variância · Multiplicador {cohort ? '30d' : 'M0'}/FTD: BP → Realizado (por Canal ou Faixa){sameday ? ' · same-day' : ''}{faixa === 'all' ? '' : ' · ' + fxLabel_(faixa)}</div>
+        <MultBridge rows={srcRF} faixa={faixa} sameday={sameday} cohort={cohort} chFilter={chFilter} bp={bp} bpScope={bpScope} />
       </div>
     </React.Fragment>
   );
