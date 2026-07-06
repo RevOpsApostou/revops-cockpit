@@ -2136,6 +2136,12 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
             <button className={`preset-btn ${gran === 'day' ? 'active' : ''}`} onClick={() => setGran('day')} title="Uma linha por dia de FTD">Diário</button>
             <button className={`preset-btn ${gran === 'week' ? 'active' : ''}`} onClick={() => setGran('week')} title="Colapsa em semanas (seg–dom): re-agrega as bases e recalcula as métricas — não é média das %">Semanal</button>
           </div>
+          <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>Ver por</label>
+          <div className="slicer-presets">
+            <button className={`preset-btn ${tableDim === 'periodo' ? 'active' : ''}`} onClick={() => setTableDim('periodo')} title="Tabela de safra: uma linha por dia/semana (segue a Visão)">Período</button>
+            <button className={`preset-btn ${tableDim === 'canal' ? 'active' : ''}`} onClick={() => setTableDim('canal')} title="Tabela de safra: uma linha por canal — compara os canais no período todo (maior FTD$ primeiro)">Canal</button>
+            <button className={`preset-btn ${tableDim === 'faixa' ? 'active' : ''}`} onClick={() => setTableDim('faixa')} title="Tabela de safra: uma linha por faixa de FTD — compara as faixas no período todo">Faixa</button>
+          </div>
           <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>M0</label>
           <div className="slicer-presets">
             <button className={`preset-btn ${!cohort ? 'active' : ''}`} onClick={() => setView('calendario')} title="M0 = depósito do dia do FTD até o FIM do mês-calendário (visão atual; coortes recentes ficam curtas).">Calendário</button>
@@ -2152,14 +2158,7 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
         <div className="ch-note">Mês-calendário <strong>anterior ao período selecionado</strong> no slicer ({monthLabelPt_(pm.from)}), agregado num único registro, no mesmo recorte de canal/faixa/modo. O M0 é sempre mês-calendário (não muda com o toggle Calendário/Coorte).</div>
       </div>
       <div className="support">
-        <div className="support-title" style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-          <span>Safra {tableDim === 'periodo' ? 'por ' + (gran === 'week' ? 'Semana' : 'Dia') : 'por ' + (tableDim === 'canal' ? 'Canal' : 'Faixa')} · {chLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}{sameday ? ' · same-day' : ''}{coSuffix}{loadingRF ? ' · carregando…' : ''}{errorRF ? ' · erro ao carregar' : ''}</span>
-          <span className="slicer-presets" style={{ marginLeft: 'auto' }}>
-            <button className={`preset-btn ${tableDim === 'periodo' ? 'active' : ''}`} onClick={() => setTableDim('periodo')} title="Uma linha por dia/semana (segue a Visão)">Período</button>
-            <button className={`preset-btn ${tableDim === 'canal' ? 'active' : ''}`} onClick={() => setTableDim('canal')} title="Uma linha por canal — compara os canais no período todo (maior FTD$ primeiro)">Por Canal</button>
-            <button className={`preset-btn ${tableDim === 'faixa' ? 'active' : ''}`} onClick={() => setTableDim('faixa')} title="Uma linha por faixa de FTD — compara as faixas no período todo">Por Faixa</button>
-          </span>
-        </div>
+        <div className="support-title">Safra {tableDim === 'periodo' ? 'por ' + (gran === 'week' ? 'Semana' : 'Dia') : 'por ' + (tableDim === 'canal' ? 'Canal' : 'Faixa')} · {chLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}{sameday ? ' · same-day' : ''}{coSuffix}{loadingRF ? ' · carregando…' : ''}{errorRF ? ' · erro ao carregar' : ''}</div>
         <RetFaixaTable data={tableData} dateLabel={tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : (gran === 'week' ? 'Semana' : 'Data FTD')} m0Label={cohort ? '30d' : 'M0'} />
       </div>
       <div className="support">
