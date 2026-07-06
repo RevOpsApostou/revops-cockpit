@@ -1861,17 +1861,21 @@ function isoDiffDays_(a, b) {
 // Agrega retencaoFaixa por DIA ou SEMANA (gran='day'|'week'; canal via chFilter + faixa) no padrão do
 // Benchmark (benchMetrics_). SEMANAL re-agrega as bases aditivas e RECALCULA as métricas (não é média
 // das %). mode 'qtd'|'val' afeta só as colunas de retenção. ggrM0/m0PerPlayer ficam p/ ROAS GGR e heroes.
-function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, dataMax) {
+function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, dataMax, dim) {
   const rows = benchApostouRows_(retencaoFaixa);
   const selCh = chSelector_(chFilter);
   const selFx = (fx) => faixa === 'all' || fx === faixa;
   const keys = ['qtd','ftd','d0','cd1','vd1','cw1','vw1','cw2','vw2','cm0','vm0','ggrM0'];
   const zero = () => { const o = {}; keys.forEach(k => o[k] = 0); o._esp = 0; o._espFtd = 0; o._rwMin = null; o._rwMax = null; return o; };
   const weekly = gran === 'week';
+  // Chave de agrupamento da tabela: período (dia/semana · default) OU por canal OU por faixa — toggle
+  // "Ver por" na aba, p/ comparação rápida. Métricas re-agregadas das mesmas bases aditivas (não é média das %).
+  const groupOf = (r) => dim === 'canal' ? r.canal : dim === 'faixa' ? r.faixa : (weekly ? weekStartISO_(r.date) : r.date);
+  const labelOf = (k) => dim === 'canal' ? k : dim === 'faixa' ? fxLabel_(k) : (weekly ? weekLabel_(k) : k);
   const by = {}, tot = zero();
   rows.forEach(r => {
     if (!selCh(r.canal) || !selFx(r.faixa)) return;
-    const b = weekly ? weekStartISO_(r.date) : r.date;
+    const b = groupOf(r);
     if (!by[b]) by[b] = zero();
     keys.forEach(k => { by[b][k] += r[k] || 0; tot[k] += r[k] || 0; });
     // M0 ESPERADO (ancorado no realizado): pega o que a coorte JÁ depositou (realized = D0 + M0-até-hoje)
@@ -1894,8 +1898,9 @@ function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, d
     { date: label, _key: key || null, ggrM0: b.ggrM0, m0PerPlayer: b.qtd ? (b.d0 + b.vm0) / b.qtd : null,
       m0Esp: (b._espFtd > 0) ? b._esp / b._espFtd : null, m0EspAmt: (b._espFtd > 0) ? b._esp : null, rwMin: b._rwMin, rwMax: b._rwMax },
     benchMetrics_(b, mode));
-  const ks = Object.keys(by).sort();
-  return { rows: ks.map(k => fin(by[k], weekly ? weekLabel_(k) : k, k)), totals: fin(tot, 'Total', null) };
+  // período/faixa: chave ISO/prefixo ordinal ordenam sozinhos · canal: maior FTD$ primeiro (comparação)
+  const ks = Object.keys(by).sort(dim === 'canal' ? (a, b) => (by[b].ftd || 0) - (by[a].ftd || 0) : undefined);
+  return { rows: ks.map(k => fin(by[k], labelOf(k), k)), totals: fin(tot, 'Total', null) };
 }
 
 function RetFaixaTable({ data, dateLabel, m0Label }) {
@@ -2007,6 +2012,7 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   const [mode, setMode] = React.useState('val');   // default Valor · 'val' (% do depósito sobre o D0) | 'qtd' (% redepositou)
   const [sameday, setSameday] = React.useState(true);   // default Same-day · só FTDs que depositaram no MESMO dia do cadastro
   const [gran, setGran] = React.useState('week');       // default Semanal · 'day' | 'week' (colapsa em médias semanais)
+  const [tableDim, setTableDim] = React.useState('periodo'); // tabela de baixo: 'periodo' (por dia/semana) | 'canal' | 'faixa'
   const [view, setView] = React.useState('calendario'); // 'calendario' (M0 = fim do mês) | 'coorte' (M0 = 30 dias corridos, só coortes fechadas)
   const cohort = view === 'coorte';
   // Same-day puxado sob demanda (only=retfaixa&sameday=1) p/ a MESMA janela global; sem custo extra quando off.
@@ -2062,6 +2068,9 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   const gCurve = !cohort ? m0Curve_(chFilter, sameday) : null;
   const data = aggRetFaixaBench_(srcRF, chFilter, faixa, mode, gran, gCurve, dataMax);
   const t = data.totals || {};
+  // Tabela de baixo: mesma base, reagrupada por canal/faixa quando o toggle "Ver por" não é "período".
+  // Totais são idênticos (mesmo recorte filtrado) — só muda a quebra das linhas.
+  const tableData = tableDim === 'periodo' ? data : aggRetFaixaBench_(srcRF, chFilter, faixa, mode, gran, gCurve, dataMax, tableDim);
   // Mês anterior fechado: mesmo recorte (canal/faixa/modo) num único agregado (.totals). Sem curva (já maduro).
   const pmRow = pmFetch.rows ? aggRetFaixaBench_(pmFetch.rows, chFilter, faixa, mode, 'day').totals : null;
   // BP do escopo (Total/Growth/canal). Só faz sentido p/ "Todas as faixas" — o plano não tem meta
@@ -2143,8 +2152,15 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
         <div className="ch-note">Mês-calendário <strong>anterior ao período selecionado</strong> no slicer ({monthLabelPt_(pm.from)}), agregado num único registro, no mesmo recorte de canal/faixa/modo. O M0 é sempre mês-calendário (não muda com o toggle Calendário/Coorte).</div>
       </div>
       <div className="support">
-        <div className="support-title">Safra por {gran === 'week' ? 'Semana' : 'Dia'} · {chLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}{sameday ? ' · same-day' : ''}{coSuffix}{loadingRF ? ' · carregando…' : ''}{errorRF ? ' · erro ao carregar' : ''}</div>
-        <RetFaixaTable data={data} dateLabel={gran === 'week' ? 'Semana' : 'Data FTD'} m0Label={cohort ? '30d' : 'M0'} />
+        <div className="support-title" style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <span>Safra {tableDim === 'periodo' ? 'por ' + (gran === 'week' ? 'Semana' : 'Dia') : 'por ' + (tableDim === 'canal' ? 'Canal' : 'Faixa')} · {chLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}{sameday ? ' · same-day' : ''}{coSuffix}{loadingRF ? ' · carregando…' : ''}{errorRF ? ' · erro ao carregar' : ''}</span>
+          <span className="slicer-presets" style={{ marginLeft: 'auto' }}>
+            <button className={`preset-btn ${tableDim === 'periodo' ? 'active' : ''}`} onClick={() => setTableDim('periodo')} title="Uma linha por dia/semana (segue a Visão)">Período</button>
+            <button className={`preset-btn ${tableDim === 'canal' ? 'active' : ''}`} onClick={() => setTableDim('canal')} title="Uma linha por canal — compara os canais no período todo (maior FTD$ primeiro)">Por Canal</button>
+            <button className={`preset-btn ${tableDim === 'faixa' ? 'active' : ''}`} onClick={() => setTableDim('faixa')} title="Uma linha por faixa de FTD — compara as faixas no período todo">Por Faixa</button>
+          </span>
+        </div>
+        <RetFaixaTable data={tableData} dateLabel={tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : (gran === 'week' ? 'Semana' : 'Data FTD')} m0Label={cohort ? '30d' : 'M0'} />
       </div>
       <div className="support">
         <div className="support-title">Ponte de variância · Multiplicador {cohort ? '30d' : 'M0'}/FTD: BP → Realizado (por Canal ou Faixa){sameday ? ' · same-day' : ''}{faixa === 'all' ? '' : ' · ' + fxLabel_(faixa)}</div>
