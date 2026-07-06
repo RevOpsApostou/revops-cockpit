@@ -2222,34 +2222,52 @@ function TabCacCalculator({ retencaoFaixa, channels, chFilter, meta }) {
   const margemF = (typeof margem === 'number' && !isNaN(margem)) ? margem / 100 : 0;
   const metaF   = (typeof metaRoas === 'number' && !isNaN(metaRoas)) ? metaRoas / 100 : 0;
 
-  // Uma linha por canal (segue o filtro global de canal via `channels`).
-  const rows = (channels || []).map(c => {
-    const pmc = pmByCh[c.channel], rec = recentByCh[c.channel];
-    const mult   = (pmc && pmc.d1 > 0) ? pmc.m0 / pmc.d1 : null;                 // Mult M0/D1 (mês ant.)
-    const ticket = (rec && rec.ftd > 0) ? rec.d1lvl / rec.ftd : null;           // "Ticket FTD" = nível D1/FTD
-    const m0proj = (mult != null && ticket != null) ? mult * ticket : null;     // M0 proj / FTD
-    const ggr    = (m0proj != null) ? m0proj * margemF : null;                  // GGR / FTD
-    const teto   = (ggr != null && metaF > 0) ? ggr / metaF : null;             // Teto CAC
-    const cac    = (c.spend != null && c.spend > 0 && c.ftdQty > 0) ? c.spend / c.ftdQty : null;
-    const folga  = (teto != null && cac != null) ? teto - cac : null;
-    const ratio  = (teto != null && cac != null && cac > 0) ? teto / cac : null;
-    return { ch: c.channel, mult, ticket, m0proj, ggr, teto, cac, folga, ratio, ftd: rec ? rec.ftd : 0, spend: c.spend, ftdQty: c.ftdQty };
-  }).sort((a, b) => (b.ftd || 0) - (a.ftd || 0));
+  // Totais da JANELA por canal (faixa filtrada): valor total de FTD + nº de FTDs — p/ projetar M0/GGR totais.
+  const winByCh = React.useMemo(() => {
+    const m = {};
+    (retencaoFaixa || []).forEach(r => {
+      if (!selFx(r.faixa)) return;
+      const o = m[r.canal] || (m[r.canal] = { ftdTotal: 0, ftdQty: 0 });
+      o.ftdTotal += r.ftdTotal || 0;
+      o.ftdQty += r.qtdFtds || 0;
+    });
+    return m;
+  }, [retencaoFaixa, faixaKey]);
 
-  // Totais blended: projeta M0$ por canal (mult × nível D1) e divide pela soma de FTDs.
+  // Uma linha por canal — SÓ canais de crescimento (Meta, Google, TikTok, Kwai, Programática).
+  const rows = (channels || []).filter(c => isGrowthCh_(c.channel)).map(c => {
+    const pmc = pmByCh[c.channel], rec = recentByCh[c.channel], win = winByCh[c.channel];
+    const mult    = (pmc && pmc.d1 > 0) ? pmc.m0 / pmc.d1 : null;                 // Mult M0/D1 (mês ant.)
+    const ticket  = (rec && rec.ftd > 0) ? rec.d1lvl / rec.ftd : null;           // "Ticket FTD" = nível D1/FTD
+    const m0proj  = (mult != null && ticket != null) ? mult * ticket : null;     // M0 proj / FTD
+    const ggr     = (m0proj != null) ? m0proj * margemF : null;                  // GGR / FTD
+    const teto    = (ggr != null && metaF > 0) ? ggr / metaF : null;             // Teto CAC
+    const cac     = (c.spend != null && c.spend > 0 && c.ftdQty > 0) ? c.spend / c.ftdQty : null;
+    const folga   = (teto != null && cac != null) ? teto - cac : null;
+    const ratio   = (teto != null && cac != null && cac > 0) ? teto / cac : null;
+    const ftdTot  = win ? win.ftdTotal : null;                                   // valor total de FTD do canal (janela)
+    const winFtd  = win ? win.ftdQty : 0;                                        // nº de FTDs do canal (janela)
+    const m0Total = (m0proj != null && winFtd > 0) ? m0proj * winFtd : null;     // M0 total projetado (montante)
+    const ggrTot  = (m0Total != null) ? m0Total * margemF : null;                // GGR total projetado = M0 total × margem
+    return { ch: c.channel, mult, ticket, m0proj, ggr, teto, cac, folga, ratio, ftd: rec ? rec.ftd : 0, spend: c.spend, ftdQty: c.ftdQty, ftdTot, m0Total, ggrTot };
+  }).sort((a, b) => (b.ftdTot || 0) - (a.ftdTot || 0));
+
+  // Totais: per-FTD blended (mult × nível D1 ÷ Σ FTDs) + somas de montante (FTD/M0/GGR total).
   const T = rows.reduce((a, r) => {
     if (r.m0proj != null) { a.projM0 += r.m0proj * r.ftd; a.ftd += r.ftd; }
     if (r.spend != null && r.spend > 0 && r.ftdQty > 0) { a.spend += r.spend; a.ftdQty += r.ftdQty; }
+    if (r.ftdTot != null) a.ftdTot += r.ftdTot;
+    if (r.m0Total != null) a.m0Total += r.m0Total;
+    if (r.ggrTot != null) a.ggrTot += r.ggrTot;
     return a;
-  }, { projM0: 0, ftd: 0, spend: 0, ftdQty: 0 });
+  }, { projM0: 0, ftd: 0, spend: 0, ftdQty: 0, ftdTot: 0, m0Total: 0, ggrTot: 0 });
   const totTicketM0 = T.ftd > 0 ? T.projM0 / T.ftd : null;       // M0 proj/FTD blended
   const totTeto = (totTicketM0 != null && metaF > 0) ? (totTicketM0 * margemF) / metaF : null;
   const totCac = T.ftdQty > 0 ? T.spend / T.ftdQty : null;
   const totFolga = (totTeto != null && totCac != null) ? totTeto - totCac : null;
   const totRatio = (totTeto != null && totCac != null && totCac > 0) ? totTeto / totCac : null;
 
-  const chLabel = chLabel_(chFilter);
-  const GREEN = '#34d399', ORANGE = '#f97316';
+  const GREEN = '#34d399', ORANGE = '#f97316', divCol = { borderLeft: '2px solid var(--border)' };
   const pctInput = (val, set, color) => (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
       <input type="number" step="0.01" value={val === '' ? '' : val}
@@ -2265,7 +2283,7 @@ function TabCacCalculator({ retencaoFaixa, channels, chFilter, meta }) {
       <div className="tab-header">
         <div>
           <h1>CAC Calculator</h1>
-          <div className="subtitle">Teto de CAC por canal = quanto dá pra pagar por FTD mantendo a meta de ROAS GGR M0 — a partir do depósito M0 projetado (D1 recente × M0/D1 do mês anterior)</div>
+          <div className="subtitle">Teto de CAC por canal de crescimento = quanto dá pra pagar por FTD mantendo a meta de ROAS GGR M0 — a partir do depósito M0 projetado (D1 recente × M0/D1 do mês anterior). Também projeta M0 e GGR totais por canal.</div>
         </div>
         <div className="slicer-group">
           <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Faixa FTD</label>
@@ -2309,7 +2327,7 @@ function TabCacCalculator({ retencaoFaixa, channels, chFilter, meta }) {
       </div>
 
       <div className="support">
-        <div className="support-title">Teto CAC por Canal · {chLabel} · {faixaLabelTxt} · base D1 {d1Basis === 'w7' ? 'média 7d' : dm_(lastDay)}</div>
+        <div className="support-title">Teto CAC por Canal · Crescimento · {faixaLabelTxt} · base D1 {d1Basis === 'w7' ? 'média 7d' : dm_(lastDay)}</div>
         <div className="table-scroll"><table className="ch-table">
           <thead>
             <tr>
@@ -2321,6 +2339,9 @@ function TabCacCalculator({ retencaoFaixa, channels, chFilter, meta }) {
               <th title="GGR/FTD ÷ meta ROAS GGR M0 = máximo CAC que mantém a meta">Teto CAC</th>
               <th title="CAC realizado = Investimento ÷ FTD qtd (janela do slicer)">CAC atual</th>
               <th title="Teto CAC − CAC atual. Verde = folga p/ pagar mais; vermelho = pagando acima do teto">Folga</th>
+              <th style={divCol} title="Valor total de FTD (1º depósito) do canal na janela">FTD total</th>
+              <th title="M0 proj/FTD × nº de FTDs do canal na janela = depósito M0 total projetado">M0 total proj</th>
+              <th title="M0 total projetado × margem GGR = GGR total projetado">GGR total proj</th>
             </tr>
           </thead>
           <tbody>
@@ -2334,12 +2355,15 @@ function TabCacCalculator({ retencaoFaixa, channels, chFilter, meta }) {
                 <td style={{ fontWeight: 700 }}>{fmtBRL(r.teto)}</td>
                 <td>{fmtBRL(r.cac)}</td>
                 <td className={r.ratio != null ? 'ch-band-' + farolFromPct(r.ratio) : ''}>{r.folga != null ? fmtBRL(r.folga) : '—'}</td>
+                <td style={divCol}>{fmtBRL(r.ftdTot)}</td>
+                <td>{fmtBRL(r.m0Total)}</td>
+                <td style={{ color: GREEN, fontWeight: 600 }}>{fmtBRL(r.ggrTot)}</td>
               </tr>
             ))}
           </tbody>
           <tfoot>
             <tr>
-              <td>Total {chLabel}</td>
+              <td>Total · Crescimento</td>
               <td>—</td>
               <td>—</td>
               <td>{fmtBRL(totTicketM0)}</td>
@@ -2347,12 +2371,16 @@ function TabCacCalculator({ retencaoFaixa, channels, chFilter, meta }) {
               <td style={{ fontWeight: 700 }}>{fmtBRL(totTeto)}</td>
               <td>{fmtBRL(totCac)}</td>
               <td className={totRatio != null ? 'ch-band-' + farolFromPct(totRatio) : ''}>{totFolga != null ? fmtBRL(totFolga) : '—'}</td>
+              <td style={divCol}>{fmtBRL(T.ftdTot || null)}</td>
+              <td>{fmtBRL(T.m0Total || null)}</td>
+              <td style={{ color: GREEN, fontWeight: 700 }}>{fmtBRL(T.ggrTot || null)}</td>
             </tr>
           </tfoot>
         </table></div>
         <div className="ch-note">
-          Uma linha por canal (segue o filtro de canal do topo). O <strong>Teto CAC</strong> é o quanto dá pra pagar por FTD para o ROAS GGR M0 bater a meta;
+          Só <strong>canais de crescimento</strong> (Meta, Google, TikTok, Kwai, Programática). O <strong>Teto CAC</strong> é o quanto dá pra pagar por FTD para o ROAS GGR M0 bater a meta;
           a coluna <strong>Folga</strong> compara com o CAC realizado (verde ≥ teto, vermelho abaixo). D0 está incluído nos níveis D1/M0 (mesma convenção dos multiplicadores D1/FTD e M0/FTD da aba Ret. Faixa).
+          <strong> FTD total</strong> = valor do 1º depósito do canal na janela · <strong>M0 total proj</strong> = M0 proj/FTD × nº de FTDs do canal · <strong>GGR total proj</strong> = M0 total × margem GGR.
           Filtrar por faixa recalcula a projeção; o CAC realizado é do canal inteiro (o Investimento não é rateado por faixa).
         </div>
       </div>
