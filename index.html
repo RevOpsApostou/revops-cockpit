@@ -538,6 +538,55 @@ const MOCK_GGR_CHANNELS = [
   { channel: 'Social Media',  ggr: 54300,  spend: null, freespin: 4100, ggrCasino: 55685, ggrEsporte: 2715, ggrLoteria: 0, bonus: 10860 },
 ];
 
+// Mock — GGR por safra (M0/M1/M2/M3+) (modo dev). Live vem de payload.ggrSafra.
+// Existe SÓ pra o toggle de safra (Todas/M0/M1/M2/M3+) aparecer durante o load, igual todas as
+// outras dimensões já têm mock — senão ele some no 1º acesso (mock não tinha safra). {ggr,ggrM1,dep,depM1}.
+const MOCK_GGR_SAFRA = {
+  m0: [
+    { channel: 'Meta',   ggr: 235800, ggrM1: 218400, dep: 1680000, depM1: 1510000 },
+    { channel: 'Google', ggr: 188100, ggrM1: 172300, dep: 1240000, depM1: 1180000 },
+    { channel: 'TikTok', ggr: 62800,  ggrM1: 58200,  dep: 448000,  depM1: 420000 },
+    { channel: 'Kwai',   ggr: -4400,  ggrM1: -3900,  dep: 96000,   depM1: 88000 },
+  ],
+  m1: [
+    { channel: 'Meta',   ggr: 168400, ggrM1: 154200, dep: 980000, depM1: 910000 },
+    { channel: 'Google', ggr: 132900, ggrM1: 121800, dep: 720000, depM1: 690000 },
+    { channel: 'TikTok', ggr: 41200,  ggrM1: 38900,  dep: 262000, depM1: 248000 },
+  ],
+  m2: [
+    { channel: 'Meta',   ggr: 121600, ggrM1: 118300, dep: 640000, depM1: 620000 },
+    { channel: 'Google', ggr: 98700,  ggrM1: 94100,  dep: 470000, depM1: 452000 },
+    { channel: 'TikTok', ggr: 28900,  ggrM1: 27400,  dep: 175000, depM1: 168000 },
+  ],
+  m3plus: [
+    { channel: 'Meta',   ggr: 86600, ggrM1: 82100, dep: 410000, depM1: 396000 },
+    { channel: 'Google', ggr: 68400, ggrM1: 65200, dep: 350000, depM1: 338000 },
+  ],
+};
+
+// Mock — invest + GGR acumulado por safra (ROAS de coorte) (modo dev). Live vem de payload.ggrSafraRoas.
+const MOCK_GGR_SAFRA_ROAS = {
+  m0: [
+    { channel: 'Meta',   invest: 1842300, cumGgr: 235800 },
+    { channel: 'Google', invest: 1120800, cumGgr: 188100 },
+    { channel: 'TikTok', invest: 421500,  cumGgr: 62800 },
+  ],
+  m1: [
+    { channel: 'Meta',   invest: 1720000, cumGgr: 403200 },
+    { channel: 'Google', invest: 1080000, cumGgr: 312400 },
+    { channel: 'TikTok', invest: 398000,  cumGgr: 89100 },
+  ],
+  m2: [
+    { channel: 'Meta',   invest: 1560000, cumGgr: 612800 },
+    { channel: 'Google', invest: 980000,  cumGgr: 498700 },
+    { channel: 'TikTok', invest: 372000,  cumGgr: 168900 },
+  ],
+  m3plus: [
+    { channel: 'Meta',   invest: 245000, cumGgr: 372600 },
+    { channel: 'Google', invest: 158000, cumGgr: 268400 },
+  ],
+};
+
 // Mock — payback de GGR por canal (modo dev). Live vem de payload.ggrPayback.
 // paybackDays = dias até o GGR acumulado da safra cobrir o investimento (safras maduras, horizonte 90d).
 const MOCK_GGR_PAYBACK = {
@@ -3265,8 +3314,8 @@ function App({ user, onLogout, config }) {
     channels: MOCK_CHANNELS,
     retentionChannels: MOCK_RETENTION_CHANNELS,
     ggrChannels: MOCK_GGR_CHANNELS,
-    ggrSafra: null,            // GGR por safra (M0/M1/M2/M3+) — live vem de payload.ggrSafra
-    ggrSafraRoas: null,        // invest + GGR acumulado por safra (cohort ROAS) — live vem de payload.ggrSafraRoas
+    ggrSafra: MOCK_GGR_SAFRA,       // GGR por safra (M0/M1/M2/M3+) — mock durante o load; live vem de payload.ggrSafra
+    ggrSafraRoas: MOCK_GGR_SAFRA_ROAS, // invest + GGR acumulado por safra (cohort ROAS) — live vem de payload.ggrSafraRoas
     monthlyClose: null,        // depósitos por safra {act,bp} — aba Monthly Close
     ggrPayback: MOCK_GGR_PAYBACK,
     dailyCohort: MOCK_DAILY_COHORT,
@@ -3308,8 +3357,8 @@ function App({ user, onLogout, config }) {
           channels: payload.channels,
           retentionChannels: payload.retentionChannels,
           ggrChannels: payload.ggrChannels,
-          ggrSafra: payload.ggrSafra || null,
-          ggrSafraRoas: payload.ggrSafraRoas || null,
+          ggrSafra: payload.ggrSafra || prev.ggrSafra,        // mantém o último bom (ou mock) se o live vier vazio → toggle de safra nunca some
+          ggrSafraRoas: payload.ggrSafraRoas || prev.ggrSafraRoas,
           monthlyClose: payload.monthlyClose || null,
           ggrPayback: payload.ggrPayback || prev.ggrPayback,
           dailyCohort: payload.dailyCohort || prev.dailyCohort,
