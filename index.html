@@ -1413,6 +1413,14 @@ function TabGgr({ M, ggrChannels, ggrSafra, ggrSafraRoas, ggrPayback }) {
   const safraChans = safraActive ? (ggrSafra[safra] || []) : null;
   const safraGgr = safraChans ? safraChans.reduce((a, c) => a + (c.ggr || 0), 0) : null;
   const safraGgrM1 = safraChans ? safraChans.reduce((a, c) => a + (c.ggrM1 || 0), 0) : null;
+  // Depósitos por safra (backend manda dep/depM1 por canal) → card GGR/Depósito da safra + vs M-1.
+  const safraDep = safraChans ? safraChans.reduce((a, c) => a + (c.dep || 0), 0) : null;
+  const safraDepM1 = safraChans ? safraChans.reduce((a, c) => a + (c.depM1 || 0), 0) : null;
+  const safraGgrPerDep = (safraGgr != null && safraDep > 0) ? safraGgr / safraDep : null;
+  const safraGgrPerDepM1 = (safraGgrM1 != null && safraDepM1 > 0) ? safraGgrM1 / safraDepM1 : null;
+  // Close Trend da safra = GGR da safra escalado pro fim do mês com a MESMA razão do total (proj ÷ atual).
+  const ggrTrendRatio = (M.ggrTrend && M.ggrTrend.act != null && M.ggr && M.ggr.act) ? M.ggrTrend.act / M.ggr.act : null;
+  const safraTrend = (ggrTrendRatio != null && safraGgr != null) ? safraGgr * ggrTrendRatio : null;
   const totalGgr = (M.ggr && M.ggr.act) || null;
   const safraShare = (safraGgr != null && totalGgr) ? safraGgr / totalGgr : null;
   // ROAS de coorte da safra: invest = spend de aquisição da safra · cumGgr = GGR acumulado desde o FTD
@@ -1460,14 +1468,8 @@ function TabGgr({ M, ggrChannels, ggrSafra, ggrSafraRoas, ggrPayback }) {
         <React.Fragment>
           <div className="hero-grid">
             <Hero metric={vcard('GGR ' + safraLabel, safraGgr, safraGgrM1)} />
-            <Hero metric={{ act: safraShare, m1: null, bp: null, pctBp: null, fmt: 'pct', label: '% do GGR total' }} />
-            {roasChans && roasChans.length > 0 && (
-              <React.Fragment>
-                <Hero metric={{ act: safraInvest, m1: null, bp: null, pctBp: null, fmt: 'brl', label: 'Investimento · safra ' + safraLabel }} />
-                <Hero metric={{ act: safraCumGgr, m1: null, bp: null, pctBp: null, fmt: 'brl', label: 'GGR acum. · safra ' + safraLabel }} />
-                <Hero metric={{ act: safraRoas, m1: null, bp: null, pctBp: null, fmt: 'multiple', label: 'ROAS GGR · coorte' }} />
-              </React.Fragment>
-            )}
+            <Hero metric={{ act: safraGgrPerDep, m1: safraGgrPerDepM1, bp: null, pctBp: null, fmt: 'pct', label: 'GGR / Depósito' }} />
+            <Hero metric={{ act: safraTrend, m1: null, bp: null, pctBp: null, fmt: 'brl', label: 'Close Trend GGR' }} />
           </div>
           {safraChans && safraChans.length > 0 && (
             <div className="support">
