@@ -1501,7 +1501,7 @@ function TabGgr({ M, ggrChannels, ggrSafra, ggrSafraRoas, ggrPayback }) {
               </table></div>
               <div className="ch-note">
                 <strong>Safra {safraLabel}</strong> = GGR (= NGR do painel) gerado nesta janela por jogadores de idade de coorte {safraDesc[safra]}. A soma M0 + M1 + M2 + M3+ = o GGR <strong>Todas</strong>. O card <strong>GGR {safraLabel}</strong> traz o vs M-1 (mesma safra, mesma janela do mês anterior).
-                {roasChans && roasChans.length > 0 && <span> <strong>Investimento</strong> = spend de aquisição da safra ({safra === 'm0' ? 'este mês' : safra === 'm1' ? 'mês passado' : safra === 'm2' ? '2 meses atrás' : '3+ meses atrás'}). <strong>ROAS GGR · coorte</strong> = <strong>GGR acum.</strong> da safra (acumulado desde o FTD, base casino+sport da cohort view) ÷ investimento. Só coortes com mídia paga rastreada (a partir de mar/2026) — por isso o M3+ cobre só as safras pagas, não as orgânicas antigas.</span>}
+                {roasChans && roasChans.length > 0 && <span> <strong>Investimento</strong> = spend de aquisição da safra ({safra === 'm0' ? 'este mês' : safra === 'm1' ? 'mês passado' : safra === 'm2' ? '2 meses atrás' : '3+ meses atrás'}). <strong>ROAS GGR · coorte</strong> = <strong>GGR acum.</strong> da safra (NGR net acumulado desde o FTD — MESMA base da coluna GGR, por isso o GGR acum. do M0 = o GGR M0) ÷ investimento. Só coortes com mídia paga rastreada (a partir de mar/2026) — por isso o M3+ cobre só as safras pagas, não as orgânicas antigas.</span>}
               </div>
             </div>
           )}
