@@ -2260,7 +2260,7 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
   const totRoas = (T.spend > 0) ? T.ggrTot / T.spend : null;   // ROAS blended = Σ GGR total ÷ Σ Investimento
   const totM0estM = (T.ftdTot > 0) ? T.m0Total / T.ftdTot : null;   // Mult M0/FTD blended = Σ M0 total ÷ Σ FTD$
 
-  const GREEN = '#34d399', ORANGE = 'var(--accent-orange)', divCol = { borderLeft: '2px solid var(--border)' };
+  const GREEN = '#34d399', ORANGE = '#FF8C00', divCol = { borderLeft: '2px solid var(--border)' };   // laranja Apostou (claramente laranja, não o red-orange #f97316)
   const pctInput = (val, set, color) => (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
       <input type="number" step="0.01" value={val === '' ? '' : val}
@@ -2274,7 +2274,7 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
       <div className="tab-header">
         <div>
           <h1>CAC Calculator</h1>
-          <div className="subtitle">Teto de CAC por canal de crescimento = quanto dá pra pagar por FTD mantendo a meta de ROAS GGR M0 — M0 estimado (Mult M0/D1 do último coorte 30d × MULT D1/FTD do mês corrente × FTD médio). Também mostra Investimento e projeta M0/GGR totais por canal.</div>
+          <div className="subtitle">Teto de CAC por canal de crescimento = quanto dá pra pagar por FTD mantendo a meta de ROAS GGR M0 — Teto = multiplicador D30 × ticket FTD × margem ÷ meta. Também mostra Investimento e projeta D30/GGR totais por canal.</div>
         </div>
         <div className="slicer-group">
           <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Faixa FTD</label>
@@ -2291,7 +2291,9 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
           </div>
           <div style={{ textAlign: 'center' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', fontSize: '15px', paddingBottom: '8px' }}>
-              <b style={{ color: ORANGE }}>M0 estimado / FTD</b>
+              <b style={{ color: ORANGE }}>multiplicador D30</b>
+              <span style={{ color: 'var(--text-muted)' }}>×</span>
+              <span>ticket FTD</span>
               <span style={{ color: 'var(--text-muted)' }}>×</span>
               {pctInput(margem, setMargem, GREEN)}
             </div>
@@ -2303,9 +2305,9 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
           </div>
         </div>
         <div className="ch-note" style={{ marginTop: '12px' }}>
-          <strong>M0 estimado/FTD</strong> = <strong>Mult M0/D1</strong> × <strong>MULT D1/FTD (MTD)</strong> × <strong>FTD médio</strong>.
-          <strong> Mult. M0/D1</strong> = (MULT 30D/FTD ÷ MULT D1/FTD) do <strong>último coorte de 30 dias fechado</strong> (FTD até {completeBefore ? completeBefore.slice(8,10)+'/'+completeBefore.slice(5,7) : '—'}) = (Σ D0 + Σ val_d30) ÷ (Σ D0 + Σ val_d1) — os multiplicadores /FTD incluem o D0 (ex. Google 6,32÷2,81 = 2,25).
-          <strong> MULT D1/FTD (MTD)</strong> = (Σ D0 + Σ val_d1) ÷ Σ FTD$ do mês corrente (ex. Google 2,67 → M0 est mult = 2,25×2,67 = 6,01). GGR/FTD = M0 estimado × margem; Teto = GGR/FTD ÷ meta.
+          <strong>multiplicador D30</strong> = Mult M0/D1 (coorte) × MULT D1/FTD (MTD). <strong>ticket FTD</strong> = FTD médio do mês corrente. GGR estimado/FTD = multiplicador D30 × ticket FTD × margem; <strong>Teto CAC</strong> = GGR/FTD ÷ meta.
+          <strong> Mult M0/D1</strong> = (MULT 30D/FTD ÷ MULT D1/FTD) do <strong>último coorte de 30 dias fechado</strong> (FTD até {completeBefore ? completeBefore.slice(8,10)+'/'+completeBefore.slice(5,7) : '—'}) = (Σ D0 + Σ val_d30) ÷ (Σ D0 + Σ val_d1) — os multiplicadores /FTD incluem o D0 (ex. Google 6,32÷2,81 = 2,25).
+          <strong> MULT D1/FTD (MTD)</strong> = (Σ D0 + Σ val_d1) ÷ Σ FTD$ do mês corrente (ex. Google 2,67 → multiplicador D30 = 2,25×2,67 = 6,01).
           <strong> Margem GGR</strong> e <strong>meta ROAS GGR M0</strong> são editáveis acima.
           {coFetch.loading ? ' · carregando coorte…' : ''}{coFetch.error ? ' · erro ao carregar coorte' : ''}
         </div>
@@ -2323,7 +2325,7 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
               <th title="Teto CAC − CAC atual. Verde = folga p/ pagar mais; vermelho = pagando acima do teto">Folga</th>
               <th style={divCol} title="Investimento do canal (mesma fonte do Farol: tbl_performance_daily, com imposto Meta)">Investimento</th>
               <th title="Valor total de FTD (1º depósito) do canal na janela">FTD total</th>
-              <th title="M0 est/FTD × nº de FTDs do canal na janela = depósito M0 total estimado">M0 total proj</th>
+              <th title="multiplicador D30 × Σ FTD$ do canal na janela = depósito D30 total estimado">D30 projetado</th>
               <th title="M0 total estimado × margem GGR = GGR total estimado">GGR total proj</th>
               <th title="ROAS = GGR total estimado ÷ Investimento">ROAS</th>
             </tr>
