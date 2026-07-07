@@ -2260,7 +2260,7 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
   const totRoas = (T.spend > 0) ? T.ggrTot / T.spend : null;   // ROAS blended = Σ GGR total ÷ Σ Investimento
   const totM0estM = (T.ftdTot > 0) ? T.m0Total / T.ftdTot : null;   // Mult M0/FTD blended = Σ M0 total ÷ Σ FTD$
 
-  const GREEN = '#34d399', ORANGE = '#f97316', divCol = { borderLeft: '2px solid var(--border)' };
+  const GREEN = '#34d399', ORANGE = 'var(--accent-orange)', divCol = { borderLeft: '2px solid var(--border)' };
   const pctInput = (val, set, color) => (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
       <input type="number" step="0.01" value={val === '' ? '' : val}
@@ -2317,8 +2317,8 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
           <thead>
             <tr>
               <th>Canal</th>
-              <th title="Mult M0/FTD estimado = Mult M0/D1 do coorte 30d (30D/FTD ÷ D1/FTD) × MULT D1/FTD do mês corrente. Ex. Google: 2,25 × 2,67 = 6,01">Mult M0/FTD</th>
-              <th title="M0 estimado/FTD (= Mult M0/FTD × FTD médio) × margem GGR ÷ meta ROAS GGR M0 = máximo CAC que mantém a meta">Teto CAC</th>
+              <th style={{ color: ORANGE }} title="Multiplicador D30/FTD estimado = Mult M0/D1 do coorte 30d (30D/FTD ÷ D1/FTD) × MULT D1/FTD do mês corrente. Ex. Google: 2,25 × 2,67 = 6,01">multiplicador D30/FTD</th>
+              <th title="M0 estimado/FTD (= multiplicador D30/FTD × FTD médio) × margem GGR ÷ meta ROAS GGR M0 = máximo CAC que mantém a meta">Teto CAC</th>
               <th title="CAC realizado = Investimento ÷ FTD qtd (janela do slicer)">CAC atual</th>
               <th title="Teto CAC − CAC atual. Verde = folga p/ pagar mais; vermelho = pagando acima do teto">Folga</th>
               <th style={divCol} title="Investimento do canal (mesma fonte do Farol: tbl_performance_daily, com imposto Meta)">Investimento</th>
@@ -2361,7 +2361,7 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
         </table></div>
         <div className="ch-note">
           Só <strong>canais de crescimento</strong> (Meta, Google, TikTok, Kwai, Programática). O <strong>Teto CAC</strong> é o quanto dá pra pagar por FTD para o ROAS GGR M0 bater a meta;
-          a coluna <strong>Folga</strong> compara com o CAC realizado (verde ≥ teto, vermelho abaixo). <strong>Mult M0/FTD</strong> = M0/FTD estimado = [Mult M0/D1 do coorte 30d (30D/FTD ÷ D1/FTD, incl. D0)] × [MULT D1/FTD do mês corrente] (ex. Google 2,25 × 2,67 = 6,01); a margem GGR corre sobre todo o M0 estimado.
+          a coluna <strong>Folga</strong> compara com o CAC realizado (verde ≥ teto, vermelho abaixo). <strong>multiplicador D30/FTD</strong> = M0/FTD estimado = [Mult M0/D1 do coorte 30d (30D/FTD ÷ D1/FTD, incl. D0)] × [MULT D1/FTD do mês corrente] (ex. Google 2,25 × 2,67 = 6,01); a margem GGR corre sobre todo o M0 estimado.
           <strong> Investimento</strong> = spend do canal (mesma fonte do Farol: <code>tbl_performance_daily</code>, com imposto Meta +13,83%) · <strong>FTD total</strong> = valor do 1º depósito do canal na janela · <strong>M0 total proj</strong> = M0 est/FTD × nº de FTDs do canal · <strong>GGR total proj</strong> = M0 total × margem GGR · <strong>ROAS</strong> = GGR total estimado ÷ Investimento.
           Filtrar por faixa recalcula a projeção; Investimento e CAC realizado são do canal inteiro (o spend não é rateado por faixa).
         </div>
