@@ -2264,10 +2264,19 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
     m0.forEach(c => { if (isGrowthCh_(c.channel)) { g += c.ggr || 0; d += c.dep || 0; } });
     return d > 0 ? (g / d) * 100 : null;
   }, [ggrSafra]);
-  const margemEff = (margem != null && margem !== '') ? margem : liveMarginM0;   // override do usuário, ou o live
-  const margemF = (typeof margemEff === 'number' && !isNaN(margemEff)) ? margemEff / 100 : 0;
+  const margemEff = (margem != null && margem !== '') ? margem : liveMarginM0;   // p/ o input: override do usuário, ou o live blend
   const margemInputVal = (typeof margemEff === 'number' && !isNaN(margemEff)) ? Math.round(margemEff * 100) / 100 : '';
   const metaF   = (typeof metaRoas === 'number' && !isNaN(metaRoas)) ? metaRoas / 100 : 0;
+
+  // Margem GGR M0 POR CANAL (GGR M0 ÷ Dep M0 do canal, ao vivo do ggrSafra) — alimenta o Teto de CADA linha.
+  // O campo % da fórmula é OVERRIDE GLOBAL: preenchido = fixa a MESMA margem em todos (simulação);
+  // vazio = cada canal usa a sua margem M0 ao vivo (Total = blend growth = liveMarginM0, = card da aba GGR no escopo growth).
+  const m0ByCh = React.useMemo(() => {
+    const m = {}; ((ggrSafra && ggrSafra.m0) || []).forEach(c => { m[c.channel] = { ggr: c.ggr || 0, dep: c.dep || 0 }; });
+    return m;
+  }, [ggrSafra]);
+  const margemOverrideF = (margem != null && margem !== '' && !isNaN(Number(margem))) ? Number(margem) / 100 : null;
+  const blendMarginF = (typeof liveMarginM0 === 'number' && !isNaN(liveMarginM0)) ? liveMarginM0 / 100 : 0;
 
   // Base do MÊS CORRENTE (MTD, calendário) por canal: MULT D1/FTD = (Σ D0 + Σ val_d1) ÷ Σ FTD$.  Ex. Google: 2,67.
   const winByCh = React.useMemo(() => {
@@ -2298,14 +2307,17 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
     const m0estM  = (mult != null && baseD1 != null) ? mult * baseD1 : null;     // MULT M0/FTD estimado (Google ~6,01)
     const ftdMed  = (win && winFtd > 0) ? winFtdTot / winFtd : null;             // FTD médio (R$) do mês corrente
     const m0estFtd = (m0estM != null && ftdMed != null) ? m0estM * ftdMed : null; // M0 estimado R$ por FTD
-    const teto    = (m0estFtd != null && metaF > 0) ? (m0estFtd * margemF) / metaF : null;  // Teto CAC
+    const chM0    = m0ByCh[c.channel];
+    const chMargin = (chM0 && chM0.dep > 0) ? chM0.ggr / chM0.dep : null;         // % GGR/Dep M0 do canal (ao vivo)
+    const useMarginF = margemOverrideF != null ? margemOverrideF : (chMargin != null ? chMargin : blendMarginF);  // margem do canal, ou override global
+    const teto    = (m0estFtd != null && metaF > 0) ? (m0estFtd * useMarginF) / metaF : null;  // Teto CAC (margem do canal)
     const cac     = (spend != null && spend > 0 && ftdQtyC > 0) ? spend / ftdQtyC : null;
     const folga   = (teto != null && cac != null) ? teto - cac : null;
     const ratio   = (teto != null && cac != null && cac > 0) ? teto / cac : null;
     const m0Total = (m0estFtd != null && winFtd > 0) ? m0estFtd * winFtd : null;  // M0 total estimado (montante)
-    const ggrTot  = (m0Total != null) ? m0Total * margemF : null;                // GGR total estimado = M0 total × margem
+    const ggrTot  = (m0Total != null) ? m0Total * useMarginF : null;             // GGR total estimado = M0 total × margem do canal
     const roas    = (ggrTot != null && spend != null && spend > 0) ? ggrTot / spend : null;  // ROAS = GGR total estimado ÷ Investimento
-    return { ch: c.channel, mult, m0estM, teto, cac, folga, ratio, ftd: winFtd, spend, ftdQty: ftdQtyC, ftdTot: winFtdTot, m0Total, ggrTot, roas };
+    return { ch: c.channel, mult, m0estM, ftdMed, chMargin, teto, cac, folga, ratio, ftd: winFtd, spend, ftdQty: ftdQtyC, ftdTot: winFtdTot, m0Total, ggrTot, roas };
   }).sort((a, b) => (b.ftdTot || 0) - (a.ftdTot || 0));
 
   // Totais: M0 estimado/FTD blended (Σ M0 total ÷ Σ FTDs) + somas de montante (Investimento/FTD/M0/GGR total).
@@ -2316,7 +2328,9 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
     return a;
   }, { m0Total: 0, ftd: 0, ggrTot: 0, spend: 0, ftdQty: 0, ftdTot: 0 });
   const totM0estFtd = T.ftd > 0 ? T.m0Total / T.ftd : null;       // M0 estimado/FTD blended
-  const totTeto = (totM0estFtd != null && metaF > 0) ? (totM0estFtd * margemF) / metaF : null;
+  const totMarginF = margemOverrideF != null ? margemOverrideF : blendMarginF;   // Total: override, ou blend growth (= liveMarginM0)
+  const totTicket = T.ftd > 0 ? T.ftdTot / T.ftd : null;          // Ticket médio blended = Σ FTD$ ÷ Σ FTDs
+  const totTeto = (totM0estFtd != null && metaF > 0) ? (totM0estFtd * totMarginF) / metaF : null;
   const totCac = T.ftdQty > 0 ? T.spend / T.ftdQty : null;
   const totFolga = (totTeto != null && totCac != null) ? totTeto - totCac : null;
   const totRatio = (totTeto != null && totCac != null && totCac > 0) ? totTeto / totCac : null;
@@ -2371,7 +2385,7 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
           <strong>multiplicador D30</strong> = Mult M0/D1 (coorte) × MULT D1/FTD (MTD). <strong>ticket FTD</strong> = FTD médio do mês corrente. GGR estimado/FTD = multiplicador D30 × ticket FTD × margem; <strong>Teto CAC</strong> = GGR/FTD ÷ meta.
           <strong> Mult M0/D1</strong> = (MULT 30D/FTD ÷ MULT D1/FTD) do <strong>último coorte de 30 dias fechado</strong> (FTD até {completeBefore ? completeBefore.slice(8,10)+'/'+completeBefore.slice(5,7) : '—'}) = (Σ D0 + Σ val_d30) ÷ (Σ D0 + Σ val_d1) — os multiplicadores /FTD incluem o D0 (ex. Google 6,32÷2,81 = 2,25).
           <strong> MULT D1/FTD (MTD)</strong> = (Σ D0 + Σ val_d1) ÷ Σ FTD$ do mês corrente (ex. Google 2,67 → multiplicador D30 = 2,25×2,67 = 6,01).
-          <strong> Margem GGR</strong> = <strong>GGR/Depósito do M0 ao vivo</strong> (Σ GGR M0 ÷ Σ DEP M0 dos canais growth — mesmo nº do card GGR/Depósito M0 da aba GGR){liveMarginM0 != null ? ' = ' + fmtPct(liveMarginM0 / 100) : ''}; editável acima p/ simular. <strong>meta ROAS GGR M0</strong> também editável.
+          <strong> Margem GGR</strong> = <strong>GGR/Depósito M0 POR CANAL, ao vivo</strong> (GGR M0 ÷ Dep M0 de cada canal) — cada linha usa a sua; o Total é o blend growth{liveMarginM0 != null ? ' = ' + fmtPct(liveMarginM0 / 100) : ''} (= card GGR/Depósito M0 da aba GGR no escopo growth). O <strong>%</strong> acima é OVERRIDE: preenchido, fixa a mesma margem em todos (simulação); vazio, cada canal usa a sua. <strong>meta ROAS GGR M0</strong> também editável.
           {coFetch.loading ? ' · carregando coorte…' : ''}{coFetch.error ? ' · erro ao carregar coorte' : ''}
         </div>
       </div>
@@ -2383,7 +2397,9 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
             <tr>
               <th>Canal</th>
               <th style={{ color: ORANGE }} title="Multiplicador D30/FTD estimado = Mult M0/D1 do coorte 30d (30D/FTD ÷ D1/FTD) × MULT D1/FTD do mês corrente. Ex. Google: 2,25 × 2,67 = 6,01">multiplicador D30/FTD</th>
-              <th title="M0 estimado/FTD (= multiplicador D30/FTD × FTD médio) × margem GGR ÷ meta ROAS GGR M0 = máximo CAC que mantém a meta">Teto CAC</th>
+              <th title="Ticket médio de FTD (1º depósito) do canal no mês corrente = Σ FTD$ ÷ nº de FTDs">Ticket médio</th>
+              <th style={{ color: GREEN }} title="Margem M0 do canal = GGR M0 ÷ Depósito M0 (ao vivo). É ela que corre sobre o M0 estimado da linha; edite o % na fórmula p/ fixar a mesma margem em todos">% GGR/Dep M0</th>
+              <th title="M0 estimado/FTD (= multiplicador D30/FTD × ticket médio) × margem GGR/Dep M0 do canal ÷ meta ROAS GGR M0 = máximo CAC que mantém a meta">Teto CAC</th>
               <th title="CAC realizado = Investimento ÷ FTD qtd (janela do slicer)">CAC atual</th>
               <th title="Teto CAC − CAC atual. Verde = folga p/ pagar mais; vermelho = pagando acima do teto">Folga</th>
               <th style={divCol} title="Investimento do canal (mesma fonte do Farol: tbl_performance_daily, com imposto Meta)">Investimento</th>
@@ -2398,6 +2414,8 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
               <tr key={i}>
                 <td className="ch-name">{r.ch}</td>
                 <td style={{ color: ORANGE, fontWeight: 600 }}>{fmtMultiple(r.m0estM)}</td>
+                <td>{fmtBRL(r.ftdMed)}</td>
+                <td style={{ color: GREEN, fontWeight: 600 }}>{fmtPct(margemOverrideF != null ? margemOverrideF : r.chMargin)}</td>
                 <td style={{ fontWeight: 700 }}>{fmtBRL(r.teto)}</td>
                 <td>{fmtBRL(r.cac)}</td>
                 <td className={r.ratio != null ? 'ch-band-' + farolFromPct(r.ratio) : ''}>{r.folga != null ? fmtBRL(r.folga) : '—'}</td>
@@ -2413,6 +2431,8 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
             <tr>
               <td>Total · Crescimento</td>
               <td style={{ color: ORANGE, fontWeight: 700 }}>{fmtMultiple(totM0estM)}</td>
+              <td>{fmtBRL(totTicket)}</td>
+              <td style={{ color: GREEN, fontWeight: 700 }}>{fmtPct(margemOverrideF != null ? margemOverrideF : (liveMarginM0 != null ? liveMarginM0 / 100 : null))}</td>
               <td style={{ fontWeight: 700 }}>{fmtBRL(totTeto)}</td>
               <td>{fmtBRL(totCac)}</td>
               <td className={totRatio != null ? 'ch-band-' + farolFromPct(totRatio) : ''}>{totFolga != null ? fmtBRL(totFolga) : '—'}</td>
@@ -2426,7 +2446,7 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
         </table></div>
         <div className="ch-note">
           Só <strong>canais de crescimento</strong> (Meta, Google, TikTok, Kwai, Programática). O <strong>Teto CAC</strong> é o quanto dá pra pagar por FTD para o ROAS GGR M0 bater a meta;
-          a coluna <strong>Folga</strong> compara com o CAC realizado (verde ≥ teto, vermelho abaixo). <strong>multiplicador D30/FTD</strong> = M0/FTD estimado = [Mult M0/D1 do coorte 30d (30D/FTD ÷ D1/FTD, incl. D0)] × [MULT D1/FTD do mês corrente] (ex. Google 2,25 × 2,67 = 6,01); a margem GGR corre sobre todo o M0 estimado.
+          a coluna <strong>Folga</strong> compara com o CAC realizado (verde ≥ teto, vermelho abaixo). <strong>multiplicador D30/FTD</strong> = M0/FTD estimado = [Mult M0/D1 do coorte 30d (30D/FTD ÷ D1/FTD, incl. D0)] × [MULT D1/FTD do mês corrente] (ex. Google 2,25 × 2,67 = 6,01). <strong>Ticket médio</strong> = Σ FTD$ ÷ nº de FTDs do canal (mês corrente); <strong>% GGR/Dep M0</strong> = margem M0 do canal (GGR M0 ÷ Dep M0, ao vivo) — é ela que corre sobre o M0 estimado de cada canal (Programática pode ficar negativa em M0; canal sem M0 usa o blend growth).
           <strong> Investimento</strong> = spend do canal (mesma fonte do Farol: <code>tbl_performance_daily</code>, com imposto Meta +13,83%) · <strong>FTD total</strong> = valor do 1º depósito do canal na janela · <strong>M0 total proj</strong> = M0 est/FTD × nº de FTDs do canal · <strong>GGR total proj</strong> = M0 total × margem GGR · <strong>ROAS</strong> = GGR total estimado ÷ Investimento.
           Filtrar por faixa recalcula a projeção; Investimento e CAC realizado são do canal inteiro (o spend não é rateado por faixa).
         </div>
