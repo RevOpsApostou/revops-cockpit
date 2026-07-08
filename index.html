@@ -2210,9 +2210,9 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
 //     M0 proj/FTD = Ticket FTD × Mult  → GGR/FTD = × margem GGR → Teto CAC = ÷ meta ROAS GGR M0
 //   Compara o Teto contra o CAC realizado (Investimento ÷ FTD qtd, da tabela de canais).
 // ============================================================
-function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilter, meta }) {
+function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilter, meta, ggrSafra }) {
   const [faixaSel, setFaixaSel] = React.useState([]);        // multi-select de faixas; [] = todas
-  const [margem, setMargem] = React.useState(15);            // % margem GGR (editável)
+  const [margem, setMargem] = React.useState(null);          // % margem GGR: null = usa o GGR/Dep M0 ao vivo; nº = override do usuário
   const [metaRoas, setMetaRoas] = React.useState(23.72);     // % meta ROAS GGR M0 (editável)
 
   const dataMax = meta && meta.dataMaxDate;
@@ -2254,7 +2254,19 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
     return m;
   }, [coRows, faixaKey, completeBefore]);
 
-  const margemF = (typeof margem === 'number' && !isNaN(margem)) ? margem / 100 : 0;
+  // Margem GGR = GGR/Depósito do M0 ao VIVO (Σ GGR M0 ÷ Σ DEP M0 dos canais growth do ggrSafra) — MESMO
+  // número do card GGR/Depósito M0 da aba GGR. É o % do depósito M0 que vira GGR, então é o que roda
+  // sobre o M0 estimado na fórmula. Editável: se o usuário digitar, usa o override; senão, o live.
+  const liveMarginM0 = React.useMemo(() => {
+    const m0 = ggrSafra && ggrSafra.m0;
+    if (!m0 || !m0.length) return null;
+    let g = 0, d = 0;
+    m0.forEach(c => { if (isGrowthCh_(c.channel)) { g += c.ggr || 0; d += c.dep || 0; } });
+    return d > 0 ? (g / d) * 100 : null;
+  }, [ggrSafra]);
+  const margemEff = (margem != null && margem !== '') ? margem : liveMarginM0;   // override do usuário, ou o live
+  const margemF = (typeof margemEff === 'number' && !isNaN(margemEff)) ? margemEff / 100 : 0;
+  const margemInputVal = (typeof margemEff === 'number' && !isNaN(margemEff)) ? Math.round(margemEff * 100) / 100 : '';
   const metaF   = (typeof metaRoas === 'number' && !isNaN(metaRoas)) ? metaRoas / 100 : 0;
 
   // Base do MÊS CORRENTE (MTD, calendário) por canal: MULT D1/FTD = (Σ D0 + Σ val_d1) ÷ Σ FTD$.  Ex. Google: 2,67.
@@ -2346,7 +2358,7 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
               <span style={{ color: 'var(--text-muted)' }}>×</span>
               <span>ticket FTD</span>
               <span style={{ color: 'var(--text-muted)' }}>×</span>
-              {pctInput(margem, setMargem, GREEN)}
+              {pctInput(margemInputVal, setMargem, GREEN)}
             </div>
             <div style={{ borderTop: '1px solid var(--border)' }} />
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '15px', paddingTop: '8px' }}>
@@ -2359,7 +2371,7 @@ function TabCacCalculator({ retencaoFaixa, channels, componentsByChannel, chFilt
           <strong>multiplicador D30</strong> = Mult M0/D1 (coorte) × MULT D1/FTD (MTD). <strong>ticket FTD</strong> = FTD médio do mês corrente. GGR estimado/FTD = multiplicador D30 × ticket FTD × margem; <strong>Teto CAC</strong> = GGR/FTD ÷ meta.
           <strong> Mult M0/D1</strong> = (MULT 30D/FTD ÷ MULT D1/FTD) do <strong>último coorte de 30 dias fechado</strong> (FTD até {completeBefore ? completeBefore.slice(8,10)+'/'+completeBefore.slice(5,7) : '—'}) = (Σ D0 + Σ val_d30) ÷ (Σ D0 + Σ val_d1) — os multiplicadores /FTD incluem o D0 (ex. Google 6,32÷2,81 = 2,25).
           <strong> MULT D1/FTD (MTD)</strong> = (Σ D0 + Σ val_d1) ÷ Σ FTD$ do mês corrente (ex. Google 2,67 → multiplicador D30 = 2,25×2,67 = 6,01).
-          <strong> Margem GGR</strong> e <strong>meta ROAS GGR M0</strong> são editáveis acima.
+          <strong> Margem GGR</strong> = <strong>GGR/Depósito do M0 ao vivo</strong> (Σ GGR M0 ÷ Σ DEP M0 dos canais growth — mesmo nº do card GGR/Depósito M0 da aba GGR){liveMarginM0 != null ? ' = ' + fmtPct(liveMarginM0 / 100) : ''}; editável acima p/ simular. <strong>meta ROAS GGR M0</strong> também editável.
           {coFetch.loading ? ' · carregando coorte…' : ''}{coFetch.error ? ' · erro ao carregar coorte' : ''}
         </div>
       </div>
