@@ -3079,13 +3079,30 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter) {
     pctBp: (bpv && act != null) ? act / bpv : null,
     lowerBetter: !!lowerBetter });
   const inv = M.invest || {}, fa = M.ftdAmount || {}, dt = M.depTotal || {}, dm0 = M.depM0Total || {};
+  // BP do ROAS Dep M0 = razão do MÊS INTEIRO do plano (bp.month), NÃO prorateada pela janela: o m0tt
+  // diário do plano é front-loaded (runway da coorte), então somar poucos dias contra invest flat INFLA
+  // a razão (jul 1-5 = 2,35 vs mês inteiro = 1,9). Total Casa = m0tt/invest; Growth/canal = Dep M0 Growth(colZ)/invest(colN).
+  const bpM = (bp && bp.month) || null;
+  let roasDepM0Bp = div(dm0.bp, inv.bp);   // fallback: razão da janela (mock / sem bp.month)
+  if (bpM) {
+    if (sel.length) {
+      let dm = 0, iv = 0;
+      sel.forEach(ch => { const b = bpM.byChannel && bpM.byChannel[ch]; if (b) { dm += b.depM0 || 0; iv += b.invest || 0; } });
+      if (iv > 0) roasDepM0Bp = dm / iv;
+    } else if (filter && filter.scope === 'growth') {
+      const g = bpM.growthAgg || {};
+      if (g.invest > 0) roasDepM0Bp = (g.depM0 || 0) / g.invest;
+    } else {
+      const hh = bpM.house || {};
+      if (hh.invest > 0) roasDepM0Bp = (hh.m0tt || 0) / hh.invest;
+    }
+  }
   return {
     cac:         mk('CAC', 'brl', div(inv.act, ftdQtyM), div(B.invest, B.ftd), div(inv.m1, ftdQtyL), true),   // custo: menor=melhor
     ticketFtd:   mk('Tkt Médio FTD', 'brl', div(fa.act, ftdQtyM), div(B.ftdAmount, B.ftd), div(fa.m1, ftdQtyL)),
     roasDepD0:   mk('ROAS Dep D0', 'multiple', div(depD0M, inv.act), div(B.depD0, B.invest), null),
-    // BP escopo-correto: Total Casa = m0tt÷invest (1,88); Growth/canal = depM0 do escopo÷invest (1,53).
-    // dm0.bp/inv.bp já vêm ajustados por escopo (applyBpToM_/applyBpLive_); B.depM0 era só growth → errado no Total.
-    roasDepM0:   mk('ROAS Dep M0', 'multiple', div(dm0.act, inv.act), div(dm0.bp, inv.bp), div(dm0.m1, inv.m1)),
+    // BP = razão do MÊS INTEIRO do plano (roasDepM0Bp, calculado acima) — NÃO prorateada pela janela.
+    roasDepM0:   mk('ROAS Dep M0', 'multiple', div(dm0.act, inv.act), roasDepM0Bp, div(dm0.m1, inv.m1)),
     // FreeSpins/Bonif = custos (menor=melhor). BP plano: meta fixa (flat) de % sobre depósitos. Sem trend (pedido do Luis).
     freespinDep: mk('FreeSpins / Dep', 'pct', div(fs, dt.act), 0.02, null, true),
     bonusDep:    mk('Bonificação / Dep', 'pct', div(bn, dt.act), 0.028, null, true),
