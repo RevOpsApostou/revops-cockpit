@@ -2095,9 +2095,9 @@ function RetMultChart({ srcRF, chFilter, faixaSel, mode, gran, gCurve, dataMax }
   if (!pts.length) return <React.Fragment>{controls}<div className="ch-note">Sem dados p/ o gráfico neste recorte.</div></React.Fragment>;
 
   const n = pts.length;
-  const slotW = n > 14 ? 58 : 104;
-  const padL = 52, padR = 22, padT = 24, padB = 52, plotH = 240;
-  const W = Math.max(560, padL + padR + (n === 1 ? slotW : (n - 1) * slotW));
+  const slotW = n > 20 ? 60 : n > 10 ? 92 : 168;
+  const padL = 56, padR = 26, padT = 28, padB = 56, plotH = 300;
+  const W = Math.max(960, padL + padR + (n === 1 ? slotW : (n - 1) * slotW));
   const H = padT + plotH + padB;
   const plotW = W - padL - padR;
   const xOf = (i) => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
@@ -2112,7 +2112,7 @@ function RetMultChart({ srcRF, chFilter, faixaSel, mode, gran, gCurve, dataMax }
     <React.Fragment>
       {controls}
       <div className="table-scroll">
-        <svg viewBox={`0 0 ${W} ${H}`} width={W} style={{ width: '100%', maxWidth: W, minWidth: Math.min(W, 560), height: 'auto', display: 'block' }} preserveAspectRatio="xMidYMid meet">
+        <svg viewBox={`0 0 ${W} ${H}`} width={W} style={{ width: '100%', maxWidth: W, minWidth: Math.min(W, 700), height: 'auto', display: 'block', margin: '0 auto' }} preserveAspectRatio="xMidYMid meet">
           {gridVals.map((v, i) => (
             <g key={`g${i}`}>
               <line x1={padL} x2={W - padR} y1={yOf(v)} y2={yOf(v)} stroke="var(--border)" strokeWidth="1" strokeDasharray={i === 0 ? undefined : '2 4'} />
