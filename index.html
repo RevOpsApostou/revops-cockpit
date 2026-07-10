@@ -2064,11 +2064,25 @@ const RET_MULT_METRICS = [
   { id: 'D14', key: 'multW2F',  desc: '(D0 + dias 1–14) ÷ FTD' },
   { id: 'D30', key: 'multD30F', desc: '(D0 + dias 1–30) ÷ FTD' },
 ];
-function RetMultChart({ srcRF, chFilter, faixaSel, mode, gran, gCurve, dataMax }) {
+function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallbackRows }) {
   const [metric, setMetric] = usePersistedState('rvops:retChartMetric', 'D1');
   const [xDim, setXDim] = usePersistedState('rvops:retChartDim', 'canal');
   const mDef = RET_MULT_METRICS.find(m => m.id === metric) || RET_MULT_METRICS[1];
-  const data = aggRetFaixaBench_(srcRF, chFilter, faixaSel, mode, gran, gCurve, dataMax, xDim === 'periodo' ? undefined : xDim);
+  // Janela FIXA = últimos 30 DIAS CORRIDOS [dataMax-29, dataMax], SEMPRE (independe do slicer do topo e do
+  // toggle de coorte). Fetch próprio (segue o same-day da aba). Cada ponto = agregado (média ponderada Σ/Σ)
+  // do KPI nos 30 dias — p/ canal/faixa = 1 ponto por grupo; p/ período = série dos 30 dias.
+  const from30 = dataMax ? isoAddDays_(dataMax, -29) : null;
+  const [f30, setF30] = React.useState({ rows: null, loading: false, error: null });
+  React.useEffect(() => {
+    if (!ENDPOINT_URL || !dataMax) return;
+    setF30(s => ({ ...s, loading: true, error: null }));
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${from30}&to=${dataMax}&only=retfaixa${sameday ? '&sameday=1' : ''}`)
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(j => { if (j.error) throw new Error(j.error); setF30({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
+      .catch(e => setF30({ rows: null, loading: false, error: String(e.message || e) }));
+  }, [from30, dataMax, sameday]);
+  const rows30 = f30.rows || (!ENDPOINT_URL ? (fallbackRows || []) : null);
+  const data = aggRetFaixaBench_(rows30 || [], chFilter, faixaSel, mode, gran, null, dataMax, xDim === 'periodo' ? undefined : xDim);
   const dmLabel = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); return m ? `${m[3]}/${m[2]}` : String(s); };
   const pts = (data.rows || []).map(r => ({ label: dmLabel(r.date), y: r[mDef.key] })).filter(p => p.y != null && !isNaN(p.y));
   const ORANGE = 'var(--accent-orange)';
@@ -2092,7 +2106,7 @@ function RetMultChart({ srcRF, chFilter, faixaSel, mode, gran, gCurve, dataMax }
       </span>
     </div>
   );
-  if (!pts.length) return <React.Fragment>{controls}<div className="ch-note">Sem dados p/ o gráfico neste recorte.</div></React.Fragment>;
+  if (!pts.length) return <React.Fragment>{controls}<div className="ch-note">{f30.loading ? 'Carregando últimos 30 dias…' : f30.error ? 'Erro ao carregar os últimos 30 dias.' : 'Sem dados p/ o gráfico neste recorte.'}</div></React.Fragment>;
 
   const n = pts.length;
   const slotW = n > 20 ? 60 : n > 10 ? 92 : 168;
@@ -2131,7 +2145,8 @@ function RetMultChart({ srcRF, chFilter, faixaSel, mode, gran, gCurve, dataMax }
         </svg>
       </div>
       <div className="ch-note">
-        Linha do <strong>multiplicador {mDef.id}/FTD</strong> ({mDef.desc}) por <strong>{xDim === 'canal' ? 'canal' : xDim === 'faixa' ? 'faixa de FTD' : (gran === 'week' ? 'semana' : 'dia') + ' de FTD'}</strong>. Segue os slicers da aba (canal/faixa/modo/same-day/coorte). Escolha o multiplicador (eixo Y) e a dimensão (eixo X) nos botões acima.
+        <strong>Janela fixa: últimos 30 dias corridos</strong> ({from30 ? dmLabel(from30) : '—'}→{dataMax ? dmLabel(dataMax) : '—'}) — <strong>independe do slicer de data do topo</strong>. Linha do <strong>multiplicador {mDef.id}/FTD</strong> ({mDef.desc}) por <strong>{xDim === 'canal' ? 'canal' : xDim === 'faixa' ? 'faixa de FTD' : (gran === 'week' ? 'semana' : 'dia') + ' de FTD'}</strong>: cada ponto = média (ponderada Σ/Σ) do KPI nos 30 dias. Segue canal/faixa/modo/same-day. Escolha o multiplicador (eixo Y) e a dimensão (eixo X) acima.{f30.loading ? ' · carregando…' : ''}{f30.error ? ' · erro' : ''}
+        {' '}<em>Obs.: D7/D14/D30 incluem coortes recentes ainda maturando (janela corrida), então tendem a subestimar; D0/D1 já são maduros.</em>
       </div>
     </React.Fragment>
   );
@@ -2299,8 +2314,8 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
         <RetFaixaTable data={tableData} dateLabel={tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : (gran === 'week' ? 'Semana' : 'Data FTD')} m0Label={cohort ? cohortDays + 'd' : 'M0'} base={multBase} />
       </div>
       <div className="support">
-        <div className="support-title">Multiplicador por dimensão · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''}{coSuffix}</div>
-        <RetMultChart srcRF={srcRF} chFilter={chFilter} faixaSel={faixaSel} mode={mode} gran={gran} gCurve={gCurve} dataMax={dataMax} />
+        <div className="support-title">Multiplicador por dimensão · últimos 30 dias corridos · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''}</div>
+        <RetMultChart chFilter={chFilter} faixaSel={faixaSel} mode={mode} gran={gran} sameday={sameday} dataMax={dataMax} fallbackRows={retencaoFaixa} />
       </div>
       <div className="support">
         <div className="support-title">Ponte de variância · Multiplicador {cohort ? cohortDays + 'd' : 'M0'}/FTD: BP → Realizado (por Canal ou Faixa){sameday ? ' · same-day' : ''}{faixaAll ? '' : ' · ' + faixaLabelTxt}</div>
