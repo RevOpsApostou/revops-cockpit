@@ -1748,6 +1748,7 @@ const MOCK_RETENCAO_FAIXA = (() => {
       const r1 = (0.10 + i * 0.012) * dayF, rw = (0.20 + i * 0.018) * dayF, rm = (0.32 + i * 0.022) * dayF;
       out.push({ date, canal, faixa, qtdFtds: qtd, ftdTotal: qtd * tkt, depD0: d0,
         cntD1: Math.round(qtd * r1), valD1: d0 * r1 * 1.1,
+        valD4: d0 * (r1 * 1.1 + rw * 1.15) / 2,   // entre D1 e W1 (dias 1–4)
         cntW1: Math.round(qtd * rw), valW1: d0 * rw * 1.15,
         cntM0: Math.round(qtd * rm), valM0: d0 * rm * 1.2, ggrM0: qtd * tkt * (0.25 + i * 0.03) });
     }));
@@ -1896,7 +1897,7 @@ function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, d
   const selCh = chSelector_(chFilter);
   const faixaArr = Array.isArray(faixa) ? faixa : (faixa && faixa !== 'all' ? [faixa] : []);   // [] = todas
   const selFx = (fx) => faixaArr.length === 0 || faixaArr.includes(fx);
-  const keys = ['qtd','ftd','d0','cd1','vd1','cw1','vw1','cw2','vw2','cm0','vm0','ggrM0'];
+  const keys = ['qtd','ftd','d0','cd1','vd1','vd4','cw1','vw1','cw2','vw2','cm0','vm0','ggrM0'];
   const zero = () => { const o = {}; keys.forEach(k => o[k] = 0); o._esp = 0; o._espFtd = 0; o._rwMin = null; o._rwMax = null; return o; };
   const weekly = gran === 'week';
   // Chave de agrupamento da tabela: período (dia/semana · default) OU por canal OU por faixa — toggle
@@ -1934,9 +1935,31 @@ function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, d
   return { rows: ks.map(k => fin(by[k], labelOf(k), k)), totals: fin(tot, 'Total', null) };
 }
 
-function RetFaixaTable({ data, dateLabel, m0Label }) {
+// Colunas de multiplicador da Ret. Faixa. base 'ftd' (padrão) = acúmulo (incl. D0) ÷ FTD, começando no D0.
+// base 'd1' (toggle) = acúmulo ÷ NÍVEL D1 (D0 + dep do dia 1): D0 sai, D1 vira a base (=1,00x). mL = label do M0.
+function retMultCols_(base, mL) {
+  const M = mL || 'M0';
+  if (base === 'd1') return [
+    { key: 'd1', label: 'Mult D1/D1', get: r => r.multD1D1, tip: 'Nível D1 (D0 + dep do dia 1) ÷ ele mesmo = 1,00x (âncora da base D1).' },
+    { key: 'd4', label: 'Mult D4/D1', get: r => r.multD4D1, tip: '(D0 + dias 1–4) ÷ nível D1.' },
+    { key: 'w1', label: 'Mult W1/D1', get: r => r.multW1D1, tip: '(D0 + dias 1–7) ÷ nível D1.' },
+    { key: 'w2', label: 'Mult W2/D1', get: r => r.multW2D1, tip: '(D0 + dias 1–14) ÷ nível D1.' },
+    { key: 'm0', label: `Mult ${M}/D1`, get: r => r.multM0D1, tip: `(D0 + ${M}) ÷ nível D1.` },
+  ];
+  return [
+    { key: 'd0', label: 'Mult D0/FTD', get: r => r.multD0F, tip: 'Dep do D0 ÷ FTD.' },
+    { key: 'd1', label: 'Mult D1/FTD', get: r => r.multD1F, tip: '(D0 + dia 1) ÷ FTD.' },
+    { key: 'd4', label: 'Mult D4/FTD', get: r => r.multD4F, tip: '(D0 + dias 1–4) ÷ FTD.' },
+    { key: 'w1', label: 'Mult W1/FTD', get: r => r.multW1F, tip: '(D0 + dias 1–7) ÷ FTD.' },
+    { key: 'w2', label: 'Mult W2/FTD', get: r => r.multW2F, tip: '(D0 + dias 1–14) ÷ FTD.' },
+    { key: 'm0', label: `Mult ${M}/FTD`, get: r => r.multM0F, tip: `(D0 + ${M}) ÷ FTD.` },
+  ];
+}
+
+function RetFaixaTable({ data, dateLabel, m0Label, base }) {
   const rows = data.rows || [], t = data.totals || {};
   const mL = m0Label || 'M0';
+  const multCols = retMultCols_(base, mL);
   // Coluna "M0 Esp." = M0/FTD ESPERADO no fechamento do mês = Σ FTD$ × G(runway) ÷ FTD$ (vem pronto do
   // aggregador em r.m0Esp). G = curva histórica de desenvolvimento por escopo; runway = dias até o fim do
   // mês. null (—) na Coorte 30d ou em canal sem curva robusta (ex. Kwai). Escopo, same-day e por canal: OK.
@@ -1963,11 +1986,7 @@ function RetFaixaTable({ data, dateLabel, m0Label }) {
     <td key="q">{fmtQty(r.qtd)}</td>,
     <td key="ftd">{fmtBRL(r.ftdMedio)}</td>,
     <td key="d0">{fmtBRL(r.d0Medio)}</td>,
-    <td key="d0f">{fmtMultiple(r.multD0F)}</td>,
-    <td key="d1f">{fmtMultiple(r.multD1F)}</td>,
-    <td key="w1f">{fmtMultiple(r.multW1F)}</td>,
-    <td key="w2f">{fmtMultiple(r.multW2F)}</td>,
-    <td key="m0f">{fmtMultiple(r.multM0F)}</td>,
+    ...multCols.map(c => <td key={c.key}>{fmtMultiple(c.get(r))}</td>),
     espCell(r),
     <td key="r1" style={retCell(r.retD1, rD1, heat, true)}>{fmtPct(r.retD1, 1)}</td>,
     <td key="rw1" style={retCell(r.retW1, rW1, heat, false)}>{fmtPct(r.retW1, 1)}</td>,
@@ -1979,7 +1998,7 @@ function RetFaixaTable({ data, dateLabel, m0Label }) {
       <thead>
         <tr>
           <th>{dateLabel || 'Data FTD'}</th><th>Qtd FTD</th><th>FTD $$</th><th>Dep D0 Med</th>
-          <th>Mult D0/FTD</th><th>Mult D1/FTD</th><th>Mult W1/FTD</th><th>Mult W2/FTD</th><th>Mult {mL}/FTD</th>
+          {multCols.map(c => <th key={c.key} title={c.tip}>{c.label}</th>)}
           <th title="M0/FTD esperado no fechamento, ancorado no realizado: realizado × G(runway) ÷ G(idade). G = curva histórica de desenvolvimento (maio), por escopo (Total/Growth) e por canal. Canal sem curva robusta (ex. Kwai, amostra pequena) fica —.">M0 Esp.</th>
           <th style={retThL}>D1 Ret %</th><th style={retTh}>W1 Ret %</th><th style={retTh}>W2 Ret %</th><th style={retTh}>{mL} Ret %</th>
         </tr>
@@ -1997,19 +2016,20 @@ function RetFaixaTable({ data, dateLabel, m0Label }) {
 // Linha de REFERÊNCIA — mês-calendário anterior FECHADO, mesmas colunas/formato da RetFaixaTable
 // num único registro agregado. Respeita canal/faixa/modo/same-day (vem do mesmo aggRetFaixaBench_),
 // mas SEMPRE M0 = mês-calendário (já maduro), independente do toggle Calendário/Coorte do topo.
-function RetFaixaPrevRow({ row, label, loading, error }) {
+function RetFaixaPrevRow({ row, label, loading, error, base }) {
   const retTh = { background: 'linear-gradient(rgba(250,204,21,0.20),rgba(250,204,21,0.20)), var(--surface-2)' };
   const retThL = { ...retTh, borderLeft: '2px solid rgba(250,204,21,0.55)' };
   const flat = { background: 'rgba(250,204,21,0.10)' };
   const flatL = { ...flat, borderLeft: '2px solid rgba(250,204,21,0.45)' };
   const r = row || {};
   const ready = !!row && !loading && !error;
+  const multCols = retMultCols_(base, 'M0');
   return (
     <div className="table-scroll"><table className="ch-table">
       <thead>
         <tr>
           <th>Mês</th><th>Qtd FTD</th><th>FTD $$</th><th>Dep D0 Med</th>
-          <th>Mult D0/FTD</th><th>Mult D1/FTD</th><th>Mult W1/FTD</th><th>Mult W2/FTD</th><th>Mult M0/FTD</th>
+          {multCols.map(c => <th key={c.key} title={c.tip}>{c.label}</th>)}
           <th title="Mês fechado — aqui o M0 já é o realizado completo (não há 'esperado').">M0 Esp.</th>
           <th style={retThL}>D1 Ret %</th><th style={retTh}>W1 Ret %</th><th style={retTh}>W2 Ret %</th><th style={retTh}>M0 Ret %</th>
         </tr>
@@ -2021,17 +2041,13 @@ function RetFaixaPrevRow({ row, label, loading, error }) {
             <td key="q">{fmtQty(r.qtd)}</td>,
             <td key="ftd">{fmtBRL(r.ftdMedio)}</td>,
             <td key="d0">{fmtBRL(r.d0Medio)}</td>,
-            <td key="d0f">{fmtMultiple(r.multD0F)}</td>,
-            <td key="d1f">{fmtMultiple(r.multD1F)}</td>,
-            <td key="w1f">{fmtMultiple(r.multW1F)}</td>,
-            <td key="w2f">{fmtMultiple(r.multW2F)}</td>,
-            <td key="m0f">{fmtMultiple(r.multM0F)}</td>,
+            ...multCols.map(c => <td key={c.key}>{fmtMultiple(c.get(r))}</td>),
             <td key="m0p" style={{ color: 'var(--text-muted)' }} title="Mês fechado — M0 já é o realizado completo.">—</td>,
             <td key="r1" style={flatL}>{fmtPct(r.retD1, 1)}</td>,
             <td key="rw1" style={flat}>{fmtPct(r.retW1, 1)}</td>,
             <td key="rw2" style={flat}>{fmtPct(r.retW2, 1)}</td>,
             <td key="rm0" style={flat}>{fmtPct(r.retM0, 1)}</td>,
-          ] : <td colSpan={13} style={{ color: 'var(--text-muted)' }}>{error ? 'erro ao carregar' : (loading ? 'carregando…' : '—')}</td>}
+          ] : <td colSpan={8 + multCols.length} style={{ color: 'var(--text-muted)' }}>{error ? 'erro ao carregar' : (loading ? 'carregando…' : '—')}</td>}
         </tr>
       </tbody>
     </table></div>
@@ -2045,6 +2061,7 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   const [gran, setGran] = React.useState('week');       // default Semanal · 'day' | 'week' (colapsa em médias semanais)
   const [tableDim, setTableDim] = React.useState('periodo'); // tabela de baixo: 'periodo' (por dia/semana) | 'canal' | 'faixa'
   const [cohortDays, setCohortDays] = React.useState(0); // 0 = calendário (M0 = fim do mês) | 30|60|90 = janela fixa de N dias corridos (só coortes fechadas)
+  const [multBase, setMultBase] = React.useState('ftd'); // base dos multiplicadores da tabela: 'ftd' (padrão) | 'd1' (todos ÷ nível D1, sem D0)
   const cohort = cohortDays > 0;
   const faixaAll = faixaSel.length === 0;
   const faixaLabelTxt = faixaAll ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
@@ -2179,6 +2196,11 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
             <button className={`preset-btn ${cohortDays === 60 ? 'active' : ''}`} onClick={() => setCohortDays(60)} title="Mesma ideia, janela FIXA de 60 dias corridos do FTD; só coortes que já fecharam os 60 dias (a mais recente ~60 dias atrás).">60d</button>
             <button className={`preset-btn ${cohortDays === 90 ? 'active' : ''}`} onClick={() => setCohortDays(90)} title="Mesma ideia, janela FIXA de 90 dias corridos do FTD; só coortes que já fecharam os 90 dias (a mais recente ~90 dias atrás).">90d</button>
           </div>
+          <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>Mult. sobre</label>
+          <div className="slicer-presets">
+            <button className={`preset-btn ${multBase === 'ftd' ? 'active' : ''}`} onClick={() => setMultBase('ftd')} title="Multiplicadores = depósito acumulado (incl. D0) ÷ FTD (padrão). Começa no D0.">FTD</button>
+            <button className={`preset-btn ${multBase === 'd1' ? 'active' : ''}`} onClick={() => setMultBase('d1')} title="Multiplicadores = depósito acumulado ÷ NÍVEL D1 (D0 + dep do dia 1). Tira o D0 e usa o D1 como base (=1,00x) — mostra o quanto a coorte cresce A PARTIR do D1.">D1</button>
+          </div>
         </div>
       </div>
       <div className="hero-grid">
@@ -2186,12 +2208,12 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
       </div>
       <div className="support">
         <div className="support-title">Mês anterior · {monthLabelPt_(pm.from)} · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''}{pmFetch.loading ? ' · carregando…' : ''}{pmFetch.error ? ' · erro ao carregar' : ''}</div>
-        <RetFaixaPrevRow row={pmRow} label={monthLabelPt_(pm.from)} loading={pmFetch.loading} error={pmFetch.error} />
+        <RetFaixaPrevRow row={pmRow} label={monthLabelPt_(pm.from)} loading={pmFetch.loading} error={pmFetch.error} base={multBase} />
         <div className="ch-note">Mês-calendário <strong>anterior ao período selecionado</strong> no slicer ({monthLabelPt_(pm.from)}), agregado num único registro, no mesmo recorte de canal/faixa/modo. O M0 é sempre mês-calendário (não muda com o toggle Calendário/Coorte).</div>
       </div>
       <div className="support">
         <div className="support-title">Safra {tableDim === 'periodo' ? 'por ' + (gran === 'week' ? 'Semana' : 'Dia') : 'por ' + (tableDim === 'canal' ? 'Canal' : 'Faixa')} · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''}{coSuffix}{loadingRF ? ' · carregando…' : ''}{errorRF ? ' · erro ao carregar' : ''}</div>
-        <RetFaixaTable data={tableData} dateLabel={tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : (gran === 'week' ? 'Semana' : 'Data FTD')} m0Label={cohort ? cohortDays + 'd' : 'M0'} />
+        <RetFaixaTable data={tableData} dateLabel={tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : (gran === 'week' ? 'Semana' : 'Data FTD')} m0Label={cohort ? cohortDays + 'd' : 'M0'} base={multBase} />
       </div>
       <div className="support">
         <div className="support-title">Ponte de variância · Multiplicador {cohort ? cohortDays + 'd' : 'M0'}/FTD: BP → Realizado (por Canal ou Faixa){sameday ? ' · same-day' : ''}{faixaAll ? '' : ' · ' + faixaLabelTxt}</div>
@@ -2490,14 +2512,14 @@ function benchApostouRows_(retencaoFaixa) {
     return {
       date: String(r.date), canal: r.canal, faixa: r.faixa,
       qtd: r.qtdFtds || 0, ftd: r.ftdTotal || 0, d0: r.depD0 || 0,
-      cd1: r.cntD1 || 0, vd1: r.valD1 || 0, cw1: r.cntW1 || 0, vw1: r.valW1 || 0, cw2: r.cntW2 || 0, vw2: r.valW2 || 0, cm0: r.cntM0 || 0, vm0: r.valM0 || 0,
+      cd1: r.cntD1 || 0, vd1: r.valD1 || 0, vd4: r.valD4 || 0, cw1: r.cntW1 || 0, vw1: r.valW1 || 0, cw2: r.cntW2 || 0, vw2: r.valW2 || 0, cm0: r.cntM0 || 0, vm0: r.valM0 || 0,
       ggrM0: r.ggrM0 || 0,
       dep, saq, net: dep - saq,
     };
   });
 }
 function aggBench_(rows, sel) {
-  const out = { qtd: 0, ftd: 0, d0: 0, cd1: 0, vd1: 0, cw1: 0, vw1: 0, cw2: 0, vw2: 0, cm0: 0, vm0: 0, dep: 0, saq: 0, net: 0 };
+  const out = { qtd: 0, ftd: 0, d0: 0, cd1: 0, vd1: 0, vd4: 0, cw1: 0, vw1: 0, cw2: 0, vw2: 0, cm0: 0, vm0: 0, dep: 0, saq: 0, net: 0 };
   const canals = sel.canals || (sel.canal && sel.canal !== 'all' ? [sel.canal] : []);
   (rows || []).forEach(r => {
     // canais específicos têm precedência; senão, scope 'growth' = só mídia paga (exclui social/orgânico/afiliados)
@@ -2507,7 +2529,7 @@ function aggBench_(rows, sel) {
     if (sel.from && r.date < sel.from) return;
     if (sel.to && r.date > sel.to) return;
     out.qtd += r.qtd; out.ftd += r.ftd; out.d0 += r.d0;
-    out.cd1 += r.cd1; out.vd1 += r.vd1; out.cw1 += r.cw1; out.vw1 += r.vw1; out.cw2 += r.cw2 || 0; out.vw2 += r.vw2 || 0; out.cm0 += r.cm0; out.vm0 += r.vm0;
+    out.cd1 += r.cd1; out.vd1 += r.vd1; out.vd4 += r.vd4 || 0; out.cw1 += r.cw1; out.vw1 += r.vw1; out.cw2 += r.cw2 || 0; out.vw2 += r.vw2 || 0; out.cm0 += r.cm0; out.vm0 += r.vm0;
     out.dep += r.dep || 0; out.saq += r.saq || 0; out.net += r.net || 0;
   });
   return out;
@@ -2516,15 +2538,24 @@ function aggBench_(rows, sel) {
 function benchMetrics_(a, mode) {
   const ret = (cnt, val) => mode === 'val' ? (a.d0 ? val / a.d0 : null) : (a.qtd ? cnt / a.qtd : null);
   const multF = (acc) => a.ftd ? acc / a.ftd : null;   // depósito acumulado (incl. D0) ÷ valor do FTD
+  const d1base = a.d0 + (a.vd1 || 0);                   // nível D1 = D0 + dep do dia 1 (base do toggle "sobre D1")
+  const multD1 = (acc) => d1base ? acc / d1base : null; // depósito acumulado ÷ nível D1 (sem D0 na tabela nesse modo)
   return {
     qtd: a.qtd,
     ftdMedio: a.qtd ? a.ftd / a.qtd : null,   // FTD $$ = ticket médio do 1º depósito
     d0Medio: a.qtd ? a.d0 / a.qtd : null,     // Dep D0 Med = Σ D0 ÷ qtd FTDs
     multD0F: multF(a.d0),                      // D0 ÷ FTD
     multD1F: multF(a.d0 + a.vd1),              // (D0 + dia 1) ÷ FTD — acumulado
+    multD4F: multF(a.d0 + (a.vd4 || 0)),       // (D0 + dias 1–4) ÷ FTD
     multW1F: multF(a.d0 + a.vw1),              // (D0 + dias 1–7) ÷ FTD
     multW2F: multF(a.d0 + (a.vw2 || 0)),       // (D0 + dias 1–14) ÷ FTD
     multM0F: multF(a.d0 + a.vm0),              // (D0 + resto do mês do FTD) ÷ FTD
+    // Mesmos acúmulos, mas divididos pelo NÍVEL D1 (toggle "sobre D1"): D1 vira a base (=1,00x), sem D0.
+    multD1D1: multD1(a.d0 + (a.vd1 || 0)),     // = 1,00x (âncora)
+    multD4D1: multD1(a.d0 + (a.vd4 || 0)),
+    multW1D1: multD1(a.d0 + a.vw1),
+    multW2D1: multD1(a.d0 + (a.vw2 || 0)),
+    multM0D1: multD1(a.d0 + a.vm0),
     retD1: ret(a.cd1, a.vd1),
     retW1: ret(a.cw1, a.vw1),
     retW2: ret(a.cw2 || 0, a.vw2 || 0),
