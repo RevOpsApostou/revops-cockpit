@@ -2065,21 +2065,24 @@ const RET_MULT_METRICS = [
   { id: 'D30', key: 'multD30F', desc: '(D0 + dias 1–30) ÷ FTD' },
 ];
 const RET_SERIES_COLORS = ['#FF8C00', '#60a5fa', '#4ade80', '#facc15', '#c084fc', '#22d3ee', '#fb7185', '#a3e635'];
-function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallbackRows }) {
+function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallbackRows, cohort, cohortDays, srcRF, srcLoading, srcError }) {
   const [seriesBy, setSeriesBy] = usePersistedState('rvops:retChartSeries', 'mult'); // 'mult' | 'canal' | 'faixa'
   const [metric, setMetric] = usePersistedState('rvops:retChartMetric2', 'Todos');   // 'Todos' | D0 | D1 | D7 | D14 | D30
-  // Janela FIXA = últimos 30 DIAS CORRIDOS [dataMax-29, dataMax], SEMPRE. Fetch próprio (segue o same-day da aba).
+  // Fonte segue o toggle M0 do topo: COORTE → mesma base/janela da tabela (srcRF, só coortes fechadas);
+  // CALENDÁRIO → últimos 30 DIAS CORRIDOS [dataMax-29, dataMax] (fetch próprio, segue o same-day).
   const from30 = dataMax ? isoAddDays_(dataMax, -29) : null;
   const [f30, setF30] = React.useState({ rows: null, loading: false, error: null });
   React.useEffect(() => {
-    if (!ENDPOINT_URL || !dataMax) return;
+    if (!ENDPOINT_URL || !dataMax || cohort) return;   // em coorte usa o srcRF da tabela, sem fetch próprio
     setF30(s => ({ ...s, loading: true, error: null }));
     fetch(`${ENDPOINT_URL}?${authParam_()}&from=${from30}&to=${dataMax}&only=retfaixa${sameday ? '&sameday=1' : ''}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(j => { if (j.error) throw new Error(j.error); setF30({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
       .catch(e => setF30({ rows: null, loading: false, error: String(e.message || e) }));
-  }, [from30, dataMax, sameday]);
-  const rows30 = f30.rows || (!ENDPOINT_URL ? (fallbackRows || []) : null);
+  }, [from30, dataMax, sameday, cohort]);
+  const rows30 = cohort ? (srcRF || []) : (f30.rows || (!ENDPOINT_URL ? (fallbackRows || []) : null));
+  const busy = cohort ? !!srcLoading : f30.loading;
+  const err = cohort ? srcError : f30.error;
   const dmLabel = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); return m ? `${m[3]}/${m[2]}` : String(s); };
   // "Todos" (todos os multiplicadores) só faz sentido no modo Multiplicadores; em Canal/Faixa exige UM (cai no D1).
   const effMetric = (seriesBy !== 'mult' && (metric === 'Todos' || !RET_MULT_METRICS.some(m => m.id === metric))) ? 'D1' : metric;
@@ -2135,7 +2138,7 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
       </span>
     </div>
   );
-  if (!series.length || !xLabels.length) return <React.Fragment>{controls}<div className="ch-note">{f30.loading ? 'Carregando últimos 30 dias…' : f30.error ? 'Erro ao carregar os últimos 30 dias.' : 'Sem dados p/ o gráfico neste recorte.'}</div></React.Fragment>;
+  if (!series.length || !xLabels.length) return <React.Fragment>{controls}<div className="ch-note">{busy ? 'Carregando…' : err ? 'Erro ao carregar.' : 'Sem dados p/ o gráfico neste recorte.'}</div></React.Fragment>;
 
   const n = xLabels.length;
   const slotW = n > 20 ? 60 : n > 10 ? 92 : 168;
@@ -2193,8 +2196,8 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
         </svg>
       </div>
       <div className="ch-note">
-        <strong>Janela fixa: últimos 30 dias corridos</strong> ({from30 ? dmLabel(from30) : '—'}→{dataMax ? dmLabel(dataMax) : '—'}) — <strong>independe do slicer de data do topo</strong>. Eixo X = <strong>{gran === 'week' ? 'semana' : 'dia'} de FTD</strong>; uma linha por <strong>{seriesBy === 'mult' ? 'multiplicador' : seriesBy === 'canal' ? 'canal' : 'faixa de FTD'}</strong>{seriesBy !== 'mult' ? ` (multiplicador ${effMetric}/FTD)` : ''}. Cada ponto = média ponderada (Σ/Σ) do KPI no período. Segue canal/faixa/modo/same-day.{f30.loading ? ' · carregando…' : ''}{f30.error ? ' · erro' : ''}
-        {' '}<em>Obs.: D7/D14/D30 incluem coortes recentes ainda maturando (janela corrida) → tendem a subestimar; D0/D1 já são maduros.</em>
+        <strong>{cohort ? `Coorte de ${cohortDays} dias — mesma base/janela da tabela (só coortes fechadas)` : `Janela fixa: últimos 30 dias corridos (${from30 ? dmLabel(from30) : '—'}→${dataMax ? dmLabel(dataMax) : '—'}), independe do slicer`}</strong>. Eixo X = <strong>{gran === 'week' ? 'semana' : 'dia'} de FTD</strong>; uma linha por <strong>{seriesBy === 'mult' ? 'multiplicador' : seriesBy === 'canal' ? 'canal' : 'faixa de FTD'}</strong>{seriesBy !== 'mult' ? ` (multiplicador ${effMetric}/FTD)` : ''}. Cada ponto = média ponderada (Σ/Σ) do KPI no período. Segue canal/faixa/modo/same-day/M0.{busy ? ' · carregando…' : ''}{err ? ' · erro' : ''}
+        {!cohort && <React.Fragment>{' '}<em>Obs.: D7/D14/D30 incluem coortes recentes ainda maturando (janela corrida) → tendem a subestimar; D0/D1 já são maduros.</em></React.Fragment>}
       </div>
     </React.Fragment>
   );
@@ -2362,8 +2365,8 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
         <RetFaixaTable data={tableData} dateLabel={tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : (gran === 'week' ? 'Semana' : 'Data FTD')} m0Label={cohort ? cohortDays + 'd' : 'M0'} base={multBase} />
       </div>
       <div className="support">
-        <div className="support-title">Multiplicador por dimensão · últimos 30 dias corridos · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''}</div>
-        <RetMultChart chFilter={chFilter} faixaSel={faixaSel} mode={mode} gran={gran} sameday={sameday} dataMax={dataMax} fallbackRows={retencaoFaixa} />
+        <div className="support-title">Multiplicador por dimensão · {cohort ? 'coorte ' + cohortDays + 'd' : 'últimos 30 dias corridos'} · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''}</div>
+        <RetMultChart chFilter={chFilter} faixaSel={faixaSel} mode={mode} gran={gran} sameday={sameday} dataMax={dataMax} fallbackRows={retencaoFaixa} cohort={cohort} cohortDays={cohortDays} srcRF={srcRF} srcLoading={cohort && coFetch.loading} srcError={cohort ? coFetch.error : null} />
       </div>
       <div className="support">
         <div className="support-title">Ponte de variância · Multiplicador {cohort ? cohortDays + 'd' : 'M0'}/FTD: BP → Realizado (por Canal ou Faixa){sameday ? ' · same-day' : ''}{faixaAll ? '' : ' · ' + faixaLabelTxt}</div>
