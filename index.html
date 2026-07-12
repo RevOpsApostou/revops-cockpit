@@ -2055,8 +2055,8 @@ function RetFaixaPrevRow({ row, label, loading, error, base }) {
   );
 }
 
-// Gráfico de linha — multiplicador (Y: D0/D1/D7/D14/D30) × dimensão (X: Canal/Faixa/Período).
-// Reusa aggRetFaixaBench_ com o dim escolhido → segue os mesmos slicers da aba (canal/faixa/modo/same-day/coorte).
+// Gráfico de linha — X = SEMPRE período (série dos últimos 30 dias corridos). Y = séries dinâmicas: 1 linha
+// por multiplicador (D0…D30), OU por canal, OU por faixa (do multiplicador escolhido). Fetch fixo de 30 dias.
 const RET_MULT_METRICS = [
   { id: 'D0',  key: 'multD0F',  desc: 'Dep D0 ÷ FTD' },
   { id: 'D1',  key: 'multD1F',  desc: '(D0 + dia 1) ÷ FTD' },
@@ -2064,13 +2064,11 @@ const RET_MULT_METRICS = [
   { id: 'D14', key: 'multW2F',  desc: '(D0 + dias 1–14) ÷ FTD' },
   { id: 'D30', key: 'multD30F', desc: '(D0 + dias 1–30) ÷ FTD' },
 ];
+const RET_SERIES_COLORS = ['#FF8C00', '#60a5fa', '#4ade80', '#facc15', '#c084fc', '#22d3ee', '#fb7185', '#a3e635'];
 function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallbackRows }) {
-  const [metric, setMetric] = usePersistedState('rvops:retChartMetric', 'D1');
-  const [xDim, setXDim] = usePersistedState('rvops:retChartDim', 'canal');
-  const mDef = RET_MULT_METRICS.find(m => m.id === metric) || RET_MULT_METRICS[1];
-  // Janela FIXA = últimos 30 DIAS CORRIDOS [dataMax-29, dataMax], SEMPRE (independe do slicer do topo e do
-  // toggle de coorte). Fetch próprio (segue o same-day da aba). Cada ponto = agregado (média ponderada Σ/Σ)
-  // do KPI nos 30 dias — p/ canal/faixa = 1 ponto por grupo; p/ período = série dos 30 dias.
+  const [seriesBy, setSeriesBy] = usePersistedState('rvops:retChartSeries', 'mult'); // 'mult' | 'canal' | 'faixa'
+  const [metric, setMetric] = usePersistedState('rvops:retChartMetric2', 'Todos');   // 'Todos' | D0 | D1 | D7 | D14 | D30
+  // Janela FIXA = últimos 30 DIAS CORRIDOS [dataMax-29, dataMax], SEMPRE. Fetch próprio (segue o same-day da aba).
   const from30 = dataMax ? isoAddDays_(dataMax, -29) : null;
   const [f30, setF30] = React.useState({ rows: null, loading: false, error: null });
   React.useEffect(() => {
@@ -2082,49 +2080,91 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
       .catch(e => setF30({ rows: null, loading: false, error: String(e.message || e) }));
   }, [from30, dataMax, sameday]);
   const rows30 = f30.rows || (!ENDPOINT_URL ? (fallbackRows || []) : null);
-  const data = aggRetFaixaBench_(rows30 || [], chFilter, faixaSel, mode, gran, null, dataMax, xDim === 'periodo' ? undefined : xDim);
   const dmLabel = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); return m ? `${m[3]}/${m[2]}` : String(s); };
-  const pts = (data.rows || []).map(r => ({ label: dmLabel(r.date), y: r[mDef.key] })).filter(p => p.y != null && !isNaN(p.y));
-  const ORANGE = 'var(--accent-orange)';
+  // "Todos" (todos os multiplicadores) só faz sentido no modo Multiplicadores; em Canal/Faixa exige UM (cai no D1).
+  const effMetric = (seriesBy !== 'mult' && (metric === 'Todos' || !RET_MULT_METRICS.some(m => m.id === metric))) ? 'D1' : metric;
+  const mDef = RET_MULT_METRICS.find(m => m.id === effMetric) || RET_MULT_METRICS[1];
+
+  // Eixo X = período (unificado); séries = 1 por multiplicador OU por canal OU por faixa.
+  let xLabels = [], series = [];
+  if (seriesBy === 'mult') {
+    const agg = aggRetFaixaBench_(rows30 || [], chFilter, faixaSel, mode, gran, null, dataMax); // dim = período
+    xLabels = agg.rows.map(r => dmLabel(r.date));
+    const sel = (metric === 'Todos') ? RET_MULT_METRICS : RET_MULT_METRICS.filter(m => m.id === metric);
+    series = sel.map(m => ({ name: 'Mult ' + m.id, color: RET_SERIES_COLORS[RET_MULT_METRICS.indexOf(m) % RET_SERIES_COLORS.length], values: agg.rows.map(r => r[m.key]) }));
+  } else {
+    // grupos (canais ou faixas) presentes no recorte, cada um agregado por período p/ o multiplicador escolhido
+    const groupAgg = aggRetFaixaBench_(rows30 || [], chFilter, faixaSel, mode, 'day', null, dataMax, seriesBy);
+    const groups = groupAgg.rows.map(r => ({ key: r._key, label: r.date }));
+    const perGroup = groups.map(g => {
+      const sub = seriesBy === 'canal'
+        ? aggRetFaixaBench_(rows30 || [], { ...chFilter, channels: [g.key] }, faixaSel, mode, gran, null, dataMax)
+        : aggRetFaixaBench_(rows30 || [], chFilter, [g.key], mode, gran, null, dataMax);
+      const m = {}; sub.rows.forEach(r => { m[r._key] = { y: r[mDef.key], label: r.date }; });
+      return { g, m };
+    });
+    const labelByKey = {}; perGroup.forEach(pg => Object.keys(pg.m).forEach(k => { labelByKey[k] = pg.m[k].label; }));
+    const keys = Object.keys(labelByKey).sort();
+    xLabels = keys.map(k => labelByKey[k]);
+    series = perGroup.map((pg, i) => ({ name: pg.g.label, color: RET_SERIES_COLORS[i % RET_SERIES_COLORS.length], values: keys.map(k => pg.m[k] ? pg.m[k].y : null) }));
+  }
+  series = series.filter(s => s.values.some(v => v != null && !isNaN(v)));
+
+  const SERIES_OPTS = [['mult', 'Multiplicadores'], ['canal', 'Canal'], ['faixa', 'Faixa']];
   const controls = (
     <div style={{ display: 'flex', alignItems: 'center', gap: '18px', flexWrap: 'wrap', marginBottom: '10px' }}>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-        <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Multiplicador (Y)</label>
+        <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Linhas por</label>
         <span className="slicer-presets">
-          {RET_MULT_METRICS.map(m => (
-            <button key={m.id} className={`preset-btn ${metric === m.id ? 'active' : ''}`} onClick={() => setMetric(m.id)} title={`Multiplicador ${m.id}/FTD = ${m.desc}`}>{m.id}</button>
+          {SERIES_OPTS.map(([id, lbl]) => (
+            <button key={id} className={`preset-btn ${seriesBy === id ? 'active' : ''}`} onClick={() => setSeriesBy(id)}
+              title={id === 'mult' ? 'Uma linha por multiplicador (D0…D30)' : `Uma linha por ${lbl.toLowerCase()} — do multiplicador escolhido`}>{lbl}</button>
           ))}
         </span>
       </span>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-        <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Eixo X</label>
+        <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Multiplicador</label>
         <span className="slicer-presets">
-          {[['canal', 'Canal'], ['faixa', 'Faixa'], ['periodo', 'Período']].map(([id, lbl]) => (
-            <button key={id} className={`preset-btn ${xDim === id ? 'active' : ''}`} onClick={() => setXDim(id)} title={`Eixo X = ${lbl}`}>{lbl}</button>
+          {seriesBy === 'mult' && (
+            <button className={`preset-btn ${metric === 'Todos' ? 'active' : ''}`} onClick={() => setMetric('Todos')} title="Todos os multiplicadores — uma linha cada">Todos</button>
+          )}
+          {RET_MULT_METRICS.map(m => (
+            <button key={m.id} className={`preset-btn ${(seriesBy === 'mult' ? metric : effMetric) === m.id ? 'active' : ''}`} onClick={() => setMetric(m.id)} title={`Multiplicador ${m.id}/FTD = ${m.desc}`}>{m.id}</button>
           ))}
         </span>
       </span>
     </div>
   );
-  if (!pts.length) return <React.Fragment>{controls}<div className="ch-note">{f30.loading ? 'Carregando últimos 30 dias…' : f30.error ? 'Erro ao carregar os últimos 30 dias.' : 'Sem dados p/ o gráfico neste recorte.'}</div></React.Fragment>;
+  if (!series.length || !xLabels.length) return <React.Fragment>{controls}<div className="ch-note">{f30.loading ? 'Carregando últimos 30 dias…' : f30.error ? 'Erro ao carregar os últimos 30 dias.' : 'Sem dados p/ o gráfico neste recorte.'}</div></React.Fragment>;
 
-  const n = pts.length;
+  const n = xLabels.length;
   const slotW = n > 20 ? 60 : n > 10 ? 92 : 168;
   const padL = 56, padR = 26, padT = 28, padB = 56, plotH = 300;
   const W = Math.max(960, padL + padR + (n === 1 ? slotW : (n - 1) * slotW));
   const H = padT + plotH + padB;
   const plotW = W - padL - padR;
   const xOf = (i) => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
-  const yMaxRaw = Math.max.apply(null, pts.map(p => p.y));
+  const allVals = series.flatMap(s => s.values).filter(v => v != null && !isNaN(v));
+  const yMaxRaw = allVals.length ? Math.max.apply(null, allVals) : 1;
   const domMax = yMaxRaw > 0 ? yMaxRaw * 1.15 : 1, domMin = 0;
   const yOf = (v) => padT + (1 - (v - domMin) / (domMax - domMin)) * plotH;
   const ticks = 4;
   const gridVals = Array.from({ length: ticks + 1 }, (_, i) => domMin + (domMax - domMin) * i / ticks);
   const lblEvery = Math.ceil(n / 12);
-  const path = pts.map((p, i) => `${xOf(i).toFixed(1)},${yOf(p.y).toFixed(1)}`).join(' ');
+  const single = series.length === 1;
+  // path com quebras nos nulos (M no início de cada trecho contínuo)
+  const linePath = (vals) => { let d = '', pen = false; vals.forEach((v, i) => { if (v == null || isNaN(v)) { pen = false; return; } d += (pen ? ' L' : ' M') + xOf(i).toFixed(1) + ',' + yOf(v).toFixed(1); pen = true; }); return d.trim(); };
+  const yTitle = (seriesBy === 'mult' && metric === 'Todos') ? 'Multiplicador /FTD' : `Mult ${effMetric}/FTD`;
   return (
     <React.Fragment>
       {controls}
+      <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', justifyContent: 'center', margin: '2px 0 8px' }}>
+        {series.map((s, i) => (
+          <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: 'var(--text-muted)' }}>
+            <span style={{ width: '12px', height: '3px', background: s.color, borderRadius: '2px', display: 'inline-block' }} />{s.name}
+          </span>
+        ))}
+      </div>
       <div className="table-scroll">
         <svg viewBox={`0 0 ${W} ${H}`} width={W} style={{ width: '100%', maxWidth: W, minWidth: Math.min(W, 700), height: 'auto', display: 'block', margin: '0 auto' }} preserveAspectRatio="xMidYMid meet">
           {gridVals.map((v, i) => (
@@ -2133,20 +2173,24 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
               <text x={padL - 8} y={yOf(v) + 3.5} textAnchor="end" fontSize="10" fill="var(--text-muted)">{fmtMultiple(v)}</text>
             </g>
           ))}
-          <text x={4} y={14} fontSize="10" fill="var(--text-dim)">Mult {mDef.id}/FTD</text>
-          <polyline points={path} fill="none" stroke={ORANGE} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-          {pts.map((p, i) => (
-            <g key={`p${i}`}>
-              <circle cx={xOf(i)} cy={yOf(p.y)} r="3.5" fill="var(--surface)" stroke={ORANGE} strokeWidth="2" />
-              {n <= 16 && <text x={xOf(i)} y={yOf(p.y) - 9} textAnchor="middle" fontSize="10" fontWeight="600" fill={ORANGE}>{fmtMultiple(p.y)}</text>}
-              {i % lblEvery === 0 && <text x={xOf(i)} y={padT + plotH + 18} textAnchor="middle" fontSize="10" fill="var(--text-muted)">{p.label}</text>}
+          {xLabels.map((lb, i) => (i % lblEvery === 0) ? <text key={`x${i}`} x={xOf(i)} y={padT + plotH + 18} textAnchor="middle" fontSize="10" fill="var(--text-muted)">{lb}</text> : null)}
+          <text x={4} y={14} fontSize="10" fill="var(--text-dim)">{yTitle}</text>
+          {series.map((s, si) => (
+            <g key={`s${si}`}>
+              <path d={linePath(s.values)} fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+              {s.values.map((v, i) => (v != null && !isNaN(v)) ? (
+                <g key={i}>
+                  <circle cx={xOf(i)} cy={yOf(v)} r="3" fill="var(--surface)" stroke={s.color} strokeWidth="1.8" />
+                  {single && n <= 16 && <text x={xOf(i)} y={yOf(v) - 8} textAnchor="middle" fontSize="10" fontWeight="600" fill={s.color}>{fmtMultiple(v)}</text>}
+                </g>
+              ) : null)}
             </g>
           ))}
         </svg>
       </div>
       <div className="ch-note">
-        <strong>Janela fixa: últimos 30 dias corridos</strong> ({from30 ? dmLabel(from30) : '—'}→{dataMax ? dmLabel(dataMax) : '—'}) — <strong>independe do slicer de data do topo</strong>. Linha do <strong>multiplicador {mDef.id}/FTD</strong> ({mDef.desc}) por <strong>{xDim === 'canal' ? 'canal' : xDim === 'faixa' ? 'faixa de FTD' : (gran === 'week' ? 'semana' : 'dia') + ' de FTD'}</strong>: cada ponto = média (ponderada Σ/Σ) do KPI nos 30 dias. Segue canal/faixa/modo/same-day. Escolha o multiplicador (eixo Y) e a dimensão (eixo X) acima.{f30.loading ? ' · carregando…' : ''}{f30.error ? ' · erro' : ''}
-        {' '}<em>Obs.: D7/D14/D30 incluem coortes recentes ainda maturando (janela corrida), então tendem a subestimar; D0/D1 já são maduros.</em>
+        <strong>Janela fixa: últimos 30 dias corridos</strong> ({from30 ? dmLabel(from30) : '—'}→{dataMax ? dmLabel(dataMax) : '—'}) — <strong>independe do slicer de data do topo</strong>. Eixo X = <strong>{gran === 'week' ? 'semana' : 'dia'} de FTD</strong>; uma linha por <strong>{seriesBy === 'mult' ? 'multiplicador' : seriesBy === 'canal' ? 'canal' : 'faixa de FTD'}</strong>{seriesBy !== 'mult' ? ` (multiplicador ${effMetric}/FTD)` : ''}. Cada ponto = média ponderada (Σ/Σ) do KPI no período. Segue canal/faixa/modo/same-day.{f30.loading ? ' · carregando…' : ''}{f30.error ? ' · erro' : ''}
+        {' '}<em>Obs.: D7/D14/D30 incluem coortes recentes ainda maturando (janela corrida) → tendem a subestimar; D0/D1 já são maduros.</em>
       </div>
     </React.Fragment>
   );
