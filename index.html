@@ -2152,6 +2152,10 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   const gridVals = Array.from({ length: ticks + 1 }, (_, i) => domMin + (domMax - domMin) * i / ticks);
   const lblEvery = Math.ceil(n / 12);
   const single = series.length === 1;
+  // Data labels por DENSIDADE (não por granularidade): mostra se o total de rótulos couber sem virar sopa.
+  // Assim aparecem no diário single (~30 pts) e no semanal (poucos pts, inclusive multi-linha).
+  const labelCount = series.reduce((a, s) => a + s.values.filter(v => v != null && !isNaN(v)).length, 0);
+  const showLabels = labelCount <= 40;
   // path com quebras nos nulos (M no início de cada trecho contínuo)
   const linePath = (vals) => { let d = '', pen = false; vals.forEach((v, i) => { if (v == null || isNaN(v)) { pen = false; return; } d += (pen ? ' L' : ' M') + xOf(i).toFixed(1) + ',' + yOf(v).toFixed(1); pen = true; }); return d.trim(); };
   const yTitle = (seriesBy === 'mult' && metric === 'Todos') ? 'Multiplicador /FTD' : `Mult ${effMetric}/FTD`;
@@ -2181,7 +2185,7 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
               {s.values.map((v, i) => (v != null && !isNaN(v)) ? (
                 <g key={i}>
                   <circle cx={xOf(i)} cy={yOf(v)} r="3" fill="var(--surface)" stroke={s.color} strokeWidth="1.8" />
-                  {single && n <= 16 && <text x={xOf(i)} y={yOf(v) - 8} textAnchor="middle" fontSize="10" fontWeight="600" fill={s.color}>{fmtMultiple(v)}</text>}
+                  {showLabels && <text x={xOf(i)} y={yOf(v) - 8} textAnchor="middle" fontSize="10" fontWeight="600" fill={s.color}>{fmtMultiple(v)}</text>}
                 </g>
               ) : null)}
             </g>
