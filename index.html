@@ -2204,11 +2204,11 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
           {gridVals.map((v, i) => (
             <g key={`g${i}`}>
               <line x1={padL} x2={W - padR} y1={yOf(v)} y2={yOf(v)} stroke="var(--border)" strokeWidth="1" strokeDasharray={i === 0 ? undefined : '2 4'} />
-              <text x={padL - 8} y={yOf(v) + 3.5} textAnchor="end" fontSize="10" fill="var(--text-muted)">{fmtMultiple(v)}</text>
+              <text x={padL - 8} y={yOf(v) + 3.5} textAnchor="end" fontSize="10.5" fill="#cfcfcf">{fmtMultiple(v)}</text>
             </g>
           ))}
-          {xLabels.map((lb, i) => (i % lblEvery === 0) ? <text key={`x${i}`} x={xOf(i)} y={padT + plotH + 18} textAnchor="middle" fontSize="10" fill="var(--text-muted)">{lb}</text> : null)}
-          <text x={4} y={14} fontSize="10" fill="var(--text-dim)">{yTitle}</text>
+          {xLabels.map((lb, i) => (i % lblEvery === 0) ? <text key={`x${i}`} x={xOf(i)} y={padT + plotH + 18} textAnchor="middle" fontSize="10.5" fill="#cfcfcf">{lb}</text> : null)}
+          <text x={4} y={14} fontSize="10" fill="#aaaaaa">{yTitle}</text>
           {series.map((s, si) => (
             <g key={`s${si}`}>
               <path d={linePath(s.values)} fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
