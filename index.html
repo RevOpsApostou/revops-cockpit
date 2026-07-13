@@ -2997,18 +2997,19 @@ function monthCloseMult_(range) {
 // Trend (projeção de fechamento): volumes ADITIVOS (Investimento, FTD, DEP M0, Depósitos, GGR) via run-rate;
 // Rollover via razão dos COMPONENTES projetados. Demais razões (ROAS, CAC, Tkt, retenção, %/Dep) sem trend.
 // Multiplicador = ggrTrend/ggr do backend (mesma base do card "Close Trend GGR"), com fallback pra janela.
-function TabFarol({ M, farol, range, ytd, ytdM, ytdFarol, ytdRange, ytdLoading, ytdError, onToggleYtd }) {
-  // YTD (abril→hoje): usa o 2º payload e compara SÓ vs BP (sem M-1, sem projeção de fechamento — não fazem
-  // sentido acumulado). "Período" = janela do slicer do topo (comportamento atual: vs M-1 + vs BP + trend).
+function TabFarol({ M, farol, range, ytd }) {
+  // YTD é preset GLOBAL de data: a janela (appliedRange) já é abril→ontem, então usa o M/farol normais.
+  // Só muda a comparação: SÓ vs BP — tira M-1 (mesma janela 1 mês atrás) e a projeção de fechamento, que
+  // não fazem sentido num acumulado de vários meses.
   const useYtd = !!ytd;
-  const MM = (useYtd ? ytdM : M) || {};
-  const f = (useYtd ? ytdFarol : farol) || {};
+  const MM = M || {};
+  const f = farol || {};
   const mult = useYtd ? null : monthCloseMult_(range);
   const tf = mult == null ? null
     : (MM.ggr && MM.ggr.act && MM.ggrTrend && MM.ggrTrend.act != null && MM.ggr.act !== 0)
       ? MM.ggrTrend.act / MM.ggr.act : mult;
   const proj = (m) => (m && tf != null && m.act != null) ? m.act * tf : null;   // valor projetado de fechamento
-  // "Período": card + projeção. "YTD": tira M-1 (mês anterior) e trend — só ACT vs BP acumulado.
+  // Normal: card + projeção. YTD: tira M-1 (mês anterior) e trend — só ACT vs BP acumulado.
   const dress = (m) => { if (!m) return m; if (useYtd) return { ...m, m1: null, trend: undefined }; const t = proj(m); return t != null ? { ...m, trend: t } : m; };
   const dressPlain = (m) => (useYtd && m) ? { ...m, m1: null, trend: undefined } : m;   // cards de razão (sem trend), só tira M-1 no YTD
   // Razão: trend pelo Rollover REAL dos componentes projetados (Turnover proj ÷ Depósitos proj), não run-rate da razão.
@@ -3020,8 +3021,7 @@ function TabFarol({ M, farol, range, ytd, ytdM, ytdFarol, ytdRange, ytdLoading, 
     { title: 'Retenção', cards: [dressPlain(MM.retM0M1), dressPlain(MM.retM1M2), dressPlain(MM.retM3plus)] },
     { title: 'Volume & GGR', cards: [dress(MM.depTotal), dress(MM.ggr), dressPlain(MM.ggrPerDep), rolloverCard, dressPlain(f.freespinDep), dressPlain(f.bonusDep)] },
   ];
-  const ytdLbl = ytdRange ? `${fmtBR_(ytdRange.from)} → ${fmtBR_(ytdRange.to)}` : '';
-  const loading = useYtd && !ytdM && !!ENDPOINT_URL;   // YTD ligado mas o payload ainda não chegou
+  const rangeLbl = (range && range.from) ? `${fmtBR_(range.from)} → ${fmtBR_(range.to)}` : '';
   return (
     <React.Fragment>
       <div className="tab-header">
@@ -3029,14 +3029,12 @@ function TabFarol({ M, farol, range, ytd, ytdM, ytdFarol, ytdRange, ytdLoading, 
           <h1>Farol</h1>
           <div className="subtitle">
             {useYtd
-              ? <>YTD · acumulado desde abril · {ytdLbl} · variação vs BP{ytdLoading ? ' · carregando…' : ''}{ytdError ? ' · erro ao carregar' : ''}</>
+              ? <>YTD · acumulado desde abril · {rangeLbl} · variação vs BP</>
               : <>Visão consolidada — todos os indicadores em cards, variação vs M-1 e vs BP</>}
           </div>
         </div>
       </div>
-      {loading ? (
-        <div className="support"><div className="ch-note">Carregando YTD (abril→hoje)…</div></div>
-      ) : groups.map((g, i) => (
+      {groups.map((g, i) => (
         <div className="support" key={i}>
           <div className="support-title">{g.title}</div>
           <div className="hero-grid">
@@ -3051,14 +3049,13 @@ function TabFarol({ M, farol, range, ytd, ytdM, ytdFarol, ytdRange, ytdLoading, 
 // Aba MONTHLY CLOSE — fechamento do mês no formato do FAROL: ACT (BigQuery, consistente com o resto
 // do cockpit) vs BP, linha a linha. Depósitos por safra (M+1/M+2/M3+) vêm de payload.monthlyClose;
 // o resto reusa M (hero metrics) + farolMetrics (CAC/ROAS Dep). % vs BP = atingimento (custo inverte).
-function TabMonthlyClose({ M, farol, monthlyClose, range, isLive, ytd, ytdM, ytdFarol, ytdMonthlyClose, ytdRange, ytdLoading, ytdError, onToggleYtd }) {
-  // YTD (abril→hoje): mesma tabela ACT vs BP, mas sobre o payload acumulado desde abril.
+function TabMonthlyClose({ M, farol, monthlyClose, range, isLive, ytd }) {
+  // YTD é preset GLOBAL de data: a janela (appliedRange) já é abril→ontem, então usa o M/farol/monthlyClose
+  // normais — a tabela ACT vs BP fica igual, só muda o rótulo/período p/ YTD.
   const useYtd = !!ytd;
-  const MMraw = useYtd ? ytdM : M;
-  const loading = useYtd && !MMraw && !!ENDPOINT_URL;
-  const MM = MMraw || {};
-  const f = (useYtd ? ytdFarol : farol) || {};
-  const mc = (useYtd ? ytdMonthlyClose : monthlyClose) || {};
+  const MM = M || {};
+  const f = farol || {};
+  const mc = monthlyClose || {};
   const mca = mc.act || {}, mcb = mc.bp || {};
   const A = (m) => (m && m.act != null) ? m.act : null;
   const B = (m) => (m && m.bp != null) ? m.bp : null;
@@ -3091,9 +3088,7 @@ function TabMonthlyClose({ M, farol, monthlyClose, range, isLive, ytd, ytdM, ytd
   ];
   const pctBp = (r) => (r.bp && r.act != null && r.bp !== 0) ? (r.lower ? r.bp / r.act : r.act / r.bp) : null;
   const pctCls = (p) => p == null ? '' : (p >= 0.95 ? 'ch-roas-pos' : p >= 0.85 ? '' : 'ch-roas-neg');
-  const rangeLbl = useYtd
-    ? (ytdRange ? `${fmtBR_(ytdRange.from)} → ${fmtBR_(ytdRange.to)}` : '')
-    : ((range && range.from) ? `${fmtBR_(range.from)} → ${fmtBR_(range.to)}` : '');
+  const rangeLbl = (range && range.from) ? `${fmtBR_(range.from)} → ${fmtBR_(range.to)}` : '';
   return (
     <React.Fragment>
       <div className="tab-header">
@@ -3101,12 +3096,11 @@ function TabMonthlyClose({ M, farol, monthlyClose, range, isLive, ytd, ytdM, ytd
           <h1>Monthly Close</h1>
           <div className="subtitle">
             {useYtd
-              ? <>YTD · acumulado desde abril · ACT (BigQuery) vs BP · {rangeLbl}{ytdLoading ? ' · carregando…' : ''}{ytdError ? ' · erro ao carregar' : ''}</>
+              ? <>YTD · acumulado desde abril · ACT (BigQuery) vs BP · {rangeLbl}{!isLive ? ' · dados mock' : ''}</>
               : <>Fechamento do mês · ACT (BigQuery) vs BP · {rangeLbl}{!isLive ? ' · dados mock' : ''}</>}
           </div>
         </div>
       </div>
-      {loading && <div className="support"><div className="ch-note">Carregando YTD (abril→hoje)…</div></div>}
       <div className="support">
         <div className="table-scroll"><table className="ch-table">
           <thead><tr><th>Métrica</th><th>ACT</th><th>BP</th><th>% vs BP</th></tr></thead>
@@ -3464,6 +3458,7 @@ const PRESETS = [
       const from = firstOfMonthISO_(), to = todayISO_();
       return { from, to: to < from ? from : to };  // no dia 1º, não deixa "até" cair no mês anterior
     } },
+  { id: 'ytd', label: 'YTD', range: () => ({ from: ytdStartISO_(), to: todayISO_() }) }, // acumulado desde abril até ontem — vale p/ TODAS as abas
   { id: 'dia', label: 'Diário', range: () => ({ from: todayISO_(), to: todayISO_() }) }, // um único dia (ontem = último dia completo)
   { id: '7d',  label: '7d',  range: () => ({ from: daysAgoISO_(7), to: todayISO_() }) },
   { id: '30d', label: '30d', range: () => ({ from: daysAgoISO_(30), to: todayISO_() }) },
@@ -3577,7 +3572,7 @@ function App({ user, onLogout, config }) {
   const [activePreset, setActivePreset] = useState('mtd');
   // Filtro de canal: channels = [] (Todos, cai no escopo) ou lista de canais · scope = 'all' (Total Casa) | 'growth' (Canais Growth)
   const [chFilter, setChFilter] = usePersistedState('rvops:chFilter', { channels: [], scope: 'all' });
-  const [ytd, setYtd] = usePersistedState('rvops:ytd', false);   // YTD (abril→hoje) nas abas Farol/Monthly Close
+  const ytd = activePreset === 'ytd';   // YTD ativo = preset de data 'ytd' (janela abril→ontem); vale p/ todas as abas via appliedRange
   const [state, setState] = useState({
     loading: !!ENDPOINT_URL,
     error: null,
@@ -3652,25 +3647,6 @@ function App({ user, onLogout, config }) {
   }, [appliedRange.from, appliedRange.to]); // canal/scope NÃO disparam fetch — filtro é client-side
 
   useEffect(() => { loadData(); }, [loadData]);
-
-  // YTD (abril→hoje) — 2º payload, buscado LAZY só quando o toggle liga (Farol/Monthly Close).
-  // Mesmo shape do payload principal; deriva com as MESMAS funções, respeitando o filtro de canal.
-  const ytdRange = { from: ytdStartISO_(), to: todayISO_() };
-  const [ytdData, setYtdData] = useState({ payload: null, loading: false, error: null, key: null });
-  useEffect(() => {
-    if (!ENDPOINT_URL || !ytd) return;
-    const key = ytdRange.from + '|' + ytdRange.to;
-    if (ytdData.key === key && (ytdData.payload || ytdData.loading)) return;   // já buscado/buscando p/ essa janela
-    setYtdData(s => ({ payload: s.payload, loading: true, error: null, key }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${ytdRange.from}&to=${ytdRange.to}`)
-      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
-      .then(p => {
-        if (p.error === 'unauthorized') { if (onLogout) onLogout(); return; }
-        if (p.error) throw new Error(p.error);
-        setYtdData({ payload: p, loading: false, error: null, key });
-      })
-      .catch(e => setYtdData(s => ({ ...s, loading: false, error: String(e.message || e) })));
-  }, [ytd, ytdRange.from, ytdRange.to]);
 
   // Benchmark das casas concorrentes — arquivos estáticos servidos ao lado do index.html.
   useEffect(() => {
@@ -3759,18 +3735,6 @@ function App({ user, onLogout, config }) {
   // Métricas derivadas da aba Farol (CAC, Tkt FTD, ROAS Dep D0/M0, FreeSpins/Bonif por dep) — escopo do filtro.
   const farolMetrics = buildFarolMetrics_(displayM, state.componentsByChannel, state.channels, state.ggrChannels, state.bp, chFilter);
 
-  // YTD derivado (mesmas funções/filtro do principal). Dev/mock (sem endpoint): reusa o M atual só p/ a UI renderizar.
-  const ytdPayload = ytdData.payload;
-  const ytdM = !ytd ? null
-    : (ENDPOINT_URL
-        ? (ytdPayload ? deriveLiveM_(ytdPayload.metrics, chFilter, ytdPayload.componentsByChannel, ytdPayload.retentionChannels, ytdPayload.depM0Channels, ytdPayload.bp) : null)
-        : displayM);
-  const ytdFarol = !ytd ? null
-    : (ENDPOINT_URL
-        ? (ytdM ? buildFarolMetrics_(ytdM, ytdPayload.componentsByChannel, ytdPayload.channels, ytdPayload.ggrChannels, ytdPayload.bp, chFilter) : null)
-        : farolMetrics);
-  const ytdMonthlyClose = !ytd ? null : (ENDPOINT_URL ? (ytdPayload ? ytdPayload.monthlyClose : null) : state.monthlyClose);
-
   function applyPreset(presetId) {
     const p = PRESETS.find(x => x.id === presetId);
     if (!p) return;
@@ -3808,7 +3772,7 @@ function App({ user, onLogout, config }) {
     depM0Channels: fDepM0Channels, depByChannel: fDepByChannel, rolloverMatrix: fRolloverMatrix,
     isLive: state.isLive,
     monthlyClose: state.monthlyClose,   // aba Monthly Close (house-level, segue scope do backend)
-    ytd, ytdM, ytdFarol, ytdMonthlyClose, ytdRange, ytdLoading: ytdData.loading, ytdError: ytdData.error, onToggleYtd: setYtd,   // toggle YTD (Farol/Monthly Close)
+    ytd,   // YTD ativo (preset global): Farol/Monthly Close suprimem M-1/trend e relabelam (a janela já é abril→ontem via appliedRange)
     allTabs: TABS, hiddenTabs, onSetTabHidden: setTabHidden,   // controle de visibilidade (Segurança)
   };
 
@@ -3874,12 +3838,6 @@ function App({ user, onLogout, config }) {
             </button>
           ))}
         </div>
-        {(activeTabId === 'farol' || activeTabId === 'monthlyclose') && (
-          <div className="slicer-presets" title="Base de janela do Farol e Monthly Close">
-            <button className={`preset-btn ${!ytd ? 'active' : ''}`} onClick={() => setYtd(false)} title="Usa a janela do slicer de data acima (vs M-1 + vs BP + projeção).">Período</button>
-            <button className={`preset-btn ${ytd ? 'active' : ''}`} onClick={() => setYtd(true)} title="YTD: acumulado desde abril até ontem, só vs BP — afeta só Farol e Monthly Close.">YTD</button>
-          </div>
-        )}
         <div className="slicer-divider" />
         <div className="slicer-group">
           <label>Canal</label>
