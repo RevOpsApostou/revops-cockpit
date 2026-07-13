@@ -2069,13 +2069,16 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   const [seriesBy, setSeriesBy] = usePersistedState('rvops:retChartSeries', 'mult'); // 'mult' | 'canal' | 'faixa'
   const [metric, setMetric] = usePersistedState('rvops:retChartMetric2', 'Todos');   // 'Todos' | D0 | D1 | D7 | D14 | D30
   // Fonte segue o toggle M0 do topo: COORTE → mesma base/janela da tabela (srcRF, só coortes fechadas);
-  // CALENDÁRIO → últimos 30 DIAS CORRIDOS [dataMax-29, dataMax] (fetch próprio, segue o same-day).
-  const from30 = dataMax ? isoAddDays_(dataMax, -29) : null;
+  // CALENDÁRIO → últimos 30 DIAS CORRIDOS terminando em HOJE-1 (fetch próprio, segue o same-day).
+  // Cap SEMPRE em hoje-1 (= todayISO_, regra da tabela): nunca inclui o dia de HOJE (parcial → estragaria a
+  // média da semana corrente). Se o dado atrasar (dataMax < ontem), usa dataMax. capTo = min(dataMax, ontem).
+  const capTo = dataMax ? (dataMax < todayISO_() ? dataMax : todayISO_()) : todayISO_();
+  const from30 = capTo ? isoAddDays_(capTo, -29) : null;
   const [f30, setF30] = React.useState({ rows: null, loading: false, error: null });
   React.useEffect(() => {
     if (!ENDPOINT_URL || !dataMax || cohort) return;   // em coorte usa o srcRF da tabela, sem fetch próprio
     setF30(s => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${from30}&to=${dataMax}&only=retfaixa${sameday ? '&sameday=1' : ''}`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${from30}&to=${capTo}&only=retfaixa${sameday ? '&sameday=1' : ''}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(j => { if (j.error) throw new Error(j.error); setF30({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
       .catch(e => setF30({ rows: null, loading: false, error: String(e.message || e) }));
@@ -2196,7 +2199,7 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
         </svg>
       </div>
       <div className="ch-note">
-        <strong>{cohort ? `Coorte de ${cohortDays} dias — mesma base/janela da tabela (só coortes fechadas)` : `Janela fixa: últimos 30 dias corridos (${from30 ? dmLabel(from30) : '—'}→${dataMax ? dmLabel(dataMax) : '—'}), independe do slicer`}</strong>. Eixo X = <strong>{gran === 'week' ? 'semana' : 'dia'} de FTD</strong>; uma linha por <strong>{seriesBy === 'mult' ? 'multiplicador' : seriesBy === 'canal' ? 'canal' : 'faixa de FTD'}</strong>{seriesBy !== 'mult' ? ` (multiplicador ${effMetric}/FTD)` : ''}. Cada ponto = média ponderada (Σ/Σ) do KPI no período. Segue canal/faixa/modo/same-day/M0.{busy ? ' · carregando…' : ''}{err ? ' · erro' : ''}
+        <strong>{cohort ? `Coorte de ${cohortDays} dias — mesma base/janela da tabela (só coortes fechadas)` : `Janela fixa: últimos 30 dias corridos até ontem (${from30 ? dmLabel(from30) : '—'}→${capTo ? dmLabel(capTo) : '—'}), independe do slicer`}</strong>. Eixo X = <strong>{gran === 'week' ? 'semana' : 'dia'} de FTD</strong>; uma linha por <strong>{seriesBy === 'mult' ? 'multiplicador' : seriesBy === 'canal' ? 'canal' : 'faixa de FTD'}</strong>{seriesBy !== 'mult' ? ` (multiplicador ${effMetric}/FTD)` : ''}. Cada ponto = média ponderada (Σ/Σ) do KPI no período. Segue canal/faixa/modo/same-day/M0.{busy ? ' · carregando…' : ''}{err ? ' · erro' : ''}
         {!cohort && <React.Fragment>{' '}<em>Obs.: D7/D14/D30 incluem coortes recentes ainda maturando (janela corrida) → tendem a subestimar; D0/D1 já são maduros.</em></React.Fragment>}
       </div>
     </React.Fragment>
