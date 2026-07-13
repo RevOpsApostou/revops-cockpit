@@ -3006,9 +3006,8 @@ function TabFarol({ M, farol, range, ytd }) {
   // Normal: card + projeção. YTD: tira M-1 (mês anterior) e trend — só ACT vs BP acumulado.
   const dress = (m) => { if (!m) return m; if (useYtd) return { ...m, m1: null, trend: undefined }; const t = proj(m); return t != null ? { ...m, trend: t } : m; };
   const dressPlain = (m) => (useYtd && m) ? { ...m, m1: null, trend: undefined } : m;   // cards de razão (sem trend), só tira M-1 no YTD
-  // Razão: trend pelo Rollover REAL dos componentes projetados (Turnover proj ÷ Depósitos proj), não run-rate da razão.
-  const withRatioTrend = (m, numProj, denProj) => { if (!m) return m; if (useYtd) return { ...m, m1: null, trend: undefined }; return (numProj != null && denProj) ? { ...m, trend: numProj / denProj } : m; };
-  const rolloverCard = withRatioTrend(MM.rollover, proj(MM.turnover), proj(MM.depTotal));
+  // Rollover: BP FIXO 5,10x (não é meta diária do plano) e SEM trend — não faz sentido projetar uma razão.
+  const rolloverCard = MM.rollover ? { ...MM.rollover, bp: 5.10, trend: undefined, m1: useYtd ? null : MM.rollover.m1 } : null;
   const groups = [
     { title: 'Aquisição', cards: [dress(MM.invest), dress(MM.ftdAmount), dressPlain(MM.roasFtd), dressPlain(f.roasDepD0), dressPlain(f.cac), dressPlain(f.ticketFtd)] },
     { title: 'Depósito M0', cards: [dress(MM.depM0Total), dressPlain(f.roasDepM0)] },
