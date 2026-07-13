@@ -2135,9 +2135,11 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   if (!series.length || !xLabels.length) return <React.Fragment>{controls}<div className="ch-note">{busy ? 'Carregando…' : err ? 'Erro ao carregar.' : 'Sem dados p/ o gráfico neste recorte.'}</div></React.Fragment>;
 
   const n = xLabels.length;
-  const slotW = n > 20 ? 60 : n > 10 ? 92 : 168;
-  const padL = 56, padR = 26, padT = 28, padB = 56, plotH = 300;
-  const W = Math.max(960, padL + padR + (n === 1 ? slotW : (n - 1) * slotW));
+  const slotW = n > 20 ? 72 : n > 10 ? 118 : 210;
+  const padL = 60, padR = 30, padT = 32, padB = 60, plotH = 440;
+  // Piso de largura ALTO (~= largura da tabela) p/ o gráfico encher o container mesmo com poucos pontos
+  // (semanal). Com muitos pontos cresce além e rola na horizontal, igual às tabelas.
+  const W = Math.max(1500, padL + padR + (n === 1 ? slotW : (n - 1) * slotW));
   const H = padT + plotH + padB;
   const plotW = W - padL - padR;
   const xOf = (i) => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
@@ -2160,6 +2162,12 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   // path com quebras nos nulos (M no início de cada trecho contínuo)
   const linePath = (vals) => { let d = '', pen = false; vals.forEach((v, i) => { if (v == null || isNaN(v)) { pen = false; return; } d += (pen ? ' L' : ' M') + xOf(i).toFixed(1) + ',' + yOf(v).toFixed(1); pen = true; }); return d.trim(); };
   const yTitle = (seriesBy === 'mult' && metric === 'Todos') ? 'Multiplicador /FTD' : `Mult ${effMetric}/FTD`;
+  // Tooltip nativo do ponto (hover): O QUE é a linha (multiplicador OU canal/faixa+multiplicador) · o PERÍODO · o valor.
+  const pointTitle = (s, i, v) => {
+    const what = (seriesBy === 'mult') ? `${s.name}/FTD` : `${s.name} · Mult ${effMetric}/FTD`;
+    const per = (gran === 'week' ? 'Semana de ' : '') + xLabels[i];
+    return `${what}\n${per}: ${fmtMultiple(v)}`;
+  };
   return (
     <React.Fragment>
       {controls}
@@ -2185,8 +2193,12 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
               <path d={linePath(s.values)} fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
               {s.values.map((v, i) => (v != null && !isNaN(v)) ? (
                 <g key={i}>
-                  <circle cx={xOf(i)} cy={yOf(v)} r="3" fill="var(--surface)" stroke={s.color} strokeWidth="1.8" />
-                  {showLabels && <text x={xOf(i)} y={yOf(v) - 8} textAnchor="middle" fontSize="10" fontWeight="600" fill={s.color}>{fmtMultiple(v)}</text>}
+                  <circle cx={xOf(i)} cy={yOf(v)} r="3.5" fill="var(--surface)" stroke={s.color} strokeWidth="1.8" />
+                  {showLabels && <text x={xOf(i)} y={yOf(v) - 9} textAnchor="middle" fontSize="10" fontWeight="600" fill={s.color}>{fmtMultiple(v)}</text>}
+                  {/* alvo de hover generoso (transparente) por cima → tooltip nativo com o que/quando/valor */}
+                  <circle cx={xOf(i)} cy={yOf(v)} r="13" fill="transparent" style={{ cursor: 'pointer' }}>
+                    <title>{pointTitle(s, i, v)}</title>
+                  </circle>
                 </g>
               ) : null)}
             </g>
