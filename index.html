@@ -2182,10 +2182,13 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   const gridVals = Array.from({ length: ticks + 1 }, (_, i) => domMin + (domMax - domMin) * i / ticks);
   const lblEvery = Math.ceil(n / 12);
   const single = series.length === 1;
-  // Data labels por DENSIDADE (não por granularidade): mostra se o total de rótulos couber sem virar sopa.
-  // Assim aparecem no diário single (~30 pts) e no semanal (poucos pts, inclusive multi-linha).
-  const labelCount = series.reduce((a, s) => a + s.values.filter(v => v != null && !isNaN(v)).length, 0);
-  const showLabels = labelCount <= 40;
+  // Data labels: SEMPRE aparecem (inclusive canal/faixa multi-linha) — antes um teto de 40 rótulos zerava
+  // tudo no diário multi-linha. Agora afina por STRIDE de x p/ não virar sopa: single mostra todos (~30 pts);
+  // multi-linha mostra a cada N dias (teto ~42 rótulos no total) e com fonte menor p/ empilhar sem colar.
+  const nonNull = series.reduce((a, s) => a + s.values.filter(v => v != null && !isNaN(v)).length, 0) || 1;
+  const labelStride = Math.max(1, Math.ceil(nonNull / (single ? 45 : 42)));
+  const dataLblSize = single ? 16 : 12;
+  const showLabelAt = (i) => (i % labelStride === 0);
   // path com quebras nos nulos (M no início de cada trecho contínuo)
   const linePath = (vals) => { let d = '', pen = false; vals.forEach((v, i) => { if (v == null || isNaN(v)) { pen = false; return; } d += (pen ? ' L' : ' M') + xOf(i).toFixed(1) + ',' + yOf(v).toFixed(1); pen = true; }); return d.trim(); };
   const yTitle = `Mult ${effMetric}/FTD`;
@@ -2218,7 +2221,7 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
               {s.values.map((v, i) => (v != null && !isNaN(v)) ? (
                 <g key={i}>
                   <circle cx={xOf(i)} cy={yOf(v)} r="3.5" fill="var(--surface)" stroke={s.color} strokeWidth="1.8" />
-                  {showLabels && <text x={xOf(i)} y={yOf(v) - 13} textAnchor="middle" fontSize="16" fontWeight="700" fill={s.color}>{fmtMultiple(v)}</text>}
+                  {showLabelAt(i) && <text x={xOf(i)} y={yOf(v) - (single ? 13 : 10)} textAnchor="middle" fontSize={dataLblSize} fontWeight="700" fill={s.color}>{fmtMultiple(v)}</text>}
                   {/* alvo de hover generoso por cima (pointer-events all garante o hover mesmo com fill transparente) */}
                   <circle cx={xOf(i)} cy={yOf(v)} r="14" fill="transparent" style={{ cursor: 'pointer', pointerEvents: 'all' }}
                     onMouseEnter={() => setHover({ si, i })} onMouseLeave={() => setHover(null)} />
