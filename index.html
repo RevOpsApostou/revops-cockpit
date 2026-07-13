@@ -3291,8 +3291,9 @@ function deriveLiveM_(M, filter, comp, retCh, depCh, bp) {
 
 // Farol — métricas DERIVADAS p/ a aba consolidada (não estão no M do backend): CAC, Tkt FTD, ROAS Dep
 // D0/M0, FreeSpins/Dep, Bonif/Dep. Calcula no escopo do filtro (igual aos outros cards). M-1 de CAC/Tkt
-// vem de componentsByChannel (ftdQty mtd+lm, só live; mock cai p/ channels e fica sem Δ). ROAS Dep D0 e
-// FreeSpins/Bonif não têm M-1 no front (dep_d0/freespin/bonus do mês anterior não chegam por canal) → Δ "—".
+// vem de componentsByChannel (ftdQty mtd+lm, só live; mock cai p/ channels e fica sem Δ). M-1 de ROAS Dep
+// D0 e FreeSpins/Bonif = dep_d0/freespin/bonus do mês anterior POR CANAL (depD0Lm/freespinLm/bonusLm do
+// backend) ÷ invest/depTotal do M-1 → some no mock (sem *Lm) e no YTD.
 // BP: CAC/Tkt/ROAS Dep D0/M0 saem do plano per-canal (bp.byChannel); FreeSpins/Bonif não têm meta → farol off.
 function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter) {
   const sel = chList_(filter);
@@ -3309,6 +3310,8 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter) {
   const ftdQtyM = fqM != null ? fqM : chFtdQty;   // live: componentes (mtd) · mock: channels
   const ftdQtyL = sumComp('lm', 'ftdQty');         // M-1 só no live
   const depD0M = (channels || []).filter(c => inSel(c.channel) && c.spend != null).reduce((a, c) => a + (c.depD0 || 0), 0) || null;
+  // M-1 (mesma janela, mês anterior) de Dep D0 por canal — backend expõe depD0Lm em channels (CACHE v28+).
+  const depD0Lm = (channels || []).filter(c => inSel(c.channel) && c.spend != null).reduce((a, c) => a + (c.depD0Lm || 0), 0) || null;
   const fs = (ggrChannels || []).filter(c => inSel(c.channel)).reduce((a, c) => a + (c.freespin || 0), 0) || null;
   const bn = (ggrChannels || []).filter(c => inSel(c.channel)).reduce((a, c) => a + (c.bonus || 0), 0) || null;
   // M-1 (mesma janela, mês anterior) de freespin/bonus por canal — backend expõe freespinLm/bonusLm em ggrChannels (CACHE v27+).
@@ -3344,7 +3347,7 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter) {
   return {
     cac:         mk('CAC', 'brl', div(inv.act, ftdQtyM), div(B.invest, B.ftd), div(inv.m1, ftdQtyL), true),   // custo: menor=melhor
     ticketFtd:   mk('Tkt Médio FTD', 'brl', div(fa.act, ftdQtyM), div(B.ftdAmount, B.ftd), div(fa.m1, ftdQtyL)),
-    roasDepD0:   mk('ROAS Dep D0', 'multiple', div(depD0M, inv.act), div(B.depD0, B.invest), null),
+    roasDepD0:   mk('ROAS Dep D0', 'multiple', div(depD0M, inv.act), div(B.depD0, B.invest), div(depD0Lm, inv.m1)),
     // BP = razão do MÊS INTEIRO do plano (roasDepM0Bp, calculado acima) — NÃO prorateada pela janela.
     roasDepM0:   mk('ROAS Dep M0', 'multiple', div(dm0.act, inv.act), roasDepM0Bp, div(dm0.m1, inv.m1)),
     // FreeSpins/Bonif = custos (menor=melhor). BP plano: meta fixa (flat) de % sobre depósitos. Sem trend (pedido do Luis).
