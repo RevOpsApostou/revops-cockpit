@@ -248,8 +248,8 @@
   .delta-m1 {
     margin-top: 12px; font-size: 11px; color: var(--text-muted);
   }
-  .delta-m1 .up { color: var(--positive); }
-  .delta-m1 .down { color: var(--negative); }
+  /* Posição do M-1 (mesmo período do mês anterior) — NÃO é variação, então sem seta/cor de tendência */
+  .delta-m1 .m1-val { color: var(--text-dim); font-weight: 600; }
   /* Trend = projeção de fechamento do mês (MTD × dias-do-mês/decorridos) */
   .trend-line {
     margin-top: 10px; display: flex; align-items: baseline; gap: 8px;
@@ -736,10 +736,7 @@ function Hero({ metric }) {
       )}
       {metric.m1 != null && metric.act != null && (
         <div className="delta-m1">
-          <span className={metric.act >= metric.m1 ? 'up' : 'down'}>
-            {metric.act >= metric.m1 ? '↑' : '↓'} {fmtVal(metric.m1, metric.fmt)}
-          </span>
-          {' '}mês anterior
+          <span className="m1-val">{fmtVal(metric.m1, metric.fmt)}</span>{' '}mês anterior
         </div>
       )}
     </div>
@@ -3008,9 +3005,16 @@ function TabFarol({ M, farol, range, ytd }) {
   const dressPlain = (m) => (useYtd && m) ? { ...m, m1: null, trend: undefined } : m;   // cards de razão (sem trend), só tira M-1 no YTD
   // Rollover: BP FIXO 5,10x (não é meta diária do plano) e SEM trend — não faz sentido projetar uma razão.
   const rolloverCard = MM.rollover ? { ...MM.rollover, bp: 5.10, trend: undefined, m1: useYtd ? null : MM.rollover.m1 } : null;
+  // ROAS FTD e ROAS Dep M0 — posição do M-1 = razão dos M-1 dos componentes (FTD Amount÷Invest, DEP M0÷Invest),
+  // já que ambos os componentes trazem M-1. Fallback pro m1 do próprio card se algum componente não tiver M-1.
+  const div_ = (a, b) => (a != null && b) ? a / b : null;
+  const roasFtdM1 = div_(MM.ftdAmount && MM.ftdAmount.m1, MM.invest && MM.invest.m1);
+  const roasFtdCard = dressPlain(MM.roasFtd ? { ...MM.roasFtd, m1: roasFtdM1 != null ? roasFtdM1 : (MM.roasFtd.m1 != null ? MM.roasFtd.m1 : null) } : null);
+  const roasM0M1 = div_(MM.depM0Total && MM.depM0Total.m1, MM.invest && MM.invest.m1);
+  const roasDepM0Card = dressPlain(f.roasDepM0 ? { ...f.roasDepM0, m1: roasM0M1 != null ? roasM0M1 : (f.roasDepM0.m1 != null ? f.roasDepM0.m1 : null) } : null);
   const groups = [
-    { title: 'Aquisição', cards: [dress(MM.invest), dress(MM.ftdAmount), dressPlain(MM.roasFtd), dressPlain(f.roasDepD0), dressPlain(f.cac), dressPlain(f.ticketFtd)] },
-    { title: 'Depósito M0', cards: [dress(MM.depM0Total), dressPlain(f.roasDepM0)] },
+    { title: 'Aquisição', cards: [dress(MM.invest), dress(MM.ftdAmount), roasFtdCard, dressPlain(f.roasDepD0), dressPlain(f.cac), dressPlain(f.ticketFtd)] },
+    { title: 'Depósito M0', cards: [dress(MM.depM0Total), roasDepM0Card] },
     { title: 'Retenção', cards: [dressPlain(MM.retM0M1), dressPlain(MM.retM1M2), dressPlain(MM.retM3plus)] },
     { title: 'Volume & GGR', cards: [dress(MM.depTotal), dress(MM.ggr), dressPlain(MM.ggrPerDep), rolloverCard, dressPlain(f.freespinDep), dressPlain(f.bonusDep)] },
   ];
@@ -3307,6 +3311,9 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter) {
   const depD0M = (channels || []).filter(c => inSel(c.channel) && c.spend != null).reduce((a, c) => a + (c.depD0 || 0), 0) || null;
   const fs = (ggrChannels || []).filter(c => inSel(c.channel)).reduce((a, c) => a + (c.freespin || 0), 0) || null;
   const bn = (ggrChannels || []).filter(c => inSel(c.channel)).reduce((a, c) => a + (c.bonus || 0), 0) || null;
+  // M-1 (mesma janela, mês anterior) de freespin/bonus por canal — backend expõe freespinLm/bonusLm em ggrChannels (CACHE v27+).
+  const fsLm = (ggrChannels || []).filter(c => inSel(c.channel)).reduce((a, c) => a + (c.freespinLm || 0), 0) || null;
+  const bnLm = (ggrChannels || []).filter(c => inSel(c.channel)).reduce((a, c) => a + (c.bonusLm || 0), 0) || null;
   const byCh = (bp && bp.byChannel) || {};
   const B = {};
   Object.keys(byCh).forEach(ch => { if (inSel(ch)) ['invest','ftdAmount','depD0','depM0','ftd'].forEach(k => { if (byCh[ch][k] != null) B[k] = (B[k] || 0) + byCh[ch][k]; }); });
@@ -3341,8 +3348,9 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter) {
     // BP = razão do MÊS INTEIRO do plano (roasDepM0Bp, calculado acima) — NÃO prorateada pela janela.
     roasDepM0:   mk('ROAS Dep M0', 'multiple', div(dm0.act, inv.act), roasDepM0Bp, div(dm0.m1, inv.m1)),
     // FreeSpins/Bonif = custos (menor=melhor). BP plano: meta fixa (flat) de % sobre depósitos. Sem trend (pedido do Luis).
-    freespinDep: mk('FreeSpins / Dep', 'pct', div(fs, dt.act), 0.02, null, true),
-    bonusDep:    mk('Bonificação / Dep', 'pct', div(bn, dt.act), 0.028, null, true),
+    // M-1 = freespin/bonus do mês anterior (mesma janela) ÷ Depósitos Totais do mês anterior (dt.m1).
+    freespinDep: mk('FreeSpins / Dep', 'pct', div(fs, dt.act), 0.02, div(fsLm, dt.m1), true),
+    bonusDep:    mk('Bonificação / Dep', 'pct', div(bn, dt.act), 0.028, div(bnLm, dt.m1), true),
   };
 }
 
