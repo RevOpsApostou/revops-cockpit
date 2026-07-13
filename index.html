@@ -2059,6 +2059,7 @@ const RET_SERIES_COLORS = ['#FF8C00', '#60a5fa', '#4ade80', '#facc15', '#c084fc'
 function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallbackRows, cohort, cohortDays, srcRF, srcLoading, srcError }) {
   const [seriesBy, setSeriesBy] = usePersistedState('rvops:retChartSeries', 'mult'); // 'mult' | 'canal' | 'faixa'
   const [metric, setMetric] = usePersistedState('rvops:retChartMetric3', 'D1');   // D0 | D1 | D7 | D14 | D30 — UM multiplicador por vez (sem "Todos")
+  const [hover, setHover] = React.useState(null);   // { si, i } do ponto sob o mouse → tooltip custom (SVG nativo era instável)
   // Fonte segue o toggle M0 do topo: COORTE → mesma base/janela da tabela (srcRF, só coortes fechadas);
   // CALENDÁRIO → últimos 30 DIAS CORRIDOS terminando em HOJE-1 (fetch próprio, segue o same-day).
   // Cap SEMPRE em hoje-1 (= todayISO_, regra da tabela): nunca inclui o dia de HOJE (parcial → estragaria a
@@ -2156,7 +2157,7 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
 
   const n = xLabels.length;
   const slotW = n > 20 ? 72 : n > 10 ? 118 : 210;
-  const padL = 60, padR = 30, padT = 32, padB = 60, plotH = 440;
+  const padL = 60, padR = 30, padT = 32, padB = 60, plotH = 600;
   // Piso de largura ALTO (~= largura da tabela) p/ o gráfico encher o container mesmo com poucos pontos
   // (semanal). Com muitos pontos cresce além e rola na horizontal, igual às tabelas.
   const W = Math.max(1500, padL + padR + (n === 1 ? slotW : (n - 1) * slotW));
@@ -2166,10 +2167,13 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   const allVals = series.flatMap(s => s.values).filter(v => v != null && !isNaN(v));
   const yMaxRaw = allVals.length ? Math.max.apply(null, allVals) : 1;
   const yMinRaw = allVals.length ? Math.min.apply(null, allVals) : 1;
-  // Eixo Y começa em 1 (multiplicador nunca é < 1: D0 já inclui o FTD) → tira o espaço morto 0–1 e as
-  // linhas espalham mais na vertical. Se algum ponto vier < 1 (dado atípico), abaixa o piso p/ não cortar.
-  const domMin = Math.min(1, yMinRaw);
-  const domMax = Math.max(yMaxRaw * 1.08, domMin + 0.1);
+  // Eixo Y ENQUADRA a linha (preenche a vertical, menos "achatado"), mas NUNCA abaixo de 1,00x (multiplicador
+  // ≥ 1: D0 já inclui o FTD). Span mínimo 0,3x p/ não magnificar ruído quando a linha é quase plana. Ponto
+  // atípico < 1 (raro) baixa o piso p/ não cortar (min(1, yMin)).
+  const ySpan = Math.max(yMaxRaw - yMinRaw, 0.3);
+  const yPad = ySpan * 0.18;
+  const domMin = Math.max(Math.min(1, yMinRaw), yMinRaw - yPad);
+  const domMax = Math.max(yMaxRaw + yPad, domMin + 0.2);
   const yOf = (v) => padT + (1 - (v - domMin) / (domMax - domMin)) * plotH;
   const ticks = 4;
   const gridVals = Array.from({ length: ticks + 1 }, (_, i) => domMin + (domMax - domMin) * i / ticks);
@@ -2182,12 +2186,9 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   // path com quebras nos nulos (M no início de cada trecho contínuo)
   const linePath = (vals) => { let d = '', pen = false; vals.forEach((v, i) => { if (v == null || isNaN(v)) { pen = false; return; } d += (pen ? ' L' : ' M') + xOf(i).toFixed(1) + ',' + yOf(v).toFixed(1); pen = true; }); return d.trim(); };
   const yTitle = `Mult ${effMetric}/FTD`;
-  // Tooltip nativo do ponto (hover): O QUE é a linha (multiplicador OU canal/faixa+multiplicador) · o PERÍODO · o valor.
-  const pointTitle = (s, i, v) => {
-    const what = (seriesBy === 'mult') ? `${s.name}/FTD` : `${s.name} · Mult ${effMetric}/FTD`;
-    const per = (gran === 'week' ? 'Semana de ' : '') + xLabels[i];
-    return `${what}\n${per}: ${fmtMultiple(v)}`;
-  };
+  // Tooltip custom (hover): linha 1 = O QUE é (multiplicador OU canal/faixa+multiplicador); linha 2 = PERÍODO · valor.
+  const tipHead = (s) => (seriesBy === 'mult') ? `${s.name}/FTD` : `${s.name} · Mult ${effMetric}/FTD`;
+  const tipSub  = (i, v) => `${gran === 'week' ? 'Semana de ' : ''}${xLabels[i]} · ${fmtMultiple(v)}`;
   return (
     <React.Fragment>
       {controls}
@@ -2215,14 +2216,28 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
                 <g key={i}>
                   <circle cx={xOf(i)} cy={yOf(v)} r="3.5" fill="var(--surface)" stroke={s.color} strokeWidth="1.8" />
                   {showLabels && <text x={xOf(i)} y={yOf(v) - 9} textAnchor="middle" fontSize="10" fontWeight="600" fill={s.color}>{fmtMultiple(v)}</text>}
-                  {/* alvo de hover generoso (transparente) por cima → tooltip nativo com o que/quando/valor */}
-                  <circle cx={xOf(i)} cy={yOf(v)} r="13" fill="transparent" style={{ cursor: 'pointer' }}>
-                    <title>{pointTitle(s, i, v)}</title>
-                  </circle>
+                  {/* alvo de hover generoso por cima (pointer-events all garante o hover mesmo com fill transparente) */}
+                  <circle cx={xOf(i)} cy={yOf(v)} r="14" fill="transparent" style={{ cursor: 'pointer', pointerEvents: 'all' }}
+                    onMouseEnter={() => setHover({ si, i })} onMouseLeave={() => setHover(null)} />
                 </g>
               ) : null)}
             </g>
           ))}
+          {hover && series[hover.si] && series[hover.si].values[hover.i] != null && !isNaN(series[hover.si].values[hover.i]) && (() => {
+            const s = series[hover.si], v = s.values[hover.i], cx = xOf(hover.i), cy = yOf(v);
+            const l1 = tipHead(s), l2 = tipSub(hover.i, v);
+            const bw = Math.max(l1.length, l2.length) * 6.4 + 18, bh = 38;
+            let tx = Math.max(padL, Math.min(cx - bw / 2, W - padR - bw));
+            let ty = cy - bh - 14; if (ty < padT) ty = cy + 16;   // acima do ponto; se colar no topo, vai p/ baixo
+            return (
+              <g pointerEvents="none">
+                <circle cx={cx} cy={cy} r="5" fill={s.color} stroke="var(--surface)" strokeWidth="2" />
+                <rect x={tx} y={ty} width={bw} height={bh} rx="7" fill="var(--surface)" stroke={s.color} strokeWidth="1.2" />
+                <text x={tx + 9} y={ty + 15} fontSize="11.5" fontWeight="700" fill="var(--text)">{l1}</text>
+                <text x={tx + 9} y={ty + 30} fontSize="11" fill="var(--text-muted)">{l2}</text>
+              </g>
+            );
+          })()}
         </svg>
       </div>
       <div className="ch-note">
