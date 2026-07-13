@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<!-- App já é dark nativo: trava o Dark Reader (e similares) p/ não "clarear" fundos escuros (ex.: caixa do tooltip) -->
+<meta name="darkreader-lock">
 <title>RevOps Cockpit — Apostou</title>
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -2231,11 +2234,11 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
             let ty = cy - bh - 18; if (ty < padT) ty = cy + 20;   // acima do ponto; se colar no topo, vai p/ baixo
             return (
               <g pointerEvents="none">
-                <circle cx={cx} cy={cy} r="6.5" fill={s.color} stroke="var(--bg)" strokeWidth="2.5" />
-                {/* painel bem mais claro (#242424) que o fundo (#000) + borda grossa na cor da série + texto branco → alto contraste */}
-                <rect x={tx} y={ty} width={bw} height={bh} rx="9" fill="#242424" stroke={s.color} strokeWidth="2" />
+                <circle cx={cx} cy={cy} r="6.5" fill={s.color} stroke="#000000" strokeWidth="2.5" />
+                {/* fundo PRETO sólido + borda grossa na cor da série + texto branco → alto contraste, legível */}
+                <rect x={tx} y={ty} width={bw} height={bh} rx="9" fill="#000000" fillOpacity="1" stroke={s.color} strokeWidth="2.5" />
                 <text x={tx + 15} y={ty + 27} fontSize="17" fontWeight="700" fill="#ffffff">{l1}</text>
-                <text x={tx + 15} y={ty + 49} fontSize="15" fill="#ececec">{l2}</text>
+                <text x={tx + 15} y={ty + 49} fontSize="15" fill="#f2f2f2">{l2}</text>
               </g>
             );
           })()}
