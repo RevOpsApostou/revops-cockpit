@@ -3725,8 +3725,20 @@ function App({ user, onLogout, config }) {
   const displayM = state.isLive
     ? deriveLiveM_(state.M, chFilter, state.componentsByChannel, state.retentionChannels, state.depM0Channels, state.bp)
     : deriveMockM_(state.M, chFilter);
+  // DEP M0 WINDOW-AWARE: o deriveLiveM_ pega o M0 da view de coorte MENSAL (mês do início da janela, não
+  // respeita a sub-janela → quebra em YTD/7d/30d). ggrSafra.m0[].dep JÁ é o depósito M0 (bucket 0 = mês do
+  // FTD = mês da atividade) DENTRO da janela → sobrescreve act/m1 do DEP M0 p/ SEGUIR a data. BP fica o do
+  // plano. ROAS Dep M0 herda (buildFarolMetrics_ divide dm0.act/m1 por invest).
+  const dispM = (() => {
+    const m0 = fGgrSafra && fGgrSafra.m0;
+    if (!m0 || !m0.length) return displayM;
+    let dep = 0, depM1 = 0, gDep = 0, gDepM1 = 0;
+    m0.forEach(c => { dep += c.dep || 0; depM1 += c.depM1 || 0; if (isGrowthCh_(c.channel)) { gDep += c.dep || 0; gDepM1 += c.depM1 || 0; } });
+    const over = (m, act, m1) => m ? { ...m, act, m1 } : m;
+    return { ...displayM, depM0Total: over(displayM.depM0Total, dep, depM1), depM0Growth: over(displayM.depM0Growth, gDep, gDepM1) };
+  })();
   // Métricas derivadas da aba Farol (CAC, Tkt FTD, ROAS Dep D0/M0, FreeSpins/Bonif por dep) — escopo do filtro.
-  const farolMetrics = buildFarolMetrics_(displayM, state.componentsByChannel, state.channels, state.ggrChannels, state.bp, chFilter);
+  const farolMetrics = buildFarolMetrics_(dispM, state.componentsByChannel, state.channels, state.ggrChannels, state.bp, chFilter);
 
   function applyPreset(presetId) {
     const p = PRESETS.find(x => x.id === presetId);
@@ -3757,7 +3769,7 @@ function App({ user, onLogout, config }) {
   const [visitedTabs, setVisitedTabs] = React.useState({});
   React.useEffect(() => { setVisitedTabs(v => v[activeTabId] ? v : { ...v, [activeTabId]: true }); }, [activeTabId]);
   const tabProps = {
-    user, M: displayM, farol: farolMetrics, channels: fChannels, bp: state.bp,
+    user, M: dispM, farol: farolMetrics, channels: fChannels, bp: state.bp,
     retentionChannels: fRetentionChannels, ggrChannels: fGgrChannels, ggrSafra: fGgrSafra, ggrSafraRoas: fGgrSafraRoas, ggrPayback: state.ggrPayback,
     dailyCohort: selectDailyCohort_(state.dailyCohort, chFilter), retencaoFaixa: state.retencaoFaixa,
     componentsByChannel: state.componentsByChannel,   // spend/ftd por canal (tbl_performance_daily) — aba CAC usa p/ Investimento bater com o Farol
