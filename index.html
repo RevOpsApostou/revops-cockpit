@@ -713,11 +713,6 @@ function Hero({ metric }) {
   // Farol off enquanto BP pausado; ACT negativo (dado corrompido) também esconde.
   const pct = (!BP_FAROL_ON || (metric.act != null && metric.act < 0)) ? null : attain(metric.act);
   const farol = farolFromPct(pct);
-  const deltaM1 = (metric.m1 != null && metric.act != null && metric.m1 !== 0)
-    ? (metric.act - metric.m1) / metric.m1 : null;
-  // Trend = projeção de fechamento. % = atingimento da projeção vs BP cheio do mês (mesma direção do card).
-  const trendPct = (BP_FAROL_ON && metric.trend != null) ? attain(metric.trend) : null;
-  const trendFarol = farolFromPct(trendPct);
   return (
     <div className="hero">
       <div className="head">
@@ -737,15 +732,14 @@ function Hero({ metric }) {
         <div className="trend-line" title="Projeção de fechamento do mês = MTD × (dias do mês ÷ dias decorridos)">
           <span className="trend-tag">↗ Trend</span>
           <span className="trend-val">{fmtVal(metric.trend, metric.fmt)}</span>
-          {trendPct != null && <span className={`trend-pct ${trendFarol}`}>{fmtPct(trendPct, 0)} BP</span>}
         </div>
       )}
-      {deltaM1 != null && (
+      {metric.m1 != null && metric.act != null && (
         <div className="delta-m1">
-          <span className={deltaM1 >= 0 ? 'up' : 'down'}>
-            {deltaM1 >= 0 ? '↑' : '↓'} {fmtPct(Math.abs(deltaM1), 0)}
+          <span className={metric.act >= metric.m1 ? 'up' : 'down'}>
+            {metric.act >= metric.m1 ? '↑' : '↓'} {fmtVal(metric.m1, metric.fmt)}
           </span>
-          {' '}vs mês anterior
+          {' '}mês anterior
         </div>
       )}
     </div>
