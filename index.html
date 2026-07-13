@@ -3132,7 +3132,7 @@ const TABS = [
   { id: 'caccalc', label: 'CAC Calculator', component: TabCacCalculator },
   { id: 'safras', label: 'Safras Diárias', component: TabSafras },
   { id: 'retencao', label: 'Retenções', component: TabRetencao },
-  { id: 'retfaixa', label: 'Ret. Faixa FTD', component: TabRetencaoFaixa },
+  { id: 'retfaixa', label: 'Multiplicadores e Retenção', component: TabRetencaoFaixa },
   { id: 'ggr', label: 'GGR', component: TabGgr },
   { id: 'depositos', label: 'Depósitos', component: TabDepositos },
   { id: 'apostas', label: 'Turnover', component: TabApostas },
@@ -3752,11 +3752,12 @@ function App({ user, onLogout, config }) {
   const isDirty = pendingRange.from !== appliedRange.from || pendingRange.to !== appliedRange.to;
 
   // Aba Segurança só aparece p/ admin. Fallback p/ 1ª aba se o tabId persistido não existir no escopo.
-  // Admin vê TODAS as abas (ocultas marcadas no nav); não-admin não vê as abas ocultas.
+  // Abas ocultas somem do nav p/ TODOS (inclusive admin) — a Segurança lista todas (allTabs) p/ reexibir.
   const isAdmin = !!(user && user.admin);
+  const shownTabs = TABS.filter(t => hiddenTabs.indexOf(t.id) < 0);
   const visibleTabs = isAdmin
-    ? TABS.concat([{ id: 'seguranca', label: 'Segurança', component: SegurancaTab }])
-    : TABS.filter(t => hiddenTabs.indexOf(t.id) < 0);
+    ? shownTabs.concat([{ id: 'seguranca', label: 'Segurança', component: SegurancaTab }])
+    : shownTabs;
   const activeTabId = visibleTabs.find(t => t.id === tabId) ? tabId : visibleTabs[0].id;
   // Abas já visitadas ficam MONTADAS (escondidas via CSS) — não refazem fetch nem perdem estado/datas ao trocar.
   // Montagem é LAZY: só monta a aba na 1ª visita (não dispara o fetch de todas no load).
@@ -3866,21 +3867,15 @@ function App({ user, onLogout, config }) {
         <button className="apply-btn" disabled={!isDirty} onClick={applyManual}>Aplicar</button>
       </div>
       <nav className="tabs">
-        {visibleTabs.map(t => {
-          const tabHidden = isAdmin && hiddenTabs.indexOf(t.id) >= 0;
-          return (
-            <button
-              key={t.id}
-              className={`tab-btn ${tabId === t.id ? 'active' : ''}`}
-              style={tabHidden ? { opacity: 0.5 } : undefined}
-              title={tabHidden ? 'Oculta para não-admins (só você vê)' : undefined}
-              onClick={() => setTabId(t.id)}
-            >
-              {tabHidden && <span aria-hidden="true" style={{ marginRight: '4px' }}>🚫</span>}
-              {t.label}
-            </button>
-          );
-        })}
+        {visibleTabs.map(t => (
+          <button
+            key={t.id}
+            className={`tab-btn ${tabId === t.id ? 'active' : ''}`}
+            onClick={() => setTabId(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
       </nav>
       <main>
         {visibleTabs.filter(t => visitedTabs[t.id] || t.id === activeTabId).map(t => {
