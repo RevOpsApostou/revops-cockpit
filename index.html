@@ -3033,12 +3033,6 @@ function TabFarol({ M, farol, range, ytd, ytdM, ytdFarol, ytdRange, ytdLoading, 
               : <>Visão consolidada — todos os indicadores em cards, variação vs M-1 e vs BP</>}
           </div>
         </div>
-        {onToggleYtd && (
-          <div className="slicer-presets">
-            <button className={`preset-btn ${!useYtd ? 'active' : ''}`} onClick={() => onToggleYtd(false)} title="Janela do slicer de data do topo (vs M-1 + vs BP + projeção de fechamento).">Período</button>
-            <button className={`preset-btn ${useYtd ? 'active' : ''}`} onClick={() => onToggleYtd(true)} title="Acumulado desde abril (início da operação) até o último dia com dado — só vs BP.">YTD</button>
-          </div>
-        )}
       </div>
       {loading ? (
         <div className="support"><div className="ch-note">Carregando YTD (abril→hoje)…</div></div>
@@ -3111,12 +3105,6 @@ function TabMonthlyClose({ M, farol, monthlyClose, range, isLive, ytd, ytdM, ytd
               : <>Fechamento do mês · ACT (BigQuery) vs BP · {rangeLbl}{!isLive ? ' · dados mock' : ''}</>}
           </div>
         </div>
-        {onToggleYtd && (
-          <div className="slicer-presets">
-            <button className={`preset-btn ${!useYtd ? 'active' : ''}`} onClick={() => onToggleYtd(false)} title="Janela do slicer de data do topo.">Período</button>
-            <button className={`preset-btn ${useYtd ? 'active' : ''}`} onClick={() => onToggleYtd(true)} title="Acumulado desde abril (início da operação) até o último dia com dado.">YTD</button>
-          </div>
-        )}
       </div>
       {loading && <div className="support"><div className="ch-note">Carregando YTD (abril→hoje)…</div></div>}
       <div className="support">
@@ -3886,6 +3874,12 @@ function App({ user, onLogout, config }) {
             </button>
           ))}
         </div>
+        {(activeTabId === 'farol' || activeTabId === 'monthlyclose') && (
+          <div className="slicer-presets" title="Base de janela do Farol e Monthly Close">
+            <button className={`preset-btn ${!ytd ? 'active' : ''}`} onClick={() => setYtd(false)} title="Usa a janela do slicer de data acima (vs M-1 + vs BP + projeção).">Período</button>
+            <button className={`preset-btn ${ytd ? 'active' : ''}`} onClick={() => setYtd(true)} title="YTD: acumulado desde abril até ontem, só vs BP — afeta só Farol e Monthly Close.">YTD</button>
+          </div>
+        )}
         <div className="slicer-divider" />
         <div className="slicer-group">
           <label>Canal</label>
