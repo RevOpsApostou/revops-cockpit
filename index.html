@@ -2110,16 +2110,17 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
     series = perGroup.map((pg, i) => ({ name: pg.g.label, mid: effMetric, color: RET_SERIES_COLORS[i % RET_SERIES_COLORS.length], values: keys.map(k => pg.m[k] ? pg.m[k].y : null) }));
   }
   // ---- CORTE DE MATURIDADE + janela de 30 dias maduros (só modo calendário; coorte já traz só coortes fechadas) ----
-  // Cada multiplicador só "fecha" N dias após o FTD (D0=0·D1=1·D7=7·D14=14·D30=30). Semanal soma +6 (a semana
-  // madura quando o ÚLTIMO dia dela madura). A última safra madura = dataMax − N; a janela vira os 30 dias
-  // corridos terminando nela → NUNCA mostra coorte ainda imatura. Ex.: D7 termina em dataMax−7 (não em ontem).
+  // Referência = capTo (ÚLTIMO DIA COMPLETO = ontem; HOJE é parcial → já fica de fora). Um multiplicador só
+  // "fecha 100%" quando a coorte teve N dias COMPLETOS após o FTD (D0=0·D1=1·D7=7·D14=14·D30=30). Semanal soma +6.
+  // Última safra madura = capTo − N. Ex.: D0 vai até ONTEM; o D1 de ontem ainda dependeria de HOJE (parcial),
+  // então D1 exclui hoje E ontem → termina anteontem; D7 termina em ontem−7. Janela = 30 dias corridos até aí.
   const MAT_H = { D0: 0, D1: 1, D7: 7, D14: 14, D30: 30 };
   const matSpanOf = (id) => (MAT_H[id] || 0) + (gran === 'week' ? 6 : 0);
   let matCutId = null, matCutISO = null;
   if (!cohort && dataMax) {
     {
       const id = effMetric;   // um único multiplicador (mult OU canal/faixa) → um único corte
-      const cut = isoAddDays_(dataMax, -matSpanOf(id));
+      const cut = isoAddDays_(capTo, -matSpanOf(id));   // capTo (=ontem) exclui o dia parcial de HOJE de todo multiplicador
       const left = isoAddDays_(cut, -29);
       const keep = isoKeys.map(k => k == null || (k >= left && k <= cut));
       xLabels = xLabels.filter((_, i) => keep[i]); isoKeys = isoKeys.filter((_, i) => keep[i]);
