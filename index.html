@@ -2058,7 +2058,7 @@ const RET_MULT_METRICS = [
 const RET_SERIES_COLORS = ['#FF8C00', '#60a5fa', '#4ade80', '#facc15', '#c084fc', '#22d3ee', '#fb7185', '#a3e635'];
 function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallbackRows, cohort, cohortDays, srcRF, srcLoading, srcError }) {
   const [seriesBy, setSeriesBy] = usePersistedState('rvops:retChartSeries', 'mult'); // 'mult' | 'canal' | 'faixa'
-  const [metric, setMetric] = usePersistedState('rvops:retChartMetric2', 'Todos');   // 'Todos' | D0 | D1 | D7 | D14 | D30
+  const [metric, setMetric] = usePersistedState('rvops:retChartMetric3', 'D1');   // D0 | D1 | D7 | D14 | D30 — UM multiplicador por vez (sem "Todos")
   // Fonte segue o toggle M0 do topo: COORTE → mesma base/janela da tabela (srcRF, só coortes fechadas);
   // CALENDÁRIO → últimos 30 DIAS CORRIDOS terminando em HOJE-1 (fetch próprio, segue o same-day).
   // Cap SEMPRE em hoje-1 (= todayISO_, regra da tabela): nunca inclui o dia de HOJE (parcial → estragaria a
@@ -2080,8 +2080,8 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   const busy = cohort ? !!srcLoading : f30.loading;
   const err = cohort ? srcError : f30.error;
   const dmLabel = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); return m ? `${m[3]}/${m[2]}` : String(s); };
-  // "Todos" (todos os multiplicadores) só faz sentido no modo Multiplicadores; em Canal/Faixa exige UM (cai no D1).
-  const effMetric = (seriesBy !== 'mult' && (metric === 'Todos' || !RET_MULT_METRICS.some(m => m.id === metric))) ? 'D1' : metric;
+  // UM multiplicador por vez (D0…D30). Coage valor inválido/legado (ex. "Todos" salvo antes) p/ D1.
+  const effMetric = RET_MULT_METRICS.some(m => m.id === metric) ? metric : 'D1';
   const mDef = RET_MULT_METRICS.find(m => m.id === effMetric) || RET_MULT_METRICS[1];
 
   // Eixo X = período (unificado); séries = 1 por multiplicador OU por canal OU por faixa.
@@ -2091,8 +2091,7 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
     const agg = aggRetFaixaBench_(rows30 || [], chFilter, faixaSel, mode, gran, null, dataMax); // dim = período
     xLabels = agg.rows.map(r => dmLabel(r.date));
     isoKeys = agg.rows.map(r => r._key);
-    const sel = (metric === 'Todos') ? RET_MULT_METRICS : RET_MULT_METRICS.filter(m => m.id === metric);
-    series = sel.map(m => ({ name: 'Mult ' + m.id, mid: m.id, color: RET_SERIES_COLORS[RET_MULT_METRICS.indexOf(m) % RET_SERIES_COLORS.length], values: agg.rows.map(r => r[m.key]) }));
+    series = [{ name: 'Mult ' + mDef.id, mid: mDef.id, color: RET_SERIES_COLORS[RET_MULT_METRICS.indexOf(mDef) % RET_SERIES_COLORS.length], values: agg.rows.map(r => r[mDef.key]) }];
   } else {
     // grupos (canais ou faixas) presentes no recorte, cada um agregado por período p/ o multiplicador escolhido
     const groupAgg = aggRetFaixaBench_(rows30 || [], chFilter, faixaSel, mode, 'day', null, dataMax, seriesBy);
@@ -2118,17 +2117,8 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   const matSpanOf = (id) => (MAT_H[id] || 0) + (gran === 'week' ? 6 : 0);
   let matCutId = null, matCutISO = null;
   if (!cohort && dataMax) {
-    if (seriesBy === 'mult' && metric === 'Todos') {
-      // várias linhas c/ horizontes distintos: janela recente (30d até a safra madura do D0) + anula o rabo imaturo de cada linha
-      const base = isoAddDays_(dataMax, -matSpanOf('D0'));
-      const left = isoAddDays_(base, -29);
-      const keep = isoKeys.map(k => k == null || (k >= left && k <= base));
-      xLabels = xLabels.filter((_, i) => keep[i]); isoKeys = isoKeys.filter((_, i) => keep[i]);
-      series = series.map(s => ({ ...s, values: s.values.filter((_, i) => keep[i]) }))
-                     .map(s => { const cut = isoAddDays_(dataMax, -matSpanOf(s.mid)); return { ...s, values: s.values.map((v, i) => (isoKeys[i] != null && isoKeys[i] > cut) ? null : v) }; });
-      matCutId = 'Todos'; matCutISO = base;
-    } else {
-      const id = (seriesBy === 'mult') ? metric : effMetric;
+    {
+      const id = effMetric;   // um único multiplicador (mult OU canal/faixa) → um único corte
       const cut = isoAddDays_(dataMax, -matSpanOf(id));
       const left = isoAddDays_(cut, -29);
       const keep = isoKeys.map(k => k == null || (k >= left && k <= cut));
@@ -2154,11 +2144,8 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
         <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Multiplicador</label>
         <span className="slicer-presets">
-          {seriesBy === 'mult' && (
-            <button className={`preset-btn ${metric === 'Todos' ? 'active' : ''}`} onClick={() => setMetric('Todos')} title="Todos os multiplicadores — uma linha cada">Todos</button>
-          )}
           {RET_MULT_METRICS.map(m => (
-            <button key={m.id} className={`preset-btn ${(seriesBy === 'mult' ? metric : effMetric) === m.id ? 'active' : ''}`} onClick={() => setMetric(m.id)} title={`Multiplicador ${m.id}/FTD = ${m.desc}`}>{m.id}</button>
+            <button key={m.id} className={`preset-btn ${effMetric === m.id ? 'active' : ''}`} onClick={() => setMetric(m.id)} title={`Multiplicador ${m.id}/FTD = ${m.desc}`}>{m.id}</button>
           ))}
         </span>
       </span>
@@ -2193,7 +2180,7 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   const showLabels = labelCount <= 40;
   // path com quebras nos nulos (M no início de cada trecho contínuo)
   const linePath = (vals) => { let d = '', pen = false; vals.forEach((v, i) => { if (v == null || isNaN(v)) { pen = false; return; } d += (pen ? ' L' : ' M') + xOf(i).toFixed(1) + ',' + yOf(v).toFixed(1); pen = true; }); return d.trim(); };
-  const yTitle = (seriesBy === 'mult' && metric === 'Todos') ? 'Multiplicador /FTD' : `Mult ${effMetric}/FTD`;
+  const yTitle = `Mult ${effMetric}/FTD`;
   // Tooltip nativo do ponto (hover): O QUE é a linha (multiplicador OU canal/faixa+multiplicador) · o PERÍODO · o valor.
   const pointTitle = (s, i, v) => {
     const what = (seriesBy === 'mult') ? `${s.name}/FTD` : `${s.name} · Mult ${effMetric}/FTD`;
@@ -2238,8 +2225,8 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
         </svg>
       </div>
       <div className="ch-note">
-        <strong>{cohort ? `Coorte de ${cohortDays} dias — mesma base/janela da tabela (só coortes fechadas)` : `Janela: 30 dias corridos terminando na ÚLTIMA safra MADURA${matCutId && matCutId !== 'Todos' ? ` do ${matCutId}` : ''}${matCutISO ? ` (até ${dmLabel(matCutISO)})` : ''} — coortes ainda imaturas são cortadas`}</strong>. Eixo X = <strong>{gran === 'week' ? 'semana' : 'dia'} de FTD</strong>; uma linha por <strong>{seriesBy === 'mult' ? 'multiplicador' : seriesBy === 'canal' ? 'canal' : 'faixa de FTD'}</strong>{seriesBy !== 'mult' ? ` (multiplicador ${effMetric}/FTD)` : ''}. Cada ponto = média ponderada (Σ/Σ) do KPI no período. Segue canal/faixa/modo/same-day/M0.{busy ? ' · carregando…' : ''}{err ? ' · erro' : ''}
-        {!cohort && <React.Fragment>{' '}<em>Maturidade: cada multiplicador só entra depois de a coorte ter os dias p/ fechar a janela (D0=0 · D1=1 · D7=7 · D14=14 · D30=30 dias após o FTD){seriesBy === 'mult' && metric === 'Todos' ? ' — por isso cada linha termina num ponto diferente' : ''}.</em></React.Fragment>}
+        <strong>{cohort ? `Coorte de ${cohortDays} dias — mesma base/janela da tabela (só coortes fechadas)` : `Janela: 30 dias corridos terminando na ÚLTIMA safra MADURA${matCutId ? ` do ${matCutId}` : ''}${matCutISO ? ` (até ${dmLabel(matCutISO)})` : ''} — coortes ainda imaturas são cortadas`}</strong>. Eixo X = <strong>{gran === 'week' ? 'semana' : 'dia'} de FTD</strong>; {seriesBy === 'mult' ? <>evolução do <strong>multiplicador {effMetric}/FTD</strong></> : <>uma linha por <strong>{seriesBy === 'canal' ? 'canal' : 'faixa de FTD'}</strong> (multiplicador {effMetric}/FTD)</>}. Cada ponto = média ponderada (Σ/Σ) do KPI no período. Segue canal/faixa/modo/same-day/M0.{busy ? ' · carregando…' : ''}{err ? ' · erro' : ''}
+        {!cohort && <React.Fragment>{' '}<em>Maturidade: o multiplicador só entra depois de a coorte ter os dias p/ fechar a janela (D0=0 · D1=1 · D7=7 · D14=14 · D30=30 dias após o FTD).</em></React.Fragment>}
       </div>
     </React.Fragment>
   );
