@@ -2152,7 +2152,11 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   const xOf = (i) => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
   const allVals = series.flatMap(s => s.values).filter(v => v != null && !isNaN(v));
   const yMaxRaw = allVals.length ? Math.max.apply(null, allVals) : 1;
-  const domMax = yMaxRaw > 0 ? yMaxRaw * 1.15 : 1, domMin = 0;
+  const yMinRaw = allVals.length ? Math.min.apply(null, allVals) : 1;
+  // Eixo Y começa em 1 (multiplicador nunca é < 1: D0 já inclui o FTD) → tira o espaço morto 0–1 e as
+  // linhas espalham mais na vertical. Se algum ponto vier < 1 (dado atípico), abaixa o piso p/ não cortar.
+  const domMin = Math.min(1, yMinRaw);
+  const domMax = Math.max(yMaxRaw * 1.08, domMin + 0.1);
   const yOf = (v) => padT + (1 - (v - domMin) / (domMax - domMin)) * plotH;
   const ticks = 4;
   const gridVals = Array.from({ length: ticks + 1 }, (_, i) => domMin + (domMax - domMin) * i / ticks);
