@@ -2064,16 +2064,18 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   // Cap SEMPRE em hoje-1 (= todayISO_, regra da tabela): nunca inclui o dia de HOJE (parcial → estragaria a
   // média da semana corrente). Se o dado atrasar (dataMax < ontem), usa dataMax. capTo = min(dataMax, ontem).
   const capTo = dataMax ? (dataMax < todayISO_() ? dataMax : todayISO_()) : todayISO_();
-  const from30 = capTo ? isoAddDays_(capTo, -29) : null;
+  // Busca 60 dias corridos (não 30): o corte de MATURIDADE por multiplicador (D30 recua 30 dias) precisa
+  // de histórico atrás dos 30 dias visíveis. A janela de 30 dias MADUROS é recortada no cliente por multiplicador.
+  const fetchFrom = capTo ? isoAddDays_(capTo, -59) : null;
   const [f30, setF30] = React.useState({ rows: null, loading: false, error: null });
   React.useEffect(() => {
     if (!ENDPOINT_URL || !dataMax || cohort) return;   // em coorte usa o srcRF da tabela, sem fetch próprio
     setF30(s => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${from30}&to=${capTo}&only=retfaixa${sameday ? '&sameday=1' : ''}`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${fetchFrom}&to=${capTo}&only=retfaixa${sameday ? '&sameday=1' : ''}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(j => { if (j.error) throw new Error(j.error); setF30({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
       .catch(e => setF30({ rows: null, loading: false, error: String(e.message || e) }));
-  }, [from30, dataMax, sameday, cohort]);
+  }, [fetchFrom, dataMax, sameday, cohort]);
   const rows30 = cohort ? (srcRF || []) : (f30.rows || (!ENDPOINT_URL ? (fallbackRows || []) : null));
   const busy = cohort ? !!srcLoading : f30.loading;
   const err = cohort ? srcError : f30.error;
@@ -2083,12 +2085,14 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   const mDef = RET_MULT_METRICS.find(m => m.id === effMetric) || RET_MULT_METRICS[1];
 
   // Eixo X = período (unificado); séries = 1 por multiplicador OU por canal OU por faixa.
-  let xLabels = [], series = [];
+  // isoKeys[i] = chave ISO da coorte no ponto i (dia = data do FTD · semana = 2ª-feira de início) → usada no corte de maturidade.
+  let xLabels = [], series = [], isoKeys = [];
   if (seriesBy === 'mult') {
     const agg = aggRetFaixaBench_(rows30 || [], chFilter, faixaSel, mode, gran, null, dataMax); // dim = período
     xLabels = agg.rows.map(r => dmLabel(r.date));
+    isoKeys = agg.rows.map(r => r._key);
     const sel = (metric === 'Todos') ? RET_MULT_METRICS : RET_MULT_METRICS.filter(m => m.id === metric);
-    series = sel.map(m => ({ name: 'Mult ' + m.id, color: RET_SERIES_COLORS[RET_MULT_METRICS.indexOf(m) % RET_SERIES_COLORS.length], values: agg.rows.map(r => r[m.key]) }));
+    series = sel.map(m => ({ name: 'Mult ' + m.id, mid: m.id, color: RET_SERIES_COLORS[RET_MULT_METRICS.indexOf(m) % RET_SERIES_COLORS.length], values: agg.rows.map(r => r[m.key]) }));
   } else {
     // grupos (canais ou faixas) presentes no recorte, cada um agregado por período p/ o multiplicador escolhido
     const groupAgg = aggRetFaixaBench_(rows30 || [], chFilter, faixaSel, mode, 'day', null, dataMax, seriesBy);
@@ -2102,8 +2106,36 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
     });
     const labelByKey = {}; perGroup.forEach(pg => Object.keys(pg.m).forEach(k => { labelByKey[k] = pg.m[k].label; }));
     const keys = Object.keys(labelByKey).sort();
-    xLabels = keys.map(k => labelByKey[k]);
-    series = perGroup.map((pg, i) => ({ name: pg.g.label, color: RET_SERIES_COLORS[i % RET_SERIES_COLORS.length], values: keys.map(k => pg.m[k] ? pg.m[k].y : null) }));
+    xLabels = keys.map(k => dmLabel(labelByKey[k]));   // dia ISO → dd/mm (igual ao modo mult); rótulo de semana passa direto
+    isoKeys = keys;
+    series = perGroup.map((pg, i) => ({ name: pg.g.label, mid: effMetric, color: RET_SERIES_COLORS[i % RET_SERIES_COLORS.length], values: keys.map(k => pg.m[k] ? pg.m[k].y : null) }));
+  }
+  // ---- CORTE DE MATURIDADE + janela de 30 dias maduros (só modo calendário; coorte já traz só coortes fechadas) ----
+  // Cada multiplicador só "fecha" N dias após o FTD (D0=0·D1=1·D7=7·D14=14·D30=30). Semanal soma +6 (a semana
+  // madura quando o ÚLTIMO dia dela madura). A última safra madura = dataMax − N; a janela vira os 30 dias
+  // corridos terminando nela → NUNCA mostra coorte ainda imatura. Ex.: D7 termina em dataMax−7 (não em ontem).
+  const MAT_H = { D0: 0, D1: 1, D7: 7, D14: 14, D30: 30 };
+  const matSpanOf = (id) => (MAT_H[id] || 0) + (gran === 'week' ? 6 : 0);
+  let matCutId = null, matCutISO = null;
+  if (!cohort && dataMax) {
+    if (seriesBy === 'mult' && metric === 'Todos') {
+      // várias linhas c/ horizontes distintos: janela recente (30d até a safra madura do D0) + anula o rabo imaturo de cada linha
+      const base = isoAddDays_(dataMax, -matSpanOf('D0'));
+      const left = isoAddDays_(base, -29);
+      const keep = isoKeys.map(k => k == null || (k >= left && k <= base));
+      xLabels = xLabels.filter((_, i) => keep[i]); isoKeys = isoKeys.filter((_, i) => keep[i]);
+      series = series.map(s => ({ ...s, values: s.values.filter((_, i) => keep[i]) }))
+                     .map(s => { const cut = isoAddDays_(dataMax, -matSpanOf(s.mid)); return { ...s, values: s.values.map((v, i) => (isoKeys[i] != null && isoKeys[i] > cut) ? null : v) }; });
+      matCutId = 'Todos'; matCutISO = base;
+    } else {
+      const id = (seriesBy === 'mult') ? metric : effMetric;
+      const cut = isoAddDays_(dataMax, -matSpanOf(id));
+      const left = isoAddDays_(cut, -29);
+      const keep = isoKeys.map(k => k == null || (k >= left && k <= cut));
+      xLabels = xLabels.filter((_, i) => keep[i]); isoKeys = isoKeys.filter((_, i) => keep[i]);
+      series = series.map(s => ({ ...s, values: s.values.filter((_, i) => keep[i]) }));
+      matCutId = id; matCutISO = cut;
+    }
   }
   series = series.filter(s => s.values.some(v => v != null && !isNaN(v)));
 
@@ -2206,8 +2238,8 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
         </svg>
       </div>
       <div className="ch-note">
-        <strong>{cohort ? `Coorte de ${cohortDays} dias — mesma base/janela da tabela (só coortes fechadas)` : `Janela fixa: últimos 30 dias corridos até ontem (${from30 ? dmLabel(from30) : '—'}→${capTo ? dmLabel(capTo) : '—'}), independe do slicer`}</strong>. Eixo X = <strong>{gran === 'week' ? 'semana' : 'dia'} de FTD</strong>; uma linha por <strong>{seriesBy === 'mult' ? 'multiplicador' : seriesBy === 'canal' ? 'canal' : 'faixa de FTD'}</strong>{seriesBy !== 'mult' ? ` (multiplicador ${effMetric}/FTD)` : ''}. Cada ponto = média ponderada (Σ/Σ) do KPI no período. Segue canal/faixa/modo/same-day/M0.{busy ? ' · carregando…' : ''}{err ? ' · erro' : ''}
-        {!cohort && <React.Fragment>{' '}<em>Obs.: D7/D14/D30 incluem coortes recentes ainda maturando (janela corrida) → tendem a subestimar; D0/D1 já são maduros.</em></React.Fragment>}
+        <strong>{cohort ? `Coorte de ${cohortDays} dias — mesma base/janela da tabela (só coortes fechadas)` : `Janela: 30 dias corridos terminando na ÚLTIMA safra MADURA${matCutId && matCutId !== 'Todos' ? ` do ${matCutId}` : ''}${matCutISO ? ` (até ${dmLabel(matCutISO)})` : ''} — coortes ainda imaturas são cortadas`}</strong>. Eixo X = <strong>{gran === 'week' ? 'semana' : 'dia'} de FTD</strong>; uma linha por <strong>{seriesBy === 'mult' ? 'multiplicador' : seriesBy === 'canal' ? 'canal' : 'faixa de FTD'}</strong>{seriesBy !== 'mult' ? ` (multiplicador ${effMetric}/FTD)` : ''}. Cada ponto = média ponderada (Σ/Σ) do KPI no período. Segue canal/faixa/modo/same-day/M0.{busy ? ' · carregando…' : ''}{err ? ' · erro' : ''}
+        {!cohort && <React.Fragment>{' '}<em>Maturidade: cada multiplicador só entra depois de a coorte ter os dias p/ fechar a janela (D0=0 · D1=1 · D7=7 · D14=14 · D30=30 dias após o FTD){seriesBy === 'mult' && metric === 'Todos' ? ' — por isso cada linha termina num ponto diferente' : ''}.</em></React.Fragment>}
       </div>
     </React.Fragment>
   );
