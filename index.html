@@ -2773,9 +2773,152 @@ function benchMetrics_(a, mode) {
 
 const BENCH_SEL_STYLE = { background: 'var(--surface)', border: '1px solid rgba(249,115,22,.5)', color: 'var(--text)', padding: '6px 10px', borderRadius: '6px', fontSize: '12px', fontFamily: 'inherit' };
 
+// Gráfico de multiplicadores por período (2 linhas: Apostou vs a casa). Bench só tem D0/D1/W1/M0 (o JSON não
+// carrega vd4/vw2/vd30), então só esses 4. Segue os MESMOS filtros da aba (canal/escopo/faixa/janelas).
+const BENCH_MULT_METRICS = [
+  { id: 'D0', of: a => a.ftd ? a.d0 / a.ftd : null,             desc: 'D0 ÷ FTD' },
+  { id: 'D1', of: a => a.ftd ? (a.d0 + a.vd1) / a.ftd : null,   desc: '(D0 + dia 1) ÷ FTD' },
+  { id: 'W1', of: a => a.ftd ? (a.d0 + a.vw1) / a.ftd : null,   desc: '(D0 + dias 1–7) ÷ FTD' },
+  { id: 'M0', of: a => a.ftd ? (a.d0 + a.vm0) / a.ftd : null,   desc: '(D0 + resto do mês) ÷ FTD' },
+];
+// Agrega bench rows por PERÍODO (dia/semana), com o mesmo filtro do aggBench_. Só as bases dos 4 mult.
+function benchPeriodAgg_(rows, sel, weekly) {
+  const canals = sel.canals || [];
+  const b = {};
+  (rows || []).forEach(r => {
+    if (canals.length) { if (!canals.includes(r.canal)) return; }
+    else if (sel.scope === 'growth' && !isGrowthCh_(r.canal)) return;
+    if (sel.faixa && sel.faixa !== 'all' && r.faixa !== sel.faixa) return;
+    if (sel.from && r.date < sel.from) return;
+    if (sel.to && r.date > sel.to) return;
+    const k = weekly ? weekStartISO_(String(r.date)) : String(r.date);
+    const a = b[k] || (b[k] = { qtd: 0, ftd: 0, d0: 0, vd1: 0, vw1: 0, vm0: 0 });
+    a.qtd += r.qtd || 0; a.ftd += r.ftd || 0; a.d0 += r.d0 || 0; a.vd1 += r.vd1 || 0; a.vw1 += r.vw1 || 0; a.vm0 += r.vm0 || 0;
+  });
+  return b;
+}
+function BenchMultChart({ aptRows, houseRows, houseLabel, canals, scope, faixa, aptFrom, aptTo, houseFrom, houseTo }) {
+  const [metric, setMetric] = usePersistedState('rvops:benchsd:chartMult', 'D1');
+  const [gran, setGran] = usePersistedState('rvops:benchsd:chartGran', 'week');
+  const [hover, setHover] = React.useState(null);
+  const mDef = BENCH_MULT_METRICS.find(m => m.id === metric) || BENCH_MULT_METRICS[1];
+  const weekly = gran === 'week';
+  const dmLabel = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); return m ? `${m[3]}/${m[2]}` : String(s); };
+  const aptB = benchPeriodAgg_(aptRows, { canals, scope, faixa, from: aptFrom, to: aptTo }, weekly);
+  const lotB = benchPeriodAgg_(houseRows, { canals, scope, faixa, from: houseFrom, to: houseTo }, weekly);
+  const allKeys = Array.from(new Set(Object.keys(aptB).concat(Object.keys(lotB)))).sort();
+  const xLabels = allKeys.map(k => weekly ? weekLabel_(k) : dmLabel(k));
+  const mkVals = (B) => allKeys.map(k => B[k] ? mDef.of(B[k]) : null);
+  const HL = houseLabel || 'Lottu';
+  let series = [
+    { name: 'Apostou', color: '#f97316', values: mkVals(aptB) },
+    { name: HL, color: '#60a5fa', values: mkVals(lotB) },
+  ].filter(s => s.values.some(v => v != null && !isNaN(v)));
+
+  const controls = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '18px', flexWrap: 'wrap', marginBottom: '10px' }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+        <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Multiplicador</label>
+        <span className="slicer-presets">
+          {BENCH_MULT_METRICS.map(m => (
+            <button key={m.id} className={`preset-btn ${metric === m.id ? 'active' : ''}`} onClick={() => setMetric(m.id)} title={`Multiplicador ${m.id}/FTD = ${m.desc}`}>{m.id}</button>
+          ))}
+        </span>
+      </span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+        <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Visão</label>
+        <span className="slicer-presets">
+          <button className={`preset-btn ${gran === 'day' ? 'active' : ''}`} onClick={() => setGran('day')} title="Uma coluna por dia de FTD">Diário</button>
+          <button className={`preset-btn ${gran === 'week' ? 'active' : ''}`} onClick={() => setGran('week')} title="Colapsa em semanas (seg–dom)">Semanal</button>
+        </span>
+      </span>
+    </div>
+  );
+  if (!series.length || !allKeys.length) return <React.Fragment>{controls}<div className="ch-note">Sem dados p/ o gráfico neste recorte.</div></React.Fragment>;
+
+  const n = xLabels.length;
+  const slotW = n > 20 ? 72 : n > 10 ? 118 : 210;
+  const padL = 60, padR = 30, padT = 32, padB = 60, plotH = 480;
+  const W = Math.max(1500, padL + padR + (n === 1 ? slotW : (n - 1) * slotW));
+  const H = padT + plotH + padB;
+  const plotW = W - padL - padR;
+  const xOf = (i) => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const allVals = series.flatMap(s => s.values).filter(v => v != null && !isNaN(v));
+  const yMaxRaw = allVals.length ? Math.max.apply(null, allVals) : 1;
+  const yMinRaw = allVals.length ? Math.min.apply(null, allVals) : 1;
+  const ySpan = Math.max(yMaxRaw - yMinRaw, 0.3);
+  const yPad = ySpan * 0.18;
+  const domMin = Math.max(Math.min(1, yMinRaw), yMinRaw - yPad);
+  const domMax = Math.max(yMaxRaw + yPad, domMin + 0.2);
+  const yOf = (v) => padT + (1 - (v - domMin) / (domMax - domMin)) * plotH;
+  const gridVals = Array.from({ length: 5 }, (_, i) => domMin + (domMax - domMin) * i / 4);
+  const lblEvery = Math.ceil(n / 12);
+  const nonNull = series.reduce((a, s) => a + s.values.filter(v => v != null && !isNaN(v)).length, 0) || 1;
+  const labelStride = Math.max(1, Math.ceil(nonNull / 42));
+  const linePath = (vals) => { let d = '', pen = false; vals.forEach((v, i) => { if (v == null || isNaN(v)) { pen = false; return; } d += (pen ? ' L' : ' M') + xOf(i).toFixed(1) + ',' + yOf(v).toFixed(1); pen = true; }); return d.trim(); };
+  const yTitle = `Mult ${metric}/FTD`;
+  const tipHead = (s) => `${s.name} · Mult ${metric}/FTD`;
+  const tipSub = (i, v) => `${weekly ? 'Semana de ' : ''}${xLabels[i]} · ${fmtMultiple(v)}`;
+  return (
+    <React.Fragment>
+      {controls}
+      <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', justifyContent: 'center', margin: '2px 0 8px' }}>
+        {series.map((s, i) => (
+          <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: 'var(--text-muted)' }}>
+            <span style={{ width: '14px', height: '3px', background: s.color, borderRadius: '2px', display: 'inline-block' }} />{s.name}
+          </span>
+        ))}
+      </div>
+      <div className="table-scroll">
+        <svg viewBox={`0 0 ${W} ${H}`} width={W} style={{ width: '100%', maxWidth: W, minWidth: Math.min(W, 700), height: 'auto', display: 'block', margin: '0 auto' }} preserveAspectRatio="xMidYMid meet">
+          {gridVals.map((v, i) => (
+            <g key={`g${i}`}>
+              <line x1={padL} x2={W - padR} y1={yOf(v)} y2={yOf(v)} stroke="var(--border)" strokeWidth="1" strokeDasharray={i === 0 ? undefined : '2 4'} />
+              <text x={padL - 8} y={yOf(v) + 3.5} textAnchor="end" fontSize="10.5" fill="#cfcfcf">{fmtMultiple(v)}</text>
+            </g>
+          ))}
+          {xLabels.map((lb, i) => (i % lblEvery === 0) ? <text key={`x${i}`} x={xOf(i)} y={padT + plotH + 18} textAnchor="middle" fontSize="10.5" fill="#cfcfcf">{lb}</text> : null)}
+          <text x={4} y={14} fontSize="10" fill="#aaaaaa">{yTitle}</text>
+          {series.map((s, si) => (
+            <g key={`s${si}`}>
+              <path d={linePath(s.values)} fill="none" stroke={s.color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+              {s.values.map((v, i) => (v != null && !isNaN(v)) ? (
+                <g key={i}>
+                  <circle cx={xOf(i)} cy={yOf(v)} r="3.5" fill="var(--surface)" stroke={s.color} strokeWidth="1.8" />
+                  {(i % labelStride === 0) && <text x={xOf(i)} y={yOf(v) - 10} textAnchor="middle" fontSize="12" fontWeight="700" fill={s.color}>{fmtMultiple(v)}</text>}
+                  <circle cx={xOf(i)} cy={yOf(v)} r="14" fill="transparent" style={{ cursor: 'pointer', pointerEvents: 'all' }}
+                    onMouseEnter={() => setHover({ si, i })} onMouseLeave={() => setHover(null)} />
+                </g>
+              ) : null)}
+            </g>
+          ))}
+          {hover && series[hover.si] && series[hover.si].values[hover.i] != null && !isNaN(series[hover.si].values[hover.i]) && (() => {
+            const s = series[hover.si], v = s.values[hover.i], cx = xOf(hover.i), cy = yOf(v);
+            const l1 = tipHead(s), l2 = tipSub(hover.i, v);
+            const bw = Math.max(l1.length, l2.length) * 9 + 32, bh = 64;
+            let tx = Math.max(padL, Math.min(cx - bw / 2, W - padR - bw));
+            let ty = cy - bh - 18; if (ty < padT) ty = cy + 20;
+            return (
+              <g pointerEvents="none">
+                <circle cx={cx} cy={cy} r="6.5" fill={s.color} stroke="#000000" strokeWidth="2.5" />
+                <rect x={tx} y={ty} width={bw} height={bh} rx="9" fill="#000000" fillOpacity="1" stroke={s.color} strokeWidth="2.5" />
+                <text x={tx + 15} y={ty + 27} fontSize="17" fontWeight="700" fill="#ffffff">{l1}</text>
+                <text x={tx + 15} y={ty + 49} fontSize="15" fill="#f2f2f2">{l2}</text>
+              </g>
+            );
+          })()}
+        </svg>
+      </div>
+      <div className="ch-note">
+        <strong>Multiplicador {metric}/FTD por {weekly ? 'semana' : 'dia'} de FTD</strong> — <span style={{ color: '#f97316' }}>laranja = Apostou</span>, <span style={{ color: '#60a5fa' }}>azul = {HL}</span>. Cada ponto = depósito acumulado (incl. D0) até a janela ÷ FTD, agregado no período (mesmo recorte de canal/faixa/janela das tabelas). <strong>⚠ Períodos recentes podem estar imaturos</strong> (M0 = "resto do mês" trunca coorte recente) — alinhe as datas dos dois lados p/ comparar a mesma janela.
+      </div>
+    </React.Fragment>
+  );
+}
+
 // View genérica do Benchmark — parametrizada por houseOrder + sameday (p/ reusar na aba Same-day).
 // pkey = prefixo de persistência (filtros sobrevivem a refresh/troca de aba).
-function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, subtitle, pkey, apostouHouse, withNet, defaultMode = 'qtd' }) {
+function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, subtitle, pkey, apostouHouse, withNet, defaultMode = 'qtd', multChart = false }) {
   // fromBench = Apostou vem do PRÓPRIO JSON (que tem saque/net), não do BQ (aba net Apostou vs Lottu).
   // Caso contrário, Apostou puxa o período próprio (jan–jun) via modo leve only=retfaixa do BQ.
   const fromBench = !!apostouHouse;
@@ -3005,6 +3148,15 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
           )}
         </div>
       </div>
+
+      {multChart && (
+        <div className="support">
+          <div className="support-title">Evolução do multiplicador · Apostou vs {housesLabel}</div>
+          <BenchMultChart aptRows={aptRows} houseRows={houseRowsMap[houseOrder[0]]} houseLabel={houses[0] && houses[0].label}
+            canals={canals} scope={scope} faixa={faixa}
+            aptFrom={aptFrom} aptTo={aptTo} houseFrom={houseFrom} houseTo={houseTo} />
+        </div>
+      )}
     </React.Fragment>
   );
 }
@@ -3022,7 +3174,7 @@ function BenchmarkTab({ retencaoFaixa, benchmark }) {
 // observados), saque da Apostou vem do retfaixa (depTot/saqTot).
 function NetBenchTab({ benchmarkNet, retencaoFaixa }) {
   return <BenchmarkView retencaoFaixa={retencaoFaixa} benchmark={benchmarkNet}
-    houseOrder={['lottu']} sameday={false} withNet={true} pkey="benchsd" defaultMode="val"
+    houseOrder={['lottu']} sameday={false} withNet={true} pkey="benchsd" defaultMode="val" multChart={true}
     title="Benchmark Lottu"
     subtitle="Apostou (BQ ao vivo · coorte cheia) vs Lottu (Excel) — ticket de FTD, depósito e caixa líquido (dep − saque) por faixa e canal · slicer Bruto/Líquido" />;
 }
