@@ -3016,14 +3016,15 @@ function BenchmarkTab({ retencaoFaixa, benchmark }) {
     title="Benchmark entre casas"
     subtitle="Apostou vs Lottu · Bet.Bet · Donald — ticket de FTD, depósito D0 e retenção D1/W1/M0 por faixa e canal" />;
 }
-// Aba Benchmark Sameday — Apostou vem do BQ AO VIVO (mesma fonte da aba Multiplicadores e Retenção, coorte same-day);
-// só a Lottu vem do Excel (benchmark_net.json). Bruto bate com Multiplicadores e Retenção; Líquido = caixa da safra
-// (Σ depósitos − Σ saques observados), saque da Apostou agora vem do retfaixa (depTot/saqTot).
+// Aba Benchmark Lottu — Apostou (BQ ao vivo) vs Lottu (Excel). NÃO é mais same-day (nem de um lado nem do
+// outro): a coorte é CHEIA dos dois. Apostou vem do only=retfaixa SEM &sameday=1; Lottu do benchmark_net.json
+// (rebuild do 'lottubet nosameday'). Bruto = retenção/multiplicadores; Líquido = caixa da safra (Σ dep − Σ saque
+// observados), saque da Apostou vem do retfaixa (depTot/saqTot).
 function NetBenchTab({ benchmarkNet, retencaoFaixa }) {
   return <BenchmarkView retencaoFaixa={retencaoFaixa} benchmark={benchmarkNet}
-    houseOrder={['lottu']} sameday={true} withNet={true} pkey="benchsd" defaultMode="val"
-    title="Benchmark Sameday"
-    subtitle="Apostou (BQ ao vivo · same-day) vs Lottu (Excel) — ticket de FTD, depósito e caixa líquido (dep − saque) por faixa e canal · slicer Bruto/Líquido" />;
+    houseOrder={['lottu']} sameday={false} withNet={true} pkey="benchsd" defaultMode="val"
+    title="Benchmark Lottu"
+    subtitle="Apostou (BQ ao vivo · coorte cheia) vs Lottu (Excel) — ticket de FTD, depósito e caixa líquido (dep − saque) por faixa e canal · slicer Bruto/Líquido" />;
 }
 
 // Aba FAROL — visão consolidada: todos os indicadores em hero cards (vs M-1 e vs BP), em 4 grupos.
@@ -3190,7 +3191,7 @@ const TABS = [
   { id: 'depositos', label: 'Depósitos', component: TabDepositos },
   { id: 'apostas', label: 'Turnover', component: TabApostas },
   { id: 'benchmark', label: 'Benchmark', component: BenchmarkTab },
-  { id: 'sameday', label: 'Benchmark Sameday', component: NetBenchTab },
+  { id: 'sameday', label: 'Benchmark Lottu', component: NetBenchTab },
 ];
 
 // ============================================================
