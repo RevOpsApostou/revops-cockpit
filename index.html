@@ -3748,6 +3748,18 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
     if (!window.confirm('Remover o acesso de ' + email + '?')) return;
     apiPost_({ action: 'removeUser', session, email }).then(j => { if (j && j.ok) load(); else setErr((j && j.error) || 'Falha ao remover'); }).catch(() => setErr('Erro de conexão'));
   };
+  // Allowlist de abas por usuário. Vazio = TODAS. Ao marcar/desmarcar, salva no backend e recarrega.
+  const allIds = (allTabs || []).map(t => t.id);
+  const saveUserTabs = (email, tabs) => {
+    setErr(null);
+    apiPost_({ action: 'setUserTabs', session, email, tabs }).then(j => { if (j && j.ok) load(); else setErr((j && j.error) || 'Falha ao salvar abas'); }).catch(() => setErr('Erro de conexão'));
+  };
+  const toggleUserTab = (u, tabId) => {
+    const restricted = Array.isArray(u.tabs) && u.tabs.length;
+    const cur = restricted ? u.tabs : allIds.slice();   // "todas" (null) → expande p/ desmarcar uma a partir de tudo
+    const next = cur.indexOf(tabId) >= 0 ? cur.filter(x => x !== tabId) : cur.concat([tabId]);
+    saveUserTabs(u.email, next.length >= allIds.length ? [] : next);   // tudo marcado → [] = sem restrição (todas)
+  };
   const inp = { background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)', padding: '8px 10px', borderRadius: '6px', fontSize: '13px', fontFamily: 'inherit' };
   return (
     <React.Fragment>
@@ -3768,18 +3780,21 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
         </form>
         {err && <div style={{ color: 'var(--negative)', fontSize: '12px', marginBottom: '8px' }}>{err}</div>}
         <div className="table-scroll"><table className="ch-table">
-          <thead><tr><th>E-mail</th><th>Nome</th><th>Admin</th><th></th></tr></thead>
+          <thead><tr><th>E-mail</th><th>Nome</th><th>Admin</th><th>Abas</th><th></th></tr></thead>
           <tbody>
             {(users || []).map((u, i) => (
               <tr key={i}>
                 <td className="ch-name">{u.email}</td>
                 <td>{u.name}</td>
                 <td>{u.admin ? '✓' : '—'}</td>
+                <td style={{ color: (!u.admin && u.tabs && u.tabs.length) ? 'var(--accent-yellow)' : 'var(--text-muted)' }}>
+                  {u.admin ? 'todas' : (u.tabs && u.tabs.length) ? `${u.tabs.length} de ${allIds.length}` : 'todas'}
+                </td>
                 <td>{u.email === (user && user.email) ? <span style={{ color: 'var(--text-dim)' }}>você</span> : <button className="logout-btn" onClick={() => remove(u.email)}>remover</button>}</td>
               </tr>
             ))}
-            {users && users.length === 0 && <tr><td colSpan="4" style={{ color: 'var(--text-muted)' }}>nenhum usuário</td></tr>}
-            {!users && !err && <tr><td colSpan="4" style={{ color: 'var(--text-muted)' }}>carregando…</td></tr>}
+            {users && users.length === 0 && <tr><td colSpan="5" style={{ color: 'var(--text-muted)' }}>nenhum usuário</td></tr>}
+            {!users && !err && <tr><td colSpan="5" style={{ color: 'var(--text-muted)' }}>carregando…</td></tr>}
           </tbody>
         </table></div>
         <div className="ch-note">A senha é definida aqui e guardada em <strong>hash</strong> (não dá pra ler depois) — passe ao usuário por um canal seguro. Reenviar com o mesmo e-mail <strong>redefine</strong> a senha. Remover tira o acesso (sessões ativas expiram em até 6h).</div>
@@ -3805,6 +3820,38 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
             );
           })}
         </div>
+      </div>
+
+      <div className="support" style={{ marginTop: '16px' }}>
+        <div className="support-title">Acesso por aba · por usuário</div>
+        <div className="ch-note" style={{ marginTop: 0, marginBottom: '12px' }}>
+          Marque as abas que <strong>cada pessoa</strong> pode ver. <strong>Todas marcadas = sem restrição</strong> (vê tudo); desmarque p/ limitar. Admins veem todas sempre. Aplica no <strong>próximo login/refresh</strong> da pessoa. É um filtro do <em>menu</em> (esconde as abas) — não é uma barreira de dados no backend.
+        </div>
+        {(users || []).filter(u => !u.admin).map((u, i) => {
+          const restricted = Array.isArray(u.tabs) && u.tabs.length;
+          return (
+            <div key={i} style={{ marginBottom: '14px', paddingBottom: '12px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ fontSize: '13px', marginBottom: '7px' }}>
+                <strong>{u.name}</strong> <span style={{ color: 'var(--text-dim)' }}>{u.email}</span>
+                {' · '}<span style={{ color: restricted ? 'var(--accent-yellow)' : 'var(--text-muted)', fontSize: '12px' }}>
+                  {restricted ? `só ${u.tabs.length} aba${u.tabs.length > 1 ? 's' : ''}` : 'todas as abas'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {(allTabs || []).map(t => {
+                  const on = restricted ? (u.tabs.indexOf(t.id) >= 0) : true;   // sem restrição = tudo marcado
+                  return (
+                    <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 9px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', background: 'var(--surface)', opacity: on ? 1 : 0.5 }}>
+                      <input type="checkbox" checked={on} onChange={() => toggleUserTab(u, t.id)} />
+                      {t.label}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+        {users && (users || []).filter(u => !u.admin).length === 0 && <div style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Nenhum usuário não-admin. (Admins sempre veem todas as abas.)</div>}
       </div>
     </React.Fragment>
   );
@@ -4025,10 +4072,16 @@ function App({ user, onLogout, config }) {
   // Aba Segurança só aparece p/ admin. Fallback p/ 1ª aba se o tabId persistido não existir no escopo.
   // Abas ocultas somem do nav p/ TODOS (inclusive admin) — a Segurança lista todas (allTabs) p/ reexibir.
   const isAdmin = !!(user && user.admin);
-  const shownTabs = TABS.filter(t => hiddenTabs.indexOf(t.id) < 0);
-  const visibleTabs = isAdmin
-    ? shownTabs.concat([{ id: 'seguranca', label: 'Segurança', component: SegurancaTab }])
-    : shownTabs;
+  // Allowlist de abas POR USUÁRIO (backend): não-admin restrito vê SÓ as abas da lista (tem precedência sobre
+  // hiddenTabs global). null/vazio = sem restrição → todas menos as globais ocultas. Admin sempre vê tudo.
+  const userTabs = (user && Array.isArray(user.tabs) && user.tabs.length) ? user.tabs : null;
+  const baseTabs = isAdmin ? TABS
+    : userTabs ? TABS.filter(t => userTabs.indexOf(t.id) >= 0)
+    : TABS.filter(t => hiddenTabs.indexOf(t.id) < 0);
+  let visibleTabs = isAdmin
+    ? baseTabs.concat([{ id: 'seguranca', label: 'Segurança', component: SegurancaTab }])
+    : baseTabs;
+  if (!visibleTabs.length) visibleTabs = [TABS[0]];   // fail-safe: nunca deixa o usuário com ZERO aba
   const activeTabId = visibleTabs.find(t => t.id === tabId) ? tabId : visibleTabs[0].id;
   // Abas já visitadas ficam MONTADAS (escondidas via CSS) — não refazem fetch nem perdem estado/datas ao trocar.
   // Montagem é LAZY: só monta a aba na 1ª visita (não dispara o fetch de todas no load).
