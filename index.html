@@ -1729,6 +1729,8 @@ function TabSafras({ dailyCohort, chFilter }) {
 // ===== Retenções por faixa de FTD — diária; faixa de valor do FTD + canal = filtros =====
 const FAIXA_LIST = ['01. R$0–10','02. R$10–25','03. R$25–50','04. R$50–100','05. R$100+'];
 const fxLabel_ = (f) => String(f).replace(/^\d+\.\s*/, '');
+// Grupo de risco (backend grupo_risco_atual): '1'..'9' → "Grupo N"; null/'sem grupo' → "Sem grupo".
+const grupoLabel_ = (g) => (g == null || g === 'sem grupo') ? 'Sem grupo' : ('Grupo ' + g);
 
 // Mock (modo dev) — dias 01–11/06 × canais × faixas.
 const MOCK_RETENCAO_FAIXA = (() => {
@@ -1897,8 +1899,8 @@ function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, d
   const weekly = gran === 'week';
   // Chave de agrupamento da tabela: período (dia/semana · default) OU por canal OU por faixa — toggle
   // "Ver por" na aba, p/ comparação rápida. Métricas re-agregadas das mesmas bases aditivas (não é média das %).
-  const groupOf = (r) => dim === 'canal' ? r.canal : dim === 'faixa' ? r.faixa : (weekly ? weekStartISO_(r.date) : r.date);
-  const labelOf = (k) => dim === 'canal' ? k : dim === 'faixa' ? fxLabel_(k) : (weekly ? weekLabel_(k) : k);
+  const groupOf = (r) => dim === 'canal' ? r.canal : dim === 'faixa' ? r.faixa : dim === 'grupo' ? (r.grupo || 'sem grupo') : (weekly ? weekStartISO_(r.date) : r.date);
+  const labelOf = (k) => dim === 'canal' ? k : dim === 'faixa' ? fxLabel_(k) : dim === 'grupo' ? grupoLabel_(k) : (weekly ? weekLabel_(k) : k);
   const by = {}, tot = zero();
   rows.forEach(r => {
     if (!selCh(r.canal) || !selFx(r.faixa)) return;
@@ -2060,7 +2062,7 @@ const RET_MULT_METRICS = [
 ];
 const RET_SERIES_COLORS = ['#FF8C00', '#60a5fa', '#4ade80', '#facc15', '#c084fc', '#22d3ee', '#fb7185', '#a3e635'];
 function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallbackRows, cohort, cohortDays, srcRF, srcLoading, srcError }) {
-  const [seriesBy, setSeriesBy] = usePersistedState('rvops:retChartSeries', 'mult'); // 'mult' | 'canal' | 'faixa'
+  const [seriesBy, setSeriesBy] = usePersistedState('rvops:retChartSeries', 'mult'); // 'mult' | 'canal' | 'faixa' | 'grupo' (grupo de risco, pede &byGrupo=1)
   const [metric, setMetric] = usePersistedState('rvops:retChartMetric3', 'D1');   // D0 | D1 | D7 | D14 | D30 — UM multiplicador por vez (sem "Todos")
   const [hover, setHover] = React.useState(null);   // { si, i } do ponto sob o mouse → tooltip custom (SVG nativo era instável)
   const [maDays, setMaDays] = usePersistedState('rvops:retChartMA', 0);   // 0 = off · N = janela da média móvel (dias)
@@ -2073,18 +2075,21 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   // de histórico atrás dos 30 dias visíveis. A janela de 30 dias MADUROS é recortada no cliente por multiplicador.
   // Com média móvel de N dias, estende o histórico (N + 30) p/ os 30 dias visíveis terem janela deslizante cheia.
   const fetchFrom = capTo ? isoAddDays_(capTo, -Math.max(59, (maDays || 0) + 30)) : null;
+  // Quebra por GRUPO DE RISCO: pede &byGrupo=1 (payload com grupo por linha). Como o srcRF da coorte NÃO tem
+  // grupo, o modo grupo SEMPRE usa o fetch próprio de calendário (mesmo em coorte) — janela/maturidade de calendário.
+  const grpMode = seriesBy === 'grupo';
   const [f30, setF30] = React.useState({ rows: null, loading: false, error: null });
   React.useEffect(() => {
-    if (!ENDPOINT_URL || !dataMax || cohort) return;   // em coorte usa o srcRF da tabela, sem fetch próprio
+    if (!ENDPOINT_URL || !dataMax || (cohort && !grpMode)) return;   // coorte (não-grupo) usa o srcRF da tabela, sem fetch próprio
     setF30(s => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${fetchFrom}&to=${capTo}&only=retfaixa${sameday ? '&sameday=1' : ''}`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${fetchFrom}&to=${capTo}&only=retfaixa${sameday ? '&sameday=1' : ''}${grpMode ? '&byGrupo=1' : ''}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(j => { if (j.error) throw new Error(j.error); setF30({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
       .catch(e => setF30({ rows: null, loading: false, error: String(e.message || e) }));
-  }, [fetchFrom, dataMax, sameday, cohort]);
-  const rows30 = cohort ? (srcRF || []) : (f30.rows || (!ENDPOINT_URL ? (fallbackRows || []) : null));
-  const busy = cohort ? !!srcLoading : f30.loading;
-  const err = cohort ? srcError : f30.error;
+  }, [fetchFrom, dataMax, sameday, cohort, grpMode]);
+  const rows30 = (cohort && !grpMode) ? (srcRF || []) : (f30.rows || (!ENDPOINT_URL ? (fallbackRows || []) : null));
+  const busy = (cohort && !grpMode) ? !!srcLoading : f30.loading;
+  const err = (cohort && !grpMode) ? srcError : f30.error;
   const dmLabel = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); return m ? `${m[3]}/${m[2]}` : String(s); };
   // UM multiplicador por vez (D0…D30). Coage valor inválido/legado (ex. "Todos" salvo antes) p/ D1.
   const effMetric = RET_MULT_METRICS.some(m => m.id === metric) ? metric : 'D1';
@@ -2097,7 +2102,7 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   // suas coortes maduras (ex.: semana 06–12/07 entra pelas coortes 06→11/07, sem esperar o domingo 12/07
   // maturar nem arrastar dia imaturo pra média). Só no modo calendário — coorte já traz coortes fechadas.
   const MAT_H = { D0: 0, D1: 1, D7: 7, D14: 14, D30: 30 };
-  const matDay = (!cohort && dataMax) ? isoAddDays_(capTo, -(MAT_H[effMetric] || 0)) : null;
+  const matDay = ((!cohort || grpMode) && dataMax) ? isoAddDays_(capTo, -(MAT_H[effMetric] || 0)) : null;
   const matRows = matDay ? (rows30 || []).filter(r => r && r.date != null && String(r.date) <= matDay) : (rows30 || []);
 
   // Eixo X = período (unificado); séries = 1 por multiplicador OU por canal OU por faixa.
@@ -2116,6 +2121,8 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
     const perGroup = groups.map(g => {
       const sub = seriesBy === 'canal'
         ? aggRetFaixaBench_(matRows, { ...chFilter, channels: [g.key] }, faixaSel, mode, effGran, null, dataMax)
+        : seriesBy === 'grupo'
+        ? aggRetFaixaBench_((matRows || []).filter(r => (r.grupo || 'sem grupo') === g.key), chFilter, faixaSel, mode, effGran, null, dataMax)
         : aggRetFaixaBench_(matRows, chFilter, [g.key], mode, effGran, null, dataMax);
       const m = {}; sub.rows.forEach(r => { m[r._key] = { y: r[mDef.key], f: ftdOf(r), label: r.date }; });
       return { g, m };
@@ -2168,7 +2175,7 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   }
   series = series.filter(s => s.values.some(v => v != null && !isNaN(v)));
 
-  const SERIES_OPTS = [['mult', 'Multiplicadores'], ['canal', 'Canal'], ['faixa', 'Faixa']];
+  const SERIES_OPTS = [['mult', 'Multiplicadores'], ['canal', 'Canal'], ['faixa', 'Faixa'], ['grupo', 'Grupo de risco']];
   const controls = (
     <div style={{ display: 'flex', alignItems: 'center', gap: '18px', flexWrap: 'wrap', marginBottom: '10px' }}>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
@@ -2763,7 +2770,7 @@ function benchApostouRows_(retencaoFaixa) {
     // (todo o histórico da coorte, não a janela M0). Vem do BQ via retfaixa (depTot/saqTot).
     const dep = r.depTot || 0, saq = r.saqTot || 0;
     return {
-      date: String(r.date), canal: r.canal, faixa: r.faixa,
+      date: String(r.date), canal: r.canal, faixa: r.faixa, grupo: (r.grupo != null ? r.grupo : null),
       qtd: r.qtdFtds || 0, ftd: r.ftdTotal || 0, d0: r.depD0 || 0,
       cd1: r.cntD1 || 0, vd1: r.valD1 || 0, vd4: r.valD4 || 0, cw1: r.cntW1 || 0, vw1: r.valW1 || 0, cw2: r.cntW2 || 0, vw2: r.valW2 || 0, vd30: r.valD30 || 0, cm0: r.cntM0 || 0, vm0: r.valM0 || 0,
       ggrM0: r.ggrM0 || 0,
