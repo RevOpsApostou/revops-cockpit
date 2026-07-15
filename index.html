@@ -2306,7 +2306,7 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
 function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   const [faixaSel, setFaixaSel] = React.useState([]);   // multi-select de faixas de FTD; [] = todas
   const [mode, setMode] = React.useState('val');   // default Valor · 'val' (% do depósito sobre o D0) | 'qtd' (% redepositou)
-  const [sameday, setSameday] = React.useState(true);   // default Same-day · só FTDs que depositaram no MESMO dia do cadastro
+  const [sameday, setSameday] = React.useState(false);  // default COORTE CHEIA — bate com a aba Benchmark (que é coorte cheia); same-day é opt-in
   const [gran, setGran] = React.useState('week');       // default Semanal · 'day' | 'week' (colapsa em médias semanais)
   const [tableDim, setTableDim] = React.useState('periodo'); // tabela de baixo: 'periodo' (por dia/semana) | 'canal' | 'faixa'
   const [cohortDays, setCohortDays] = React.useState(0); // 0 = calendário (M0 = fim do mês) | 30|60|90 = janela fixa de N dias corridos (só coortes fechadas)
