@@ -3822,7 +3822,7 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
       <div className="support" style={{ marginTop: '16px' }}>
         <div className="support-title">Visibilidade das abas</div>
         <div className="ch-note" style={{ marginTop: 0, marginBottom: '12px' }}>
-          Desmarque uma aba para <strong>ocultá-la dos não-admins</strong>. Você (admin) continua vendo todas — as ocultas aparecem marcadas com 🚫 no menu. Vale para todos no próximo carregamento do dashboard.
+          Desmarque uma aba para <strong>ocultá-la do menu</strong> — some para <strong>todos, inclusive você</strong>. Reexiba aqui a qualquer momento (esta aba nunca some). Vale no próximo carregamento do dashboard.
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
           {(allTabs || []).map(t => {
@@ -4091,16 +4091,16 @@ function App({ user, onLogout, config }) {
   const isDirty = pendingRange.from !== appliedRange.from || pendingRange.to !== appliedRange.to;
 
   // Aba Segurança só aparece p/ admin. Fallback p/ 1ª aba se o tabId persistido não existir no escopo.
-  // Abas ocultas somem do nav p/ TODOS (inclusive admin) — a Segurança lista todas (allTabs) p/ reexibir.
+  // Abas globalmente OCULTAS somem do nav p/ TODOS — inclusive admin — e são reexibidas pela aba Segurança
+  // ("Visibilidade das abas"). A allowlist POR USUÁRIO restringe ainda mais, DENTRO das não-ocultas.
   const isAdmin = !!(user && user.admin);
-  // Allowlist de abas POR USUÁRIO (backend): não-admin restrito vê SÓ as abas da lista (tem precedência sobre
-  // hiddenTabs global). null/vazio = sem restrição → todas menos as globais ocultas. Admin sempre vê tudo.
+  const notHidden = TABS.filter(t => hiddenTabs.indexOf(t.id) < 0);   // vale p/ todos, inclusive admin
   const userTabs = (user && Array.isArray(user.tabs) && user.tabs.length) ? user.tabs : null;
-  const baseTabs = isAdmin ? TABS
-    : userTabs ? TABS.filter(t => userTabs.indexOf(t.id) >= 0)
-    : TABS.filter(t => hiddenTabs.indexOf(t.id) < 0);
+  const baseTabs = (!isAdmin && userTabs)
+    ? notHidden.filter(t => userTabs.indexOf(t.id) >= 0)   // não-admin restrito: interseção com as visíveis
+    : notHidden;
   let visibleTabs = isAdmin
-    ? baseTabs.concat([{ id: 'seguranca', label: 'Segurança', component: SegurancaTab }])
+    ? baseTabs.concat([{ id: 'seguranca', label: 'Segurança', component: SegurancaTab }])   // admin sempre tem Segurança p/ reexibir
     : baseTabs;
   if (!visibleTabs.length) visibleTabs = [TABS[0]];   // fail-safe: nunca deixa o usuário com ZERO aba
   const activeTabId = visibleTabs.find(t => t.id === tabId) ? tabId : visibleTabs[0].id;
