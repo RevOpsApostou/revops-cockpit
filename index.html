@@ -2227,11 +2227,19 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   // Eixo Y ENQUADRA a linha (preenche a vertical, menos "achatado"), mas NUNCA abaixo de 1,00x (multiplicador
   // ≥ 1: D0 já inclui o FTD). Span mínimo 0,3x p/ não magnificar ruído quando a linha é quase plana. Ponto
   // atípico < 1 (raro) baixa o piso p/ não cortar (min(1, yMin)).
-  const ySpan = Math.max(yMaxRaw - yMinRaw, 0.3);
+  // ROBUSTO A OUTLIER: quando o topo cru destoa MUITO da massa (ex.: grupo minúsculo → multiplicador de ruído que
+  // dispara pra 50x), enquadra o topo pelo P95 dos pontos em vez do máximo, e GRAMPEIA (clamp) os pontos acima no
+  // topo — o rótulo/tooltip seguem mostrando o valor REAL. Sem outlier (P95 ≈ máximo) usa o máximo (normal).
+  const sortedV = allVals.slice().sort((a, b) => a - b);
+  const pctV = (q) => sortedV.length ? sortedV[Math.min(sortedV.length - 1, Math.round(q * (sortedV.length - 1)))] : 1;
+  const p95 = pctV(0.95);
+  const yMaxEff = (p95 > 0 && yMaxRaw > p95 * 1.5) ? p95 : yMaxRaw;
+  const ySpan = Math.max(yMaxEff - yMinRaw, 0.3);
   const yPad = ySpan * 0.18;
   const domMin = Math.max(Math.min(1, yMinRaw), yMinRaw - yPad);
-  const domMax = Math.max(yMaxRaw + yPad, domMin + 0.2);
-  const yOf = (v) => padT + (1 - (v - domMin) / (domMax - domMin)) * plotH;
+  const domMax = Math.max(yMaxEff + yPad, domMin + 0.2);
+  const yClamp = (v) => Math.max(domMin, Math.min(domMax, v));
+  const yOf = (v) => padT + (1 - (yClamp(v) - domMin) / (domMax - domMin)) * plotH;
   const ticks = 4;
   const gridVals = Array.from({ length: ticks + 1 }, (_, i) => domMin + (domMax - domMin) * i / ticks);
   const lblEvery = Math.ceil(n / 12);
