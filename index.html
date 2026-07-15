@@ -2128,7 +2128,8 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   }
   // MÉDIA MÓVEL (só calendário): substitui cada ponto do dia d pela razão PONDERADA na janela deslizante
   // [d−N+1, d] = Σ(mult×ftd) ÷ Σftd — NÃO é média das razões diárias (que distorce em dia de baixo volume).
-  // Aplica ANTES do recorte de janela (usa o histórico de N+30 dias buscado) p/ os dias visíveis terem janela cheia.
+  // A MA é sempre calculada em DIAS (effGran='day'); o EIXO X segue o toggle: se Semanal, colapsa depois em
+  // semanas (cada semana = valor da MA no ÚLTIMO dia dela). Aplica ANTES do recorte (usa o histórico de N+30 dias).
   if (maDays > 0 && !cohort) {
     series = series.map(s => {
       const nv = isoKeys.map((k, i) => {
@@ -2143,13 +2144,22 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
       });
       return { ...s, values: nv };
     });
+    // Toggle SEMANAL: colapsa o eixo diário da MA em semanas — cada semana pega o valor da MA no seu ÚLTIMO dia.
+    if (gran === 'week') {
+      const lastIdxByWeek = {};   // isoKeys asc → o último i de cada semana é o dia máximo dela
+      isoKeys.forEach((k, i) => { if (k != null) lastIdxByWeek[weekStartISO_(String(k))] = i; });
+      const wKeys = Object.keys(lastIdxByWeek).sort();
+      const idxs = wKeys.map(ws => lastIdxByWeek[ws]);
+      xLabels = wKeys.map(ws => weekLabel_(ws));
+      isoKeys = wKeys;
+      series = series.map(s => ({ ...s, values: idxs.map(i => s.values[i]), ftd: s.ftd ? idxs.map(i => s.ftd[i]) : s.ftd }));
+    }
   }
-  // Janela: últimos N PERÍODOS terminando na última coorte madura (diário/MM = 30 dias · semanal = 8 semanas).
-  // A maturidade já foi aplicada por DIA de FTD (matRows), então a semana mais recente entra com suas coortes
-  // maduras — não precisa mais dropar a semana inteira. Períodos vêm ordenados asc por chave → fatia o final.
+  // Janela: últimos N PERÍODOS terminando na última coorte madura (diário = 30 dias · semanal = 8 semanas).
+  // Usa o gran do TOGGLE (display), não o effGran — com MA+Semanal os pontos já foram colapsados em semanas.
   const matCutId = effMetric, matCutISO = matDay;
   if (!cohort && dataMax) {
-    const maxPeriods = effGran === 'week' ? 8 : 30;
+    const maxPeriods = gran === 'week' ? 8 : 30;
     if (isoKeys.length > maxPeriods) {
       const start = isoKeys.length - maxPeriods;
       xLabels = xLabels.slice(start); isoKeys = isoKeys.slice(start);
@@ -2231,7 +2241,7 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   const yTitle = maDays > 0 ? `Mult ${effMetric}/FTD · MM ${maDays}d` : `Mult ${effMetric}/FTD`;
   // Tooltip custom (hover): linha 1 = O QUE é (multiplicador OU canal/faixa+multiplicador); linha 2 = PERÍODO · valor.
   const tipHead = (s) => (seriesBy === 'mult') ? `${s.name}/FTD` : `${s.name} · Mult ${effMetric}/FTD`;
-  const tipSub  = (i, v) => `${effGran === 'week' ? 'Semana de ' : ''}${xLabels[i]} · ${fmtMultiple(v)}`;
+  const tipSub  = (i, v) => `${gran === 'week' ? 'Semana de ' : ''}${xLabels[i]} · ${fmtMultiple(v)}`;
   return (
     <React.Fragment>
       {controls}
@@ -2285,8 +2295,8 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
         </svg>
       </div>
       <div className="ch-note">
-        <strong>{cohort ? `Coorte de ${cohortDays} dias — mesma base/janela da tabela (só coortes fechadas)` : `Janela: ${effGran === 'week' ? 'últimas 8 semanas' : '30 dias corridos'} terminando na ÚLTIMA safra MADURA${matCutId ? ` do ${matCutId}` : ''}${matCutISO ? ` (até ${dmLabel(matCutISO)})` : ''} — coortes ainda imaturas são cortadas${effGran === 'week' ? ' (a semana mais recente entra com suas coortes já maduras)' : ''}`}</strong>. Eixo X = <strong>{effGran === 'week' ? 'semana' : 'dia'} de FTD</strong>; {seriesBy === 'mult' ? <>evolução do <strong>multiplicador {effMetric}/FTD</strong></> : <>uma linha por <strong>{seriesBy === 'canal' ? 'canal' : 'faixa de FTD'}</strong> (multiplicador {effMetric}/FTD)</>}. Cada ponto = média ponderada (Σ/Σ) do KPI no período. Segue canal/faixa/modo/same-day/M0.{busy ? ' · carregando…' : ''}{err ? ' · erro' : ''}
-        {maDays > 0 && !cohort && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Média móvel de {maDays} dias: cada dia = razão PONDERADA (Σ mult×FTD ÷ Σ FTD) da janela deslizante dos últimos {maDays} dias — opera em resolução diária (ignora o toggle Semanal) e suaviza o ruído das linhas.</em></React.Fragment>}
+        <strong>{cohort ? `Coorte de ${cohortDays} dias — mesma base/janela da tabela (só coortes fechadas)` : `Janela: ${gran === 'week' ? 'últimas 8 semanas' : '30 dias corridos'} terminando na ÚLTIMA safra MADURA${matCutId ? ` do ${matCutId}` : ''}${matCutISO ? ` (até ${dmLabel(matCutISO)})` : ''} — coortes ainda imaturas são cortadas${gran === 'week' ? ' (a semana mais recente entra com suas coortes já maduras)' : ''}`}</strong>. Eixo X = <strong>{gran === 'week' ? 'semana' : 'dia'} de FTD</strong>; {seriesBy === 'mult' ? <>evolução do <strong>multiplicador {effMetric}/FTD</strong></> : <>uma linha por <strong>{seriesBy === 'canal' ? 'canal' : 'faixa de FTD'}</strong> (multiplicador {effMetric}/FTD)</>}. Cada ponto = média ponderada (Σ/Σ) do KPI no período. Segue canal/faixa/modo/same-day/M0.{busy ? ' · carregando…' : ''}{err ? ' · erro' : ''}
+        {maDays > 0 && !cohort && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Média móvel de {maDays} dias: janela deslizante ponderada (Σ mult×FTD ÷ Σ FTD) dos últimos {maDays} dias, calculada em dias e {gran === 'week' ? 'amostrada por semana (valor no último dia da semana)' : 'plotada por dia'} — segue o toggle Diário/Semanal e suaviza o ruído.</em></React.Fragment>}
         {!cohort && <React.Fragment>{' '}<em>Maturidade: o multiplicador só entra depois de a coorte ter os dias p/ fechar a janela (D0=0 · D1=1 · D7=7 · D14=14 · D30=30 dias após o FTD).</em></React.Fragment>}
       </div>
     </React.Fragment>
