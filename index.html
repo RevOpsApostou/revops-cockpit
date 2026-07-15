@@ -2063,6 +2063,7 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   const [seriesBy, setSeriesBy] = usePersistedState('rvops:retChartSeries', 'mult'); // 'mult' | 'canal' | 'faixa'
   const [metric, setMetric] = usePersistedState('rvops:retChartMetric3', 'D1');   // D0 | D1 | D7 | D14 | D30 — UM multiplicador por vez (sem "Todos")
   const [hover, setHover] = React.useState(null);   // { si, i } do ponto sob o mouse → tooltip custom (SVG nativo era instável)
+  const [maDays, setMaDays] = usePersistedState('rvops:retChartMA', 0);   // 0 = off · N = janela da média móvel (dias)
   // Fonte segue o toggle M0 do topo: COORTE → mesma base/janela da tabela (srcRF, só coortes fechadas);
   // CALENDÁRIO → últimos 30 DIAS CORRIDOS terminando em HOJE-1 (fetch próprio, segue o same-day).
   // Cap SEMPRE em hoje-1 (= todayISO_, regra da tabela): nunca inclui o dia de HOJE (parcial → estragaria a
@@ -2070,7 +2071,8 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   const capTo = dataMax ? (dataMax < todayISO_() ? dataMax : todayISO_()) : todayISO_();
   // Busca 60 dias corridos (não 30): o corte de MATURIDADE por multiplicador (D30 recua 30 dias) precisa
   // de histórico atrás dos 30 dias visíveis. A janela de 30 dias MADUROS é recortada no cliente por multiplicador.
-  const fetchFrom = capTo ? isoAddDays_(capTo, -59) : null;
+  // Com média móvel de N dias, estende o histórico (N + 30) p/ os 30 dias visíveis terem janela deslizante cheia.
+  const fetchFrom = capTo ? isoAddDays_(capTo, -Math.max(59, (maDays || 0) + 30)) : null;
   const [f30, setF30] = React.useState({ rows: null, loading: false, error: null });
   React.useEffect(() => {
     if (!ENDPOINT_URL || !dataMax || cohort) return;   // em coorte usa o srcRF da tabela, sem fetch próprio
@@ -2087,6 +2089,7 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   // UM multiplicador por vez (D0…D30). Coage valor inválido/legado (ex. "Todos" salvo antes) p/ D1.
   const effMetric = RET_MULT_METRICS.some(m => m.id === metric) ? metric : 'D1';
   const mDef = RET_MULT_METRICS.find(m => m.id === effMetric) || RET_MULT_METRICS[1];
+  const effGran = maDays > 0 ? 'day' : gran;   // média móvel opera em resolução DIÁRIA (janela deslizante em dias)
 
   // MATURIDADE no NÍVEL DA COORTE (dia do FTD), não da semana: mantém só FTDs que já fecharam a janela do
   // multiplicador → date <= capTo − horizonte (capTo = ontem, último dia completo; horizonte D0=0·D1=1·D7=7·
@@ -2100,38 +2103,57 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   // Eixo X = período (unificado); séries = 1 por multiplicador OU por canal OU por faixa.
   // isoKeys[i] = chave ISO da coorte no ponto i (dia = data do FTD · semana = 2ª-feira de início) → usada no corte de maturidade.
   let xLabels = [], series = [], isoKeys = [];
+  const ftdOf = (r) => (r.qtd || 0) * (r.ftdMedio || 0);   // peso (Σ valor de FTD do período) p/ a média móvel ponderada
   if (seriesBy === 'mult') {
-    const agg = aggRetFaixaBench_(matRows, chFilter, faixaSel, mode, gran, null, dataMax); // dim = período
+    const agg = aggRetFaixaBench_(matRows, chFilter, faixaSel, mode, effGran, null, dataMax); // dim = período
     xLabels = agg.rows.map(r => dmLabel(r.date));
     isoKeys = agg.rows.map(r => r._key);
-    series = [{ name: 'Mult ' + mDef.id, mid: mDef.id, color: RET_SERIES_COLORS[RET_MULT_METRICS.indexOf(mDef) % RET_SERIES_COLORS.length], values: agg.rows.map(r => r[mDef.key]) }];
+    series = [{ name: 'Mult ' + mDef.id, mid: mDef.id, color: RET_SERIES_COLORS[RET_MULT_METRICS.indexOf(mDef) % RET_SERIES_COLORS.length], values: agg.rows.map(r => r[mDef.key]), ftd: agg.rows.map(ftdOf) }];
   } else {
     // grupos (canais ou faixas) presentes no recorte, cada um agregado por período p/ o multiplicador escolhido
     const groupAgg = aggRetFaixaBench_(matRows, chFilter, faixaSel, mode, 'day', null, dataMax, seriesBy);
     const groups = groupAgg.rows.map(r => ({ key: r._key, label: r.date }));
     const perGroup = groups.map(g => {
       const sub = seriesBy === 'canal'
-        ? aggRetFaixaBench_(matRows, { ...chFilter, channels: [g.key] }, faixaSel, mode, gran, null, dataMax)
-        : aggRetFaixaBench_(matRows, chFilter, [g.key], mode, gran, null, dataMax);
-      const m = {}; sub.rows.forEach(r => { m[r._key] = { y: r[mDef.key], label: r.date }; });
+        ? aggRetFaixaBench_(matRows, { ...chFilter, channels: [g.key] }, faixaSel, mode, effGran, null, dataMax)
+        : aggRetFaixaBench_(matRows, chFilter, [g.key], mode, effGran, null, dataMax);
+      const m = {}; sub.rows.forEach(r => { m[r._key] = { y: r[mDef.key], f: ftdOf(r), label: r.date }; });
       return { g, m };
     });
     const labelByKey = {}; perGroup.forEach(pg => Object.keys(pg.m).forEach(k => { labelByKey[k] = pg.m[k].label; }));
     const keys = Object.keys(labelByKey).sort();
     xLabels = keys.map(k => dmLabel(labelByKey[k]));   // dia ISO → dd/mm (igual ao modo mult); rótulo de semana passa direto
     isoKeys = keys;
-    series = perGroup.map((pg, i) => ({ name: pg.g.label, mid: effMetric, color: RET_SERIES_COLORS[i % RET_SERIES_COLORS.length], values: keys.map(k => pg.m[k] ? pg.m[k].y : null) }));
+    series = perGroup.map((pg, i) => ({ name: pg.g.label, mid: effMetric, color: RET_SERIES_COLORS[i % RET_SERIES_COLORS.length], values: keys.map(k => pg.m[k] ? pg.m[k].y : null), ftd: keys.map(k => pg.m[k] ? pg.m[k].f : 0) }));
   }
-  // Janela: últimos N PERÍODOS terminando na última coorte madura (diário = 30 dias · semanal = 8 semanas).
+  // MÉDIA MÓVEL (só calendário): substitui cada ponto do dia d pela razão PONDERADA na janela deslizante
+  // [d−N+1, d] = Σ(mult×ftd) ÷ Σftd — NÃO é média das razões diárias (que distorce em dia de baixo volume).
+  // Aplica ANTES do recorte de janela (usa o histórico de N+30 dias buscado) p/ os dias visíveis terem janela cheia.
+  if (maDays > 0 && !cohort) {
+    series = series.map(s => {
+      const nv = isoKeys.map((k, i) => {
+        if (k == null) return null;
+        const lo = isoAddDays_(k, -(maDays - 1));
+        let num = 0, den = 0, any = false;
+        for (let j = i; j >= 0 && isoKeys[j] != null && isoKeys[j] >= lo; j--) {
+          const v = s.values[j], f = s.ftd ? s.ftd[j] : 0;
+          if (v != null && !isNaN(v) && f > 0) { num += v * f; den += f; any = true; }
+        }
+        return (any && den > 0) ? num / den : null;
+      });
+      return { ...s, values: nv };
+    });
+  }
+  // Janela: últimos N PERÍODOS terminando na última coorte madura (diário/MM = 30 dias · semanal = 8 semanas).
   // A maturidade já foi aplicada por DIA de FTD (matRows), então a semana mais recente entra com suas coortes
   // maduras — não precisa mais dropar a semana inteira. Períodos vêm ordenados asc por chave → fatia o final.
   const matCutId = effMetric, matCutISO = matDay;
   if (!cohort && dataMax) {
-    const maxPeriods = gran === 'week' ? 8 : 30;
+    const maxPeriods = effGran === 'week' ? 8 : 30;
     if (isoKeys.length > maxPeriods) {
       const start = isoKeys.length - maxPeriods;
       xLabels = xLabels.slice(start); isoKeys = isoKeys.slice(start);
-      series = series.map(s => ({ ...s, values: s.values.slice(start) }));
+      series = series.map(s => ({ ...s, values: s.values.slice(start), ftd: s.ftd ? s.ftd.slice(start) : s.ftd }));
     }
   }
   series = series.filter(s => s.values.some(v => v != null && !isNaN(v)));
@@ -2155,6 +2177,19 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
             <button key={m.id} className={`preset-btn ${effMetric === m.id ? 'active' : ''}`} onClick={() => setMetric(m.id)} title={`Multiplicador ${m.id}/FTD = ${m.desc}`}>{m.id}</button>
           ))}
         </span>
+      </span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+        <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Média móvel</label>
+        <span className="slicer-presets">
+          <button className={`preset-btn ${maDays === 0 ? 'active' : ''}`} onClick={() => setMaDays(0)} title="Sem média móvel (valor do período)">Off</button>
+          {[7, 14, 30].map(d => (
+            <button key={d} className={`preset-btn ${maDays === d ? 'active' : ''}`} onClick={() => setMaDays(d)} title={`Média móvel de ${d} dias (janela deslizante diária, ponderada por FTD)`}>{d}d</button>
+          ))}
+        </span>
+        <input type="number" min="2" max="60" value={maDays || ''} placeholder="dias"
+          onChange={e => { const v = parseInt(e.target.value, 10); setMaDays(isNaN(v) ? 0 : Math.max(0, Math.min(60, v))); }}
+          title="Escolher N dias da média móvel (janela deslizante)"
+          style={{ width: '62px', background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)', padding: '4px 6px', borderRadius: '6px', fontSize: '12px', fontFamily: 'inherit' }} />
       </span>
     </div>
   );
@@ -2193,10 +2228,10 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
   const showLabelAt = (i) => (i % labelStride === 0);
   // path com quebras nos nulos (M no início de cada trecho contínuo)
   const linePath = (vals) => { let d = '', pen = false; vals.forEach((v, i) => { if (v == null || isNaN(v)) { pen = false; return; } d += (pen ? ' L' : ' M') + xOf(i).toFixed(1) + ',' + yOf(v).toFixed(1); pen = true; }); return d.trim(); };
-  const yTitle = `Mult ${effMetric}/FTD`;
+  const yTitle = maDays > 0 ? `Mult ${effMetric}/FTD · MM ${maDays}d` : `Mult ${effMetric}/FTD`;
   // Tooltip custom (hover): linha 1 = O QUE é (multiplicador OU canal/faixa+multiplicador); linha 2 = PERÍODO · valor.
   const tipHead = (s) => (seriesBy === 'mult') ? `${s.name}/FTD` : `${s.name} · Mult ${effMetric}/FTD`;
-  const tipSub  = (i, v) => `${gran === 'week' ? 'Semana de ' : ''}${xLabels[i]} · ${fmtMultiple(v)}`;
+  const tipSub  = (i, v) => `${effGran === 'week' ? 'Semana de ' : ''}${xLabels[i]} · ${fmtMultiple(v)}`;
   return (
     <React.Fragment>
       {controls}
@@ -2250,7 +2285,8 @@ function RetMultChart({ chFilter, faixaSel, mode, gran, sameday, dataMax, fallba
         </svg>
       </div>
       <div className="ch-note">
-        <strong>{cohort ? `Coorte de ${cohortDays} dias — mesma base/janela da tabela (só coortes fechadas)` : `Janela: ${gran === 'week' ? 'últimas 8 semanas' : '30 dias corridos'} terminando na ÚLTIMA safra MADURA${matCutId ? ` do ${matCutId}` : ''}${matCutISO ? ` (até ${dmLabel(matCutISO)})` : ''} — coortes ainda imaturas são cortadas${gran === 'week' ? ' (a semana mais recente entra com suas coortes já maduras)' : ''}`}</strong>. Eixo X = <strong>{gran === 'week' ? 'semana' : 'dia'} de FTD</strong>; {seriesBy === 'mult' ? <>evolução do <strong>multiplicador {effMetric}/FTD</strong></> : <>uma linha por <strong>{seriesBy === 'canal' ? 'canal' : 'faixa de FTD'}</strong> (multiplicador {effMetric}/FTD)</>}. Cada ponto = média ponderada (Σ/Σ) do KPI no período. Segue canal/faixa/modo/same-day/M0.{busy ? ' · carregando…' : ''}{err ? ' · erro' : ''}
+        <strong>{cohort ? `Coorte de ${cohortDays} dias — mesma base/janela da tabela (só coortes fechadas)` : `Janela: ${effGran === 'week' ? 'últimas 8 semanas' : '30 dias corridos'} terminando na ÚLTIMA safra MADURA${matCutId ? ` do ${matCutId}` : ''}${matCutISO ? ` (até ${dmLabel(matCutISO)})` : ''} — coortes ainda imaturas são cortadas${effGran === 'week' ? ' (a semana mais recente entra com suas coortes já maduras)' : ''}`}</strong>. Eixo X = <strong>{effGran === 'week' ? 'semana' : 'dia'} de FTD</strong>; {seriesBy === 'mult' ? <>evolução do <strong>multiplicador {effMetric}/FTD</strong></> : <>uma linha por <strong>{seriesBy === 'canal' ? 'canal' : 'faixa de FTD'}</strong> (multiplicador {effMetric}/FTD)</>}. Cada ponto = média ponderada (Σ/Σ) do KPI no período. Segue canal/faixa/modo/same-day/M0.{busy ? ' · carregando…' : ''}{err ? ' · erro' : ''}
+        {maDays > 0 && !cohort && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Média móvel de {maDays} dias: cada dia = razão PONDERADA (Σ mult×FTD ÷ Σ FTD) da janela deslizante dos últimos {maDays} dias — opera em resolução diária (ignora o toggle Semanal) e suaviza o ruído das linhas.</em></React.Fragment>}
         {!cohort && <React.Fragment>{' '}<em>Maturidade: o multiplicador só entra depois de a coorte ter os dias p/ fechar a janela (D0=0 · D1=1 · D7=7 · D14=14 · D30=30 dias após o FTD).</em></React.Fragment>}
       </div>
     </React.Fragment>
