@@ -3748,17 +3748,19 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
     if (!window.confirm('Remover o acesso de ' + email + '?')) return;
     apiPost_({ action: 'removeUser', session, email }).then(j => { if (j && j.ok) load(); else setErr((j && j.error) || 'Falha ao remover'); }).catch(() => setErr('Erro de conexão'));
   };
-  // Allowlist de abas por usuário. Vazio = TODAS. Ao marcar/desmarcar, salva no backend e recarrega.
+  // Allowlist de abas por usuário. Vazio/tudo marcado = TODAS. Update OTIMISTA (reflete na hora), persiste em
+  // background; se o backend falhar, reverte (load) e mostra o erro.
   const allIds = (allTabs || []).map(t => t.id);
-  const saveUserTabs = (email, tabs) => {
-    setErr(null);
-    apiPost_({ action: 'setUserTabs', session, email, tabs }).then(j => { if (j && j.ok) load(); else setErr((j && j.error) || 'Falha ao salvar abas'); }).catch(() => setErr('Erro de conexão'));
-  };
   const toggleUserTab = (u, tabId) => {
     const restricted = Array.isArray(u.tabs) && u.tabs.length;
-    const cur = restricted ? u.tabs : allIds.slice();   // "todas" (null) → expande p/ desmarcar uma a partir de tudo
-    const next = cur.indexOf(tabId) >= 0 ? cur.filter(x => x !== tabId) : cur.concat([tabId]);
-    saveUserTabs(u.email, next.length >= allIds.length ? [] : next);   // tudo marcado → [] = sem restrição (todas)
+    const cur = restricted ? u.tabs : allIds.slice();   // "todas" (null) → expande p/ desmarcar a partir de tudo
+    const raw = cur.indexOf(tabId) >= 0 ? cur.filter(x => x !== tabId) : cur.concat([tabId]);
+    const nextTabs = raw.length >= allIds.length ? null : raw;   // tudo marcado → null (sem restrição)
+    setErr(null);
+    setUsers(prev => (prev || []).map(x => x.email === u.email ? { ...x, tabs: nextTabs } : x));   // otimista
+    apiPost_({ action: 'setUserTabs', session, email: u.email, tabs: nextTabs || [] })
+      .then(j => { if (!(j && j.ok)) { setErr((j && j.error) || 'Falha ao salvar abas'); load(); } })
+      .catch(() => { setErr('Erro de conexão'); load(); });
   };
   const inp = { background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)', padding: '8px 10px', borderRadius: '6px', fontSize: '13px', fontFamily: 'inherit' };
   return (
@@ -3827,6 +3829,7 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
         <div className="ch-note" style={{ marginTop: 0, marginBottom: '12px' }}>
           Marque as abas que <strong>cada pessoa</strong> pode ver. <strong>Todas marcadas = sem restrição</strong> (vê tudo); desmarque p/ limitar. Admins veem todas sempre. Aplica no <strong>próximo login/refresh</strong> da pessoa. É um filtro do <em>menu</em> (esconde as abas) — não é uma barreira de dados no backend.
         </div>
+        {err && <div style={{ color: 'var(--negative)', fontSize: '12px', marginBottom: '10px' }}>{err}</div>}
         {(users || []).filter(u => !u.admin).map((u, i) => {
           const restricted = Array.isArray(u.tabs) && u.tabs.length;
           return (
