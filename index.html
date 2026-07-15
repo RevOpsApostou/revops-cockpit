@@ -2360,6 +2360,19 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
       .then(j => { if (j.error) throw new Error(j.error); setPmFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
       .catch(e => setPmFetch({ rows: null, loading: false, error: String(e.message || e) }));
   }, [pm, sameday]);
+  // "Ver por = GRUPO DE RISCO": a tabela precisa de dado COM grupo (&byGrupo=1). Fetch próprio, mesmo window/sameday
+  // da fonte atual (coorte usa a janela da coorte). Só dispara quando tableDim = 'grupo' (payload padrão fica leve).
+  const [grFetch, setGrFetch] = React.useState({ rows: null, loading: false, error: null });
+  const grFrom = cohort ? (dataMax ? isoAddDays_(dataMax, -(cohortDays + 30)) : null) : winFrom;
+  const grTo = cohort ? dataMax : winTo;
+  React.useEffect(() => {
+    if (tableDim !== 'grupo' || !ENDPOINT_URL || !grFrom || !grTo) return;
+    setGrFetch(s => ({ ...s, loading: true, error: null }));
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${grFrom}&to=${grTo}&only=retfaixa${sameday ? '&sameday=1' : ''}&byGrupo=1`)
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(j => { if (j.error) throw new Error(j.error); setGrFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
+      .catch(e => setGrFetch({ rows: null, loading: false, error: String(e.message || e) }));
+  }, [tableDim, grFrom, grTo, sameday]);
   // Fonte: coorte (fetch próprio · só coortes fechadas · M0 = janela de 30 dias) · same-day · padrão (slicer global).
   let srcRF;
   if (cohort) {
@@ -2374,9 +2387,15 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   const gCurve = !cohort ? m0Curve_(chFilter, sameday) : null;
   const data = aggRetFaixaBench_(srcRF, chFilter, faixaSel, mode, gran, gCurve, dataMax);
   const t = data.totals || {};
-  // Tabela de baixo: mesma base, reagrupada por canal/faixa quando o toggle "Ver por" não é "período".
+  // Fonte da tabela quando "Ver por = Grupo": o fetch byGrupo próprio (coorte remapeia M0 como o srcRF).
+  const srcRFGrupo = cohort
+    ? (grFetch.rows || []).filter(r => completeBefore && r.date <= completeBefore).map(r => ({ ...r, cntM0: r['cntD' + cohortDays], valM0: r['valD' + cohortDays] }))
+    : (grFetch.rows || []);
+  // Tabela de baixo: mesma base, reagrupada por canal/faixa/grupo quando o toggle "Ver por" não é "período".
   // Totais são idênticos (mesmo recorte filtrado) — só muda a quebra das linhas.
-  const tableData = tableDim === 'periodo' ? data : aggRetFaixaBench_(srcRF, chFilter, faixaSel, mode, gran, gCurve, dataMax, tableDim);
+  const tableData = tableDim === 'periodo' ? data
+    : tableDim === 'grupo' ? aggRetFaixaBench_(srcRFGrupo, chFilter, faixaSel, mode, gran, gCurve, dataMax, 'grupo')
+    : aggRetFaixaBench_(srcRF, chFilter, faixaSel, mode, gran, gCurve, dataMax, tableDim);
   // Mês anterior fechado: mesmo recorte (canal/faixa/modo) num único agregado (.totals). Sem curva (já maduro).
   const pmRow = pmFetch.rows ? aggRetFaixaBench_(pmFetch.rows, chFilter, faixaSel, mode, 'day').totals : null;
   // BP do escopo (Total/Growth/canal). Só faz sentido p/ "Todas as faixas" — o plano não tem meta
@@ -2411,8 +2430,8 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   ];
   const chLabel = chLabel_(chFilter);
   const coSuffix = cohort ? ` · coorte ${cohortDays}d (FTD até ${completeBefore ? completeBefore.slice(8, 10) + '/' + completeBefore.slice(5, 7) : '—'})` : '';
-  const loadingRF = (cohort && coFetch.loading) || (sameday && sdFetch.loading);
-  const errorRF = (cohort && coFetch.error) || (sameday && sdFetch.error);
+  const loadingRF = (cohort && coFetch.loading) || (sameday && sdFetch.loading) || (tableDim === 'grupo' && grFetch.loading);
+  const errorRF = (cohort && coFetch.error) || (sameday && sdFetch.error) || (tableDim === 'grupo' && grFetch.error);
   const selStyle = { background: 'var(--surface)', border: '1px solid rgba(249,115,22,.5)', color: 'var(--text)', padding: '6px 10px', borderRadius: '6px', fontSize: '12px', fontFamily: 'inherit' };
   return (
     <React.Fragment>
@@ -2444,6 +2463,7 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
             <button className={`preset-btn ${tableDim === 'periodo' ? 'active' : ''}`} onClick={() => setTableDim('periodo')} title="Tabela de safra: uma linha por dia/semana (segue a Visão)">Período</button>
             <button className={`preset-btn ${tableDim === 'canal' ? 'active' : ''}`} onClick={() => setTableDim('canal')} title="Tabela de safra: uma linha por canal — compara os canais no período todo (maior FTD$ primeiro)">Canal</button>
             <button className={`preset-btn ${tableDim === 'faixa' ? 'active' : ''}`} onClick={() => setTableDim('faixa')} title="Tabela de safra: uma linha por faixa de FTD — compara as faixas no período todo">Faixa</button>
+            <button className={`preset-btn ${tableDim === 'grupo' ? 'active' : ''}`} onClick={() => setTableDim('grupo')} title="Tabela de safra: uma linha por grupo de risco — compara os grupos no período todo (puxa &byGrupo do BQ)">Grupo</button>
           </div>
           <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>M0</label>
           <div className="slicer-presets">
@@ -2468,8 +2488,8 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
         <div className="ch-note">Mês-calendário <strong>anterior ao período selecionado</strong> no slicer ({monthLabelPt_(pm.from)}), agregado num único registro, no mesmo recorte de canal/faixa/modo. O M0 é sempre mês-calendário (não muda com o toggle Calendário/Coorte).</div>
       </div>
       <div className="support">
-        <div className="support-title">Safra {tableDim === 'periodo' ? 'por ' + (gran === 'week' ? 'Semana' : 'Dia') : 'por ' + (tableDim === 'canal' ? 'Canal' : 'Faixa')} · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''}{coSuffix}{loadingRF ? ' · carregando…' : ''}{errorRF ? ' · erro ao carregar' : ''}</div>
-        <RetFaixaTable data={tableData} dateLabel={tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : (gran === 'week' ? 'Semana' : 'Data FTD')} m0Label={cohort ? cohortDays + 'd' : 'M0'} base={multBase} />
+        <div className="support-title">Safra {tableDim === 'periodo' ? 'por ' + (gran === 'week' ? 'Semana' : 'Dia') : 'por ' + (tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : 'Grupo de risco')} · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''}{coSuffix}{loadingRF ? ' · carregando…' : ''}{errorRF ? ' · erro ao carregar' : ''}</div>
+        <RetFaixaTable data={tableData} dateLabel={tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : tableDim === 'grupo' ? 'Grupo' : (gran === 'week' ? 'Semana' : 'Data FTD')} m0Label={cohort ? cohortDays + 'd' : 'M0'} base={multBase} />
       </div>
       <div className="support">
         <div className="support-title">Multiplicador por dimensão · {cohort ? 'coorte ' + cohortDays + 'd' : 'últimos 30 dias corridos'} · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''}</div>
