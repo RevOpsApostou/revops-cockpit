@@ -3731,6 +3731,10 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
   const [busy, setBusy] = React.useState(false);
   const [form, setForm] = React.useState({ email: '', name: '', senha: '', admin: false });
   const session = localStorage.getItem(SESSION_KEY);
+  // Espelho do estado p/ ler a versão MAIS RECENTE dentro dos saves atrasados (evita stale closure).
+  const usersRef = React.useRef(null);
+  React.useEffect(() => { usersRef.current = users; }, [users]);
+  const saveTimers = React.useRef({});
   const load = React.useCallback(() => {
     setErr(null);
     apiPost_({ action: 'listUsers', session }).then(j => {
@@ -3748,19 +3752,33 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
     if (!window.confirm('Remover o acesso de ' + email + '?')) return;
     apiPost_({ action: 'removeUser', session, email }).then(j => { if (j && j.ok) load(); else setErr((j && j.error) || 'Falha ao remover'); }).catch(() => setErr('Erro de conexão'));
   };
-  // Allowlist de abas por usuário. Vazio/tudo marcado = TODAS. Update OTIMISTA (reflete na hora), persiste em
-  // background; se o backend falhar, reverte (load) e mostra o erro.
+  // Allowlist de abas por usuário. Vazio/tudo marcado = TODAS. Update OTIMISTA (reflete na hora); o save é
+  // COALESCIDO por usuário (vários cliques seguidos viram 1 POST com o estado final) e lê o estado mais recente
+  // via usersRef no momento do flush — assim (des)marcar várias abas em sequência não sobrescreve as anteriores.
   const allIds = (allTabs || []).map(t => t.id);
-  const toggleUserTab = (u, tabId) => {
-    const restricted = Array.isArray(u.tabs) && u.tabs.length;
-    const cur = restricted ? u.tabs : allIds.slice();   // "todas" (null) → expande p/ desmarcar a partir de tudo
-    const raw = cur.indexOf(tabId) >= 0 ? cur.filter(x => x !== tabId) : cur.concat([tabId]);
-    const nextTabs = raw.length >= allIds.length ? null : raw;   // tudo marcado → null (sem restrição)
+  const flushTabs = React.useCallback((email) => {
+    const u = (usersRef.current || []).find(x => x.email === email);
+    const tabs = (u && Array.isArray(u.tabs)) ? u.tabs : [];   // null (todas) → [] no wire
+    apiPost_({ action: 'setUserTabs', session, email, tabs })
+      .then(j => { if (!(j && j.ok)) setErr((j && j.error) || 'Falha ao salvar abas'); })
+      .catch(() => setErr('Erro de conexão'));
+  }, [session]);
+  // Dispara saves pendentes ao sair da aba (navegar antes do debounce).
+  React.useEffect(() => () => {
+    Object.keys(saveTimers.current).forEach(email => { clearTimeout(saveTimers.current[email]); flushTabs(email); });
+  }, [flushTabs]);
+  const toggleUserTab = (email, tabId) => {
     setErr(null);
-    setUsers(prev => (prev || []).map(x => x.email === u.email ? { ...x, tabs: nextTabs } : x));   // otimista
-    apiPost_({ action: 'setUserTabs', session, email: u.email, tabs: nextTabs || [] })
-      .then(j => { if (!(j && j.ok)) { setErr((j && j.error) || 'Falha ao salvar abas'); load(); } })
-      .catch(() => { setErr('Erro de conexão'); load(); });
+    setUsers(prev => (prev || []).map(x => {
+      if (x.email !== email) return x;
+      const restricted = Array.isArray(x.tabs) && x.tabs.length;
+      const cur = restricted ? x.tabs.slice() : allIds.slice();   // "todas" (null) → expande p/ desmarcar a partir de tudo
+      const raw = cur.indexOf(tabId) >= 0 ? cur.filter(y => y !== tabId) : cur.concat([tabId]);
+      const nextTabs = raw.length >= allIds.length ? null : raw;   // tudo marcado → null (sem restrição)
+      return { ...x, tabs: nextTabs };
+    }));
+    if (saveTimers.current[email]) clearTimeout(saveTimers.current[email]);
+    saveTimers.current[email] = setTimeout(() => { delete saveTimers.current[email]; flushTabs(email); }, 600);
   };
   const inp = { background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)', padding: '8px 10px', borderRadius: '6px', fontSize: '13px', fontFamily: 'inherit' };
   return (
@@ -3845,7 +3863,7 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
                   const on = restricted ? (u.tabs.indexOf(t.id) >= 0) : true;   // sem restrição = tudo marcado
                   return (
                     <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 9px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', background: 'var(--surface)', opacity: on ? 1 : 0.5 }}>
-                      <input type="checkbox" checked={on} onChange={() => toggleUserTab(u, t.id)} />
+                      <input type="checkbox" checked={on} onChange={() => toggleUserTab(u.email, t.id)} />
                       {t.label}
                     </label>
                   );
