@@ -1442,15 +1442,153 @@ function ggrByVertical_(channels, vertical) {
   });
 }
 
-function TabGgr({ M, ggrChannels, ggrSafra, ggrSafraRoas, ggrPayback }) {
+// Gráfico de TENDÊNCIA de ROAS GGR por canal (aba GGR · Acumulado YTD). Mesmo visual do RetMultChart
+// (grid preto, 1 linha por canal, data labels, tooltip alto contraste). ROAS = GGR ÷ investimento.
+// Toggle Acumulado (Σ GGR ÷ Σ invest desde abril) / Semanal (GGR da semana ÷ invest da semana).
+function GgrRoasChart({ series, weeks, channelOrder }) {
+  const [mode, setMode] = usePersistedState('rvops:ggrRoasMode', 'acum');   // 'acum' | 'sem'
+  const [hover, setHover] = React.useState(null);
+  const dmLabel = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); return m ? `${m[3]}/${m[2]}` : String(s); };
+  const byCh = {};
+  (series || []).forEach(r => { (byCh[r.channel] || (byCh[r.channel] = {}))[r.week] = { ggr: r.ggr || 0, invest: r.invest || 0 }; });
+  const xLabels = (weeks || []).map(dmLabel);
+  const chartSeries = (channelOrder || []).map((ch, idx) => {
+    const wk = byCh[ch] || {};
+    let cg = 0, ci = 0;
+    const values = (weeks || []).map(w => {
+      const d = wk[w] || { ggr: 0, invest: 0 };
+      if (mode === 'acum') { cg += d.ggr; ci += d.invest; return ci > 0 ? cg / ci : null; }
+      return d.invest > 0 ? d.ggr / d.invest : null;
+    });
+    return { name: ch, color: RET_SERIES_COLORS[idx % RET_SERIES_COLORS.length], values };
+  }).filter(s => s.values.some(v => v != null && !isNaN(v)));
+
+  const controls = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '18px', flexWrap: 'wrap', marginBottom: '10px' }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+        <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>ROAS</label>
+        <div className="slicer-presets">
+          <button className={`preset-btn ${mode === 'acum' ? 'active' : ''}`} onClick={() => setMode('acum')} title="ROAS acumulado: Σ GGR ÷ Σ investimento desde abril até a semana (converge p/ o ROAS YTD).">Acumulado</button>
+          <button className={`preset-btn ${mode === 'sem' ? 'active' : ''}`} onClick={() => setMode('sem')} title="ROAS da semana: GGR da semana ÷ investimento da semana.">Semanal</button>
+        </div>
+      </span>
+    </div>
+  );
+  if (!chartSeries.length || !xLabels.length) return <React.Fragment>{controls}<div className="ch-note">Sem dados de ROAS p/ este recorte (canais sem investimento rastreado).</div></React.Fragment>;
+
+  const n = xLabels.length;
+  const slotW = n > 20 ? 72 : n > 10 ? 118 : 210;
+  const padL = 60, padR = 30, padT = 32, padB = 60, plotH = 600;
+  const W = Math.max(1500, padL + padR + (n === 1 ? slotW : (n - 1) * slotW));
+  const H = padT + plotH + padB;
+  const plotW = W - padL - padR;
+  const xOf = (i) => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const allVals = chartSeries.flatMap(s => s.values).filter(v => v != null && !isNaN(v));
+  const yMaxRaw = allVals.length ? Math.max.apply(null, allVals) : 1;
+  const yMinRaw = allVals.length ? Math.min.apply(null, allVals) : 0;
+  const sortedV = allVals.slice().sort((a, b) => a - b);
+  const p95 = sortedV.length ? sortedV[Math.min(sortedV.length - 1, Math.round(0.95 * (sortedV.length - 1)))] : 1;
+  const yMaxEff = (p95 > 0 && yMaxRaw > p95 * 1.5) ? p95 : yMaxRaw;
+  const ySpan = Math.max(yMaxEff - Math.min(yMinRaw, 0), 0.3);
+  const yPad = ySpan * 0.18;
+  const domMin = Math.min(yMinRaw - yPad, 0);
+  const domMax = Math.max(yMaxEff + yPad, domMin + 0.2);
+  const yClamp = (v) => Math.max(domMin, Math.min(domMax, v));
+  const yOf = (v) => padT + (1 - (yClamp(v) - domMin) / ((domMax - domMin) || 1)) * plotH;
+  const ticks = 4;
+  const gridVals = Array.from({ length: ticks + 1 }, (_, i) => domMin + (domMax - domMin) * i / ticks);
+  const lblEvery = Math.ceil(n / 12);
+  const single = chartSeries.length === 1;
+  const nonNull = chartSeries.reduce((a, s) => a + s.values.filter(v => v != null && !isNaN(v)).length, 0) || 1;
+  const labelStride = Math.max(1, Math.ceil(nonNull / (single ? 45 : 42)));
+  const dataLblSize = single ? 16 : 12;
+  const linePath = (vals) => { let d = '', pen = false; vals.forEach((v, i) => { if (v == null || isNaN(v)) { pen = false; return; } d += (pen ? ' L' : ' M') + xOf(i).toFixed(1) + ',' + yOf(v).toFixed(1); pen = true; }); return d.trim(); };
+  const yTitle = mode === 'acum' ? 'ROAS GGR acum. (Σ/Σ)' : 'ROAS GGR semanal';
+  return (
+    <React.Fragment>
+      {controls}
+      <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', justifyContent: 'center', margin: '2px 0 8px' }}>
+        {chartSeries.map((s, i) => (
+          <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: 'var(--text-muted)' }}>
+            <span style={{ width: '12px', height: '3px', background: s.color, borderRadius: '2px', display: 'inline-block' }} />{s.name}
+          </span>
+        ))}
+      </div>
+      <div className="table-scroll">
+        <svg viewBox={`0 0 ${W} ${H}`} width={W} style={{ width: '100%', maxWidth: W, minWidth: Math.min(W, 700), height: 'auto', display: 'block', margin: '0 auto' }} preserveAspectRatio="xMidYMid meet">
+          {gridVals.map((v, i) => (
+            <g key={`g${i}`}>
+              <line x1={padL} x2={W - padR} y1={yOf(v)} y2={yOf(v)} stroke="var(--border)" strokeWidth="1" strokeDasharray={i === 0 ? undefined : '2 4'} />
+              <text x={padL - 8} y={yOf(v) + 3.5} textAnchor="end" fontSize="10.5" fill="#cfcfcf">{fmtMultiple(v)}</text>
+            </g>
+          ))}
+          {xLabels.map((lb, i) => (i % lblEvery === 0) ? <text key={`x${i}`} x={xOf(i)} y={padT + plotH + 18} textAnchor="middle" fontSize="10.5" fill="#cfcfcf">{lb}</text> : null)}
+          <text x={4} y={14} fontSize="10" fill="#aaaaaa">{yTitle}</text>
+          {chartSeries.map((s, si) => (
+            <g key={`s${si}`}>
+              <path d={linePath(s.values)} fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+              {s.values.map((v, i) => (v != null && !isNaN(v)) ? (
+                <g key={i}>
+                  <circle cx={xOf(i)} cy={yOf(v)} r="3.5" fill="var(--surface)" stroke={s.color} strokeWidth="1.8" />
+                  {(i % labelStride === 0) && <text x={xOf(i)} y={yOf(v) - (single ? 13 : 10)} textAnchor="middle" fontSize={dataLblSize} fontWeight="700" fill={s.color}>{fmtMultiple(v)}</text>}
+                  <circle cx={xOf(i)} cy={yOf(v)} r="14" fill="transparent" style={{ cursor: 'pointer', pointerEvents: 'all' }} onMouseEnter={() => setHover({ si, i })} onMouseLeave={() => setHover(null)} />
+                </g>
+              ) : null)}
+            </g>
+          ))}
+          {hover && chartSeries[hover.si] && chartSeries[hover.si].values[hover.i] != null && !isNaN(chartSeries[hover.si].values[hover.i]) && (() => {
+            const s = chartSeries[hover.si], v = s.values[hover.i], cx = xOf(hover.i), cy = yOf(v);
+            const l1 = `${s.name} · ROAS GGR`, l2 = `Semana de ${xLabels[hover.i]} · ${fmtMultiple(v)}`;
+            const bw = Math.max(l1.length, l2.length) * 9 + 32, bh = 64;
+            let tx = Math.max(padL, Math.min(cx - bw / 2, W - padR - bw));
+            let ty = cy - bh - 18; if (ty < padT) ty = cy + 20;
+            return (
+              <g pointerEvents="none">
+                <circle cx={cx} cy={cy} r="6.5" fill={s.color} stroke="#000000" strokeWidth="2.5" />
+                <rect x={tx} y={ty} width={bw} height={bh} rx="9" fill="#000000" fillOpacity="1" stroke={s.color} strokeWidth="2.5" />
+                <text x={tx + 15} y={ty + 27} fontSize="17" fontWeight="700" fill="#ffffff">{l1}</text>
+                <text x={tx + 15} y={ty + 49} fontSize="15" fill="#f2f2f2">{l2}</text>
+              </g>
+            );
+          })()}
+        </svg>
+      </div>
+    </React.Fragment>
+  );
+}
+
+function TabGgr({ M, ggrChannels, ggrSafra, ggrSafraRoas, ggrPayback, chFilter }) {
   const H = (ggrPayback && ggrPayback.horizonDays) || 90;
   const [ggrViewRaw, setGgrView] = usePersistedState('rvops:ggrView', 'total');
   const ggrView = (ggrViewRaw === 'casino' || ggrViewRaw === 'sportsbook') ? ggrViewRaw : 'total';
   // Toggle de SAFRA (idade de coorte). 'todas' = consolidado; senão filtra a aba pro bucket.
   const [safra, setSafra] = usePersistedState('rvops:ggrSafra', 'todas');
-  const SAFRAS = [{ id: 'todas', label: 'Todas' }, { id: 'm0', label: 'M0' }, { id: 'm1', label: 'M1' }, { id: 'm2', label: 'M2' }, { id: 'm3plus', label: 'M3+' }];
+  const SAFRAS = [{ id: 'todas', label: 'Todas' }, { id: 'm0', label: 'M0' }, { id: 'm1', label: 'M1' }, { id: 'm2', label: 'M2' }, { id: 'm3plus', label: 'M3+' }, { id: 'ytd', label: 'Acumulado YTD' }];
   const hasSafra = !!(ggrSafra && ggrSafra.m0);
-  const safraActive = hasSafra && safra !== 'todas';
+  const ytdActive = safra === 'ytd';
+  const safraActive = hasSafra && safra !== 'todas' && !ytdActive;
+  // YTD acumulado (abril→agora): fetch próprio do endpoint leve only=ggrytd (independe do slicer de data;
+  // o filtro de CANAL é aplicado client-side, igual ao resto do app). Só busca quando a aba YTD está ativa.
+  const [ytdState, setYtdState] = React.useState({ data: null, loading: false, error: null });
+  React.useEffect(() => {
+    if (!ytdActive || !ENDPOINT_URL) return;
+    setYtdState(s => ({ ...s, loading: true, error: null }));
+    fetch(`${ENDPOINT_URL}?${authParam_()}&only=ggrytd`)
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(j => { if (j.error) throw new Error(j.error); setYtdState({ data: j, loading: false, error: null }); })
+      .catch(e => setYtdState({ data: null, loading: false, error: String(e.message || e) }));
+  }, [ytdActive]);
+  const ytdFiltered = React.useMemo(() => {
+    const d = ytdState.data; if (!d) return null;
+    const sel = chList_(chFilter || { channels: [], scope: 'all' });
+    const allow = sel.length ? (c) => sel.indexOf(c) >= 0
+      : ((chFilter && chFilter.scope === 'growth') ? (c) => isGrowthCh_(c) : () => true);
+    return { ...d, channels: (d.channels || []).filter(c => allow(c.channel)), series: (d.series || []).filter(r => allow(r.channel)) };
+  }, [ytdState.data, chFilter]);
+  const yCh = (ytdFiltered && ytdFiltered.channels) || [];
+  const yTotInvest = yCh.reduce((a, c) => a + (c.invest || 0), 0);
+  const yTotGgr = yCh.reduce((a, c) => a + (c.ggr || 0), 0);
+  const yRoas = yTotInvest > 0 ? yTotGgr / yTotInvest : null;
   const safraLabel = (SAFRAS.find(s => s.id === safra) || {}).label || '';
   const safraDesc = { m0: 'M0 (FTD no mês)', m1: 'M1 (FTD há 1 mês)', m2: 'M2 (FTD há 2 meses)', m3plus: 'M3+ (FTD há 3+ meses)' };
   const safraChans = safraActive ? (ggrSafra[safra] || []) : null;
@@ -1492,13 +1630,13 @@ function TabGgr({ M, ggrChannels, ggrSafra, ggrSafraRoas, ggrPayback }) {
             <div className="slicer-presets">
               {SAFRAS.map(s => (
                 <button key={s.id} className={`preset-btn ${safra === s.id ? 'active' : ''}`} onClick={() => setSafra(s.id)}
-                  title={s.id === 'todas' ? 'GGR consolidado (todas as safras).' : `Só o GGR da safra ${s.label} (${safraDesc[s.id]}).`}>
-                  {s.id === 'todas' ? s.label : 'GGR ' + s.label}
+                  title={s.id === 'todas' ? 'GGR consolidado (todas as safras).' : s.id === 'ytd' ? 'Investimento e GGR acumulados por canal desde abril (YTD) + tendência de ROAS.' : `Só o GGR da safra ${s.label} (${safraDesc[s.id]}).`}>
+                  {(s.id === 'todas' || s.id === 'ytd') ? s.label : 'GGR ' + s.label}
                 </button>
               ))}
             </div>
           )}
-          {hasVert && !safraActive && (
+          {hasVert && !safraActive && !ytdActive && (
             <div className="slicer-presets">
               <button className={`preset-btn ${ggrView === 'total' ? 'active' : ''}`} onClick={() => setGgrView('total')} title="GGR consolidado (= o GGR do painel).">Total</button>
               <button className={`preset-btn ${ggrView === 'casino' ? 'active' : ''}`} onClick={() => setGgrView('casino')} title="Só Casino (líquido de freespin): GGR e NGR por canal só de casino.">Casino</button>
@@ -1507,7 +1645,57 @@ function TabGgr({ M, ggrChannels, ggrSafra, ggrSafraRoas, ggrPayback }) {
           )}
         </div>
       </div>
-      {safraActive ? (
+      {ytdActive ? (
+        <React.Fragment>
+          <div className="hero-grid">
+            <Hero metric={{ act: yTotInvest, m1: null, bp: null, pctBp: null, fmt: 'brl', label: 'Investimento YTD' }} />
+            <Hero metric={{ act: yTotGgr, m1: null, bp: null, pctBp: null, fmt: 'brl', label: 'GGR YTD' }} />
+            <Hero metric={{ act: yRoas, m1: null, bp: null, pctBp: null, fmt: 'multiple', label: 'ROAS GGR YTD' }} />
+          </div>
+          <div className="support">
+            <div className="support-title">Acumulado YTD por Canal{ytdState.data ? ` — desde ${fmtBR_(ytdState.data.from)}` : ''}</div>
+            {ytdState.loading ? (
+              <div className="ch-note">Carregando do BQ…</div>
+            ) : ytdState.error ? (
+              <div className="ch-note">Erro ao carregar YTD: {ytdState.error}</div>
+            ) : yCh.length === 0 ? (
+              <div className="ch-note">Sem dados YTD p/ este recorte.</div>
+            ) : (
+              <React.Fragment>
+                <div className="table-scroll"><table className="ch-table">
+                  <thead><tr><th>Canal</th><th>Investimento</th><th>GGR</th><th>ROAS GGR</th><th>% do GGR</th></tr></thead>
+                  <tbody>
+                    {yCh.map((c, i) => {
+                      const roas = c.invest > 0 ? c.ggr / c.invest : null;
+                      return (
+                        <tr key={i}>
+                          <td className="ch-name">{c.channel}</td>
+                          <td>{c.invest > 0 ? fmtBRL(c.invest) : '—'}</td>
+                          <td>{fmtBRL(c.ggr)}</td>
+                          <td>{roas != null ? fmtMultiple(roas) : '—'}</td>
+                          <td>{yTotGgr !== 0 ? fmtPct((c.ggr || 0) / yTotGgr) : '—'}</td>
+                        </tr>
+                      );
+                    })}
+                    <tr className="ch-total">
+                      <td>Total</td>
+                      <td>{fmtBRL(yTotInvest)}</td>
+                      <td>{fmtBRL(yTotGgr)}</td>
+                      <td>{yRoas != null ? fmtMultiple(yRoas) : '—'}</td>
+                      <td>100%</td>
+                    </tr>
+                  </tbody>
+                </table></div>
+                <div className="support-title" style={{ marginTop: '24px' }}>Tendência de ROAS GGR por Canal</div>
+                <GgrRoasChart series={ytdFiltered.series} weeks={(ytdState.data && ytdState.data.weeks) || []} channelOrder={yCh.map(c => c.channel)} />
+                <div className="ch-note">
+                  <strong>Acumulado YTD</strong> = investimento (spend de mídia) e GGR (= NGR) por canal desde {ytdState.data ? fmtBR_(ytdState.data.from) : 'abr/2026'} até hoje. <strong>ROAS GGR</strong> = GGR ÷ investimento. Segue o filtro de canal do slicer (janela é sempre YTD, independe da data). Canais sem mídia paga rastreada (ex.: Orgânico) aparecem sem investimento e ficam fora do gráfico de ROAS.
+                </div>
+              </React.Fragment>
+            )}
+          </div>
+        </React.Fragment>
+      ) : safraActive ? (
         <React.Fragment>
           <div className="hero-grid">
             <Hero metric={vcard('GGR ' + safraLabel, safraGgr, safraGgrM1)} />
