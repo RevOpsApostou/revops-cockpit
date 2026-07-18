@@ -2544,6 +2544,56 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
   );
 }
 
+// Seletor (single-select buscável) de CAMPANHA (utm_ftd_campaign) da aba Retenções.
+// value = campanha ('' = todas). options já vêm escopadas pelo canal selecionado.
+function CampaignSelect({ options, value, onChange, loading, error }) {
+  const [open, setOpen] = React.useState(false);
+  const [q, setQ] = React.useState('');
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    if (!open) return;
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+  const opts = options || [];
+  const ql = q.trim().toLowerCase();
+  const filtered = ql ? opts.filter(o => o.campaign.indexOf(ql) >= 0 || (o.canal || '').toLowerCase().indexOf(ql) >= 0) : opts;
+  const shown = filtered.slice(0, 200);
+  const label = value ? value : (loading ? 'carregando…' : 'Todas');
+  const optBtn = (on) => ({ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', textAlign: 'left', background: on ? 'rgba(250,204,21,.12)' : 'transparent', border: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: '12px', padding: '7px 10px', borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap' });
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button type="button" onClick={() => setOpen(o => !o)} title="Filtra a coorte de FTD por uma campanha (utm_ftd_campaign)" style={{ background: 'var(--surface)', border: '1px solid rgba(250,204,21,.45)', color: 'var(--text)', fontFamily: 'inherit', fontSize: '12px', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', maxWidth: '240px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+        <span style={{ fontSize: '9px', opacity: .7 }}>▼</span>
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 50, minWidth: '260px', maxHeight: '340px', overflowY: 'auto', background: 'var(--surface)', border: '1px solid rgba(250,204,21,.45)', borderRadius: '8px', padding: '6px', boxShadow: '0 8px 24px rgba(0,0,0,.5)' }}>
+          <input autoFocus type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="buscar campanha…" style={{ width: '100%', boxSizing: 'border-box', background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text)', fontFamily: 'inherit', fontSize: '12px', padding: '6px 8px', borderRadius: '6px', marginBottom: '4px', outline: 'none' }} />
+          <button type="button" onClick={() => { onChange(''); setOpen(false); }} style={optBtn(!value)}>
+            <span style={{ width: '14px', flexShrink: 0, color: 'var(--accent-yellow)', textAlign: 'center' }}>{!value ? '✓' : ''}</span>
+            <span>Todas as campanhas</span>
+          </button>
+          {error && <div style={{ padding: '7px 10px', fontSize: '11px', color: '#f0555c' }}>erro ao carregar campanhas</div>}
+          {!error && !loading && opts.length === 0 && <div style={{ padding: '7px 10px', fontSize: '11px', color: 'var(--text-muted)' }}>nenhuma campanha no período</div>}
+          {shown.map((o, i) => {
+            const on = value === o.campaign;
+            return (
+              <button key={i} type="button" onClick={() => { onChange(o.campaign); setOpen(false); }} style={optBtn(on)}>
+                <span style={{ width: '14px', flexShrink: 0, color: 'var(--accent-yellow)', textAlign: 'center' }}>{on ? '✓' : ''}</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}>{o.campaign}</span>
+                <span style={{ fontSize: '10px', opacity: .6, flexShrink: 0 }}>{o.canal} · {o.ftds}</span>
+              </button>
+            );
+          })}
+          {filtered.length > shown.length && <div style={{ padding: '7px 10px', fontSize: '10px', color: 'var(--text-muted)' }}>+{filtered.length - shown.length} — refine a busca</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   const [faixaSel, setFaixaSel] = React.useState([]);   // multi-select de faixas de FTD; [] = todas
   const [grupoSel, setGrupoSel] = React.useState([]);   // multi-select de GRUPO DE RISCO; [] = todos (filtro global da aba, igual faixas)
@@ -2553,6 +2603,8 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   const [tableDim, setTableDim] = React.useState('periodo'); // tabela de baixo: 'periodo' (por dia/semana) | 'canal' | 'faixa'
   const [cohortDays, setCohortDays] = React.useState(0); // 0 = calendário (M0 = fim do mês) | 30|60|90 = janela fixa de N dias corridos (só coortes fechadas)
   const [multBase, setMultBase] = React.useState('ftd'); // base dos multiplicadores da tabela: 'ftd' (padrão) | 'd1' (todos ÷ nível D1, sem D0)
+  const [campaign, setCampaign] = React.useState('');    // utm_ftd_campaign selecionada; '' = todas
+  const campQ = campaign ? `&campaign=${encodeURIComponent(campaign)}` : '';
   const cohort = cohortDays > 0;
   const faixaAll = faixaSel.length === 0;
   const faixaLabelTxt = faixaAll ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
@@ -2561,14 +2613,44 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   // Same-day puxado sob demanda (only=retfaixa&sameday=1) p/ a MESMA janela global; sem custo extra quando off.
   const [sdFetch, setSdFetch] = React.useState({ rows: null, loading: false, error: null });
   const winFrom = meta && meta.from, winTo = meta && meta.to;
+  // CAMPANHA: assinatura do canal p/ resetar a campanha quando o canal muda (evita tabela vazia
+  // por campanha de outro canal). Lista de campanhas p/ o seletor + escopo por canal selecionado.
+  const chSig = (chList_(chFilter) || []).join('|') + '|' + ((chFilter && chFilter.scope) || '');
+  React.useEffect(() => { setCampaign(''); }, [chSig]);
+  const [campList, setCampList] = React.useState({ rows: null, loading: false, error: null });
+  React.useEffect(() => {
+    if (!winFrom || !winTo || !ENDPOINT_URL) return;
+    setCampList(s => ({ ...s, loading: true, error: null }));
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${winFrom}&to=${winTo}&only=campaigns`)
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(j => { if (j.error) throw new Error(j.error); setCampList({ rows: j.campaigns || [], loading: false, error: null }); })
+      .catch(e => setCampList({ rows: null, loading: false, error: String(e.message || e) }));
+  }, [winFrom, winTo]);
+  const campOptions = React.useMemo(() => {
+    const all = campList.rows || [];
+    const list = chList_(chFilter);
+    if (list && list.length) { const set = {}; list.forEach(c => set[c] = 1); return all.filter(o => set[o.canal]); }
+    return all;
+  }, [campList.rows, chSig]);
+  // Modo default (não same-day / não coorte / não grupo): fetch próprio da tabela filtrado por campanha.
+  // Só dispara quando há campanha selecionada — sem campanha usa o prop `retencaoFaixa` compartilhado (custo zero).
+  const [campFetch, setCampFetch] = React.useState({ rows: null, loading: false, error: null });
+  React.useEffect(() => {
+    if (!campaign || cohort || sameday || grupoActive || !winFrom || !winTo || !ENDPOINT_URL) return;
+    setCampFetch(s => ({ ...s, loading: true, error: null }));
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${winFrom}&to=${winTo}&only=retfaixa${campQ}`)
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(j => { if (j.error) throw new Error(j.error); setCampFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
+      .catch(e => setCampFetch({ rows: null, loading: false, error: String(e.message || e) }));
+  }, [campaign, cohort, sameday, grupoActive, winFrom, winTo]);
   React.useEffect(() => {
     if (cohort || !sameday || !winFrom || !winTo || !ENDPOINT_URL) return;
     setSdFetch(s => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${winFrom}&to=${winTo}&only=retfaixa&sameday=1`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${winFrom}&to=${winTo}&only=retfaixa&sameday=1${campQ}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(j => { if (j.error) throw new Error(j.error); setSdFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
       .catch(e => setSdFetch({ rows: null, loading: false, error: String(e.message || e) }));
-  }, [cohort, sameday, winFrom, winTo]);
+  }, [cohort, sameday, winFrom, winTo, campaign]);
   // Cohort view: puxa o PRÓPRIO último ciclo de N dias FECHADO (independe do slicer global, igual ao Benchmark).
   // Busca [dataMax-(N+30), dataMax]; mostra só coortes com FTD <= dataMax-N (já fecharam os N dias) e troca o
   // M0 da tabela pela janela fixa de N dias (cntD{N}/valD{N}). N = 30|60|90 pelo toggle.
@@ -2579,11 +2661,11 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
     if (!cohort || !dataMax || !ENDPOINT_URL) return;
     const from = isoAddDays_(dataMax, -(cohortDays + 30)), to = dataMax;
     setCoFetch(s => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${from}&to=${to}&only=retfaixa${sameday ? '&sameday=1' : ''}`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${from}&to=${to}&only=retfaixa${sameday ? '&sameday=1' : ''}${campQ}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(j => { if (j.error) throw new Error(j.error); setCoFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
       .catch(e => setCoFetch({ rows: null, loading: false, error: String(e.message || e) }));
-  }, [cohortDays, dataMax, sameday]);
+  }, [cohortDays, dataMax, sameday, campaign]);
   // Linha de referência do MÊS-CALENDÁRIO ANTERIOR ao período selecionado no slicer (jun→mai, mai→abr).
   // Âncora = fim da janela global (winTo). Puxa o próprio período via only=retfaixa; respeita o toggle
   // same-day. M0 sempre calendário. Sem custo quando o backend já cacheou a janela.
@@ -2592,11 +2674,11 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   React.useEffect(() => {
     if (!ENDPOINT_URL || !pm) return;
     setPmFetch(s => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${pm.from}&to=${pm.to}&only=retfaixa${sameday ? '&sameday=1' : ''}${grupoActive ? '&byGrupo=1' : ''}`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${pm.from}&to=${pm.to}&only=retfaixa${sameday ? '&sameday=1' : ''}${grupoActive ? '&byGrupo=1' : ''}${campQ}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(j => { if (j.error) throw new Error(j.error); setPmFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
       .catch(e => setPmFetch({ rows: null, loading: false, error: String(e.message || e) }));
-  }, [pm, sameday, grupoActive]);
+  }, [pm, sameday, grupoActive, campaign]);
   // Dado COM grupo (&byGrupo=1) — usado pela tabela "Ver por = Grupo" E pelo FILTRO de grupo do topo (quando ligado,
   // a aba TODA passa a usar essa base). Fetch próprio no mesmo window/sameday da fonte atual (coorte usa a janela da coorte).
   const grNeed = grupoActive || tableDim === 'grupo';
@@ -2606,11 +2688,11 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   React.useEffect(() => {
     if (!grNeed || !ENDPOINT_URL || !grFrom || !grTo) return;
     setGrFetch(s => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${grFrom}&to=${grTo}&only=retfaixa${sameday ? '&sameday=1' : ''}&byGrupo=1`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${grFrom}&to=${grTo}&only=retfaixa${sameday ? '&sameday=1' : ''}&byGrupo=1${campQ}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(j => { if (j.error) throw new Error(j.error); setGrFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
       .catch(e => setGrFetch({ rows: null, loading: false, error: String(e.message || e) }));
-  }, [grNeed, grFrom, grTo, sameday]);
+  }, [grNeed, grFrom, grTo, sameday, campaign]);
   // Fonte: coorte (fetch próprio · só coortes fechadas · M0 = janela de 30 dias) · same-day · padrão (slicer global).
   let srcRF;
   if (cohort) {
@@ -2618,7 +2700,7 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
       .filter(r => completeBefore && r.date <= completeBefore)                             // só coortes que já fecharam os N dias
       .map(r => ({ ...r, cntM0: r['cntD' + cohortDays], valM0: r['valD' + cohortDays] })); // M0 da tabela = janela fixa de N dias
   } else {
-    srcRF = sameday ? (sdFetch.rows || []) : retencaoFaixa;
+    srcRF = sameday ? (sdFetch.rows || []) : (campaign ? (campFetch.rows || []) : retencaoFaixa);
   }
   // Fonte COM grupo (byGrupo), no MESMO modo (coorte remapeia M0 como o srcRF).
   const srcRFGrupo = cohort
@@ -2628,7 +2710,7 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   const srcE = grupoActive ? srcRFGrupo : srcRF;
   // Coluna "M0 Esperado": curva G do escopo (Total/Growth; canal específico → null). Same-day usa
   // curva própria (m0Curve_ escolhe). OFF só na Coorte 30d (janela fixa de 30d ≠ mês-calendário → runway não se aplica).
-  const gCurve = !cohort ? m0Curve_(chFilter, sameday) : null;
+  const gCurve = (!cohort && !campaign) ? m0Curve_(chFilter, sameday) : null;
   const data = aggRetFaixaBench_(srcE, chFilter, faixaSel, mode, gran, gCurve, dataMax, null, grupoSel);
   const t = data.totals || {};
   // Tabela de baixo: reagrupada por canal/faixa/grupo quando "Ver por" ≠ "período". Grupo sempre usa a base byGrupo.
@@ -2656,7 +2738,7 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
       bpScope = { m0: h.m0tt, ftdAmount: h.ftdAmountTt, ftd: h.ftdTt };
     }
   }
-  const showBp = faixaAll && bpScope && !sameday && !cohort;   // sem figura de plano p/ same-day nem janela de 30d nem faixa filtrada → farol off
+  const showBp = faixaAll && bpScope && !sameday && !cohort && !campaign;   // sem figura de plano p/ same-day, 30d, faixa OU campanha filtrada → farol off
   const bpMultM0F  = (showBp && bpScope.ftdAmount > 0) ? bpScope.m0 / bpScope.ftdAmount : null;
   const bpFtdMedio = (showBp && bpScope.ftd > 0) ? bpScope.ftdAmount / bpScope.ftd : null;
   const pb = (act, bpv) => (bpv && act != null) ? act / bpv : null;
@@ -2669,8 +2751,9 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   ];
   const chLabel = chLabel_(chFilter);
   const coSuffix = cohort ? ` · coorte ${cohortDays}d (FTD até ${completeBefore ? completeBefore.slice(8, 10) + '/' + completeBefore.slice(5, 7) : '—'})` : '';
-  const loadingRF = (cohort && coFetch.loading) || (sameday && sdFetch.loading) || (grNeed && grFetch.loading);
-  const errorRF = (cohort && coFetch.error) || (sameday && sdFetch.error) || (grNeed && grFetch.error);
+  const campDefault = campaign && !cohort && !sameday && !grupoActive;   // campanha ativa no modo default (usa campFetch)
+  const loadingRF = (cohort && coFetch.loading) || (sameday && sdFetch.loading) || (grNeed && grFetch.loading) || (campDefault && campFetch.loading);
+  const errorRF = (cohort && coFetch.error) || (sameday && sdFetch.error) || (grNeed && grFetch.error) || (campDefault && campFetch.error);
   // Opções do multiselect de grupo: os grupos REAIS do dado byGrupo (quando já carregou), senão o default GRUPO_LIST.
   const grupoOptions = (grFetch.rows && grFetch.rows.length)
     ? Array.from(new Set(grFetch.rows.map(r => r.grupo != null ? String(r.grupo) : 'sem grupo'))).sort()
@@ -2716,17 +2799,19 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
             <button className={`preset-btn ${!cohort ? 'active' : ''}`} onClick={() => setCohortDays(0)} title="M0 = depósito do dia do FTD até o FIM do mês-calendário (visão atual; coortes recentes ficam curtas).">Calendário</button>
             <button className={`preset-btn ${cohortDays === 30 ? 'active' : ''}`} onClick={() => setCohortDays(30)} title="M0 = janela FIXA de 30 dias corridos do FTD; só coortes que já fecharam os 30 dias (a mais recente ~30 dias atrás). Puxa o período sozinho, independe do slicer do topo.">Coorte 30d</button>
           </div>
+          <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>Campanha</label>
+          <CampaignSelect options={campOptions} value={campaign} onChange={setCampaign} loading={campList.loading} error={campList.error} />
         </div>
       <div className="hero-grid">
         {heroes.map((m, i) => <Hero key={i} metric={m} />)}
       </div>
       <div className="support">
-        <div className="support-title">Mês anterior · {monthLabelPt_(pm.from)} · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''}{pmFetch.loading ? ' · carregando…' : ''}{pmFetch.error ? ' · erro ao carregar' : ''}</div>
+        <div className="support-title">Mês anterior · {monthLabelPt_(pm.from)} · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''}{campaign ? ' · campanha ' + campaign : ''}{pmFetch.loading ? ' · carregando…' : ''}{pmFetch.error ? ' · erro ao carregar' : ''}</div>
         <RetFaixaPrevRow row={pmRow} label={monthLabelPt_(pm.from)} loading={pmFetch.loading} error={pmFetch.error} base={multBase} />
         <div className="ch-note">Mês-calendário <strong>anterior ao período selecionado</strong> no slicer ({monthLabelPt_(pm.from)}), agregado num único registro, no mesmo recorte de canal/faixa/modo. O M0 é sempre mês-calendário (não muda com o toggle Calendário/Coorte).</div>
       </div>
       <div className="support">
-        <div className="support-title">Safra {tableDim === 'periodo' ? 'por ' + (gran === 'week' ? 'Semana' : 'Dia') : 'por ' + (tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : 'Grupo de risco')} · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''}{coSuffix}{loadingRF ? ' · carregando…' : ''}{errorRF ? ' · erro ao carregar' : ''}</div>
+        <div className="support-title">Safra {tableDim === 'periodo' ? 'por ' + (gran === 'week' ? 'Semana' : 'Dia') : 'por ' + (tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : 'Grupo de risco')} · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''}{campaign ? ' · campanha ' + campaign : ''}{coSuffix}{loadingRF ? ' · carregando…' : ''}{errorRF ? ' · erro ao carregar' : ''}</div>
         <RetFaixaTable data={tableData} dateLabel={tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : tableDim === 'grupo' ? 'Grupo' : (gran === 'week' ? 'Semana' : 'Data FTD')} m0Label={cohort ? cohortDays + 'd' : 'M0'} base={multBase} />
       </div>
       <div className="support">
