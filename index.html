@@ -187,6 +187,15 @@
   .tab-header .subtitle {
     color: var(--text-muted); font-size: 13px; margin-top: 6px;
   }
+  /* Régua de filtros da seção "Retenções por faixa de FTD": congela abaixo da
+     barra de abas (top:126 + ~46 de altura das abas) ao rolar a seção. */
+  .slicer-ruler {
+    position: sticky; top: 174px; z-index: 8;
+    background: var(--bg); flex-wrap: wrap;
+    margin: 0 -32px 28px; padding: 12px 32px;
+    border-bottom: 1px solid var(--border);
+    box-shadow: 0 6px 14px -10px rgba(0, 0, 0, .7);
+  }
   /* HERO KPI GRID — 3 grandes cards */
   .hero-grid {
     display: grid; grid-template-columns: repeat(3, 1fr);
@@ -390,6 +399,8 @@
     .topbar { position: static; padding: 12px 18px; }
     .slicer { position: static; top: auto; }
     .tabs { position: sticky; top: 0; padding: 0 18px; }
+    /* abas agora fixam no topo:0 → régua encosta logo abaixo delas */
+    .slicer-ruler { top: 45px; margin: 0 -18px 22px; padding: 12px 18px; }
     .hero .value { font-size: 32px; }
   }
   @media (max-width: 600px) {
@@ -399,6 +410,7 @@
     .controls { gap: 6px; }
     .slicer { padding: 12px 16px; gap: 10px; }
     .tabs { padding: 0 12px; }
+    .slicer-ruler { top: 42px; margin: 0 -16px 18px; padding: 10px 16px; }
     .tab-btn { padding: 13px 14px; }
     main { padding: 22px 16px 44px; }
     .tab-header { margin-bottom: 22px; }
@@ -2671,7 +2683,8 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
           <h1>Retenções por faixa de FTD</h1>
           <div className="subtitle">Safra de FTD por dia (só Apostou) — ticket de FTD, depósito D0, multiplicadores D0–M0/FTD e retenção D1/W1/M0; filtrável por faixa e canal</div>
         </div>
-        <div className="slicer-group">
+      </div>
+      <div className="slicer-group slicer-ruler">
           <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Faixa FTD</label>
           <ChannelMultiSelect options={FAIXA_LIST} selected={faixaSel} onChange={setFaixaSel} labelOf={fxLabel_} allLabel="Todas" countNoun="faixas" />
           <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>Grupo de risco</label>
@@ -2711,7 +2724,6 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
             <button className={`preset-btn ${multBase === 'd1' ? 'active' : ''}`} onClick={() => setMultBase('d1')} title="Multiplicadores = depósito acumulado ÷ NÍVEL D1 (D0 + dep do dia 1). Tira o D0 e usa o D1 como base (=1,00x) — mostra o quanto a coorte cresce A PARTIR do D1.">D1</button>
           </div>
         </div>
-      </div>
       <div className="hero-grid">
         {heroes.map((m, i) => <Hero key={i} metric={m} />)}
       </div>
