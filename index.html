@@ -2715,13 +2715,6 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
           <div className="slicer-presets">
             <button className={`preset-btn ${!cohort ? 'active' : ''}`} onClick={() => setCohortDays(0)} title="M0 = depósito do dia do FTD até o FIM do mês-calendário (visão atual; coortes recentes ficam curtas).">Calendário</button>
             <button className={`preset-btn ${cohortDays === 30 ? 'active' : ''}`} onClick={() => setCohortDays(30)} title="M0 = janela FIXA de 30 dias corridos do FTD; só coortes que já fecharam os 30 dias (a mais recente ~30 dias atrás). Puxa o período sozinho, independe do slicer do topo.">Coorte 30d</button>
-            <button className={`preset-btn ${cohortDays === 60 ? 'active' : ''}`} onClick={() => setCohortDays(60)} title="Mesma ideia, janela FIXA de 60 dias corridos do FTD; só coortes que já fecharam os 60 dias (a mais recente ~60 dias atrás).">60d</button>
-            <button className={`preset-btn ${cohortDays === 90 ? 'active' : ''}`} onClick={() => setCohortDays(90)} title="Mesma ideia, janela FIXA de 90 dias corridos do FTD; só coortes que já fecharam os 90 dias (a mais recente ~90 dias atrás).">90d</button>
-          </div>
-          <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>Mult. sobre</label>
-          <div className="slicer-presets">
-            <button className={`preset-btn ${multBase === 'ftd' ? 'active' : ''}`} onClick={() => setMultBase('ftd')} title="Multiplicadores = depósito acumulado (incl. D0) ÷ FTD (padrão). Começa no D0.">FTD</button>
-            <button className={`preset-btn ${multBase === 'd1' ? 'active' : ''}`} onClick={() => setMultBase('d1')} title="Multiplicadores = depósito acumulado ÷ NÍVEL D1 (D0 + dep do dia 1). Tira o D0 e usa o D1 como base (=1,00x) — mostra o quanto a coorte cresce A PARTIR do D1.">D1</button>
           </div>
         </div>
       <div className="hero-grid">
