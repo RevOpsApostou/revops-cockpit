@@ -2759,7 +2759,7 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
       bpScope = { m0: h.m0tt, ftdAmount: h.ftdAmountTt, ftd: h.ftdTt };
     }
   }
-  const showBp = faixaAll && bpScope && !sameday && !cohort && !campaign;   // sem figura de plano p/ same-day, 30d, faixa OU campanha filtrada → farol off
+  const showBp = faixaAll && bpScope && !sameday && !cohort && !campActive;   // sem figura de plano p/ same-day, 30d, faixa OU campanha filtrada → farol off
   const bpMultM0F  = (showBp && bpScope.ftdAmount > 0) ? bpScope.m0 / bpScope.ftdAmount : null;
   const bpFtdMedio = (showBp && bpScope.ftd > 0) ? bpScope.ftdAmount / bpScope.ftd : null;
   const pb = (act, bpv) => (bpv && act != null) ? act / bpv : null;
