@@ -2715,17 +2715,18 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
       .catch(e => setGrFetch({ rows: null, loading: false, error: String(e.message || e) }));
   }, [grNeed, grFrom, grTo, sameday, campQ]);
   // Dado COM campanha (&byCampaign=1) — usado só pela tabela "Ver por = Campanha". Mesma janela/coorte da fonte;
-  // respeita o filtro de campanha (campQ) e same-day. Payload maior (linha por campanha) → opt-in por tableDim.
+  // respeita o filtro de campanha (campQ) e same-day. Quando o filtro de GRUPO está ligado, pede TAMBÉM &byGrupo=1
+  // (senão as linhas vêm sem grupo e o filtro de grupo zera a tabela). Payload maior (linha por campanha) → opt-in.
   const campNeed = tableDim === 'campanha';
   const [campDimFetch, setCampDimFetch] = React.useState({ rows: null, loading: false, error: null });
   React.useEffect(() => {
     if (!campNeed || !ENDPOINT_URL || !grFrom || !grTo) return;
     setCampDimFetch(s => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${grFrom}&to=${grTo}&only=retfaixa${sameday ? '&sameday=1' : ''}&byCampaign=1${campQ}`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${grFrom}&to=${grTo}&only=retfaixa${sameday ? '&sameday=1' : ''}&byCampaign=1${grupoActive ? '&byGrupo=1' : ''}${campQ}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(j => { if (j.error) throw new Error(j.error); setCampDimFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
       .catch(e => setCampDimFetch({ rows: null, loading: false, error: String(e.message || e) }));
-  }, [campNeed, grFrom, grTo, sameday, campQ]);
+  }, [campNeed, grFrom, grTo, sameday, grupoActive, campQ]);
   const campDimSrc = cohort
     ? (campDimFetch.rows || []).filter(r => completeBefore && r.date <= completeBefore).map(r => ({ ...r, cntM0: r['cntD' + cohortDays], valM0: r['valD' + cohortDays] }))
     : (campDimFetch.rows || []);
