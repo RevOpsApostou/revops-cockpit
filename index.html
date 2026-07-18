@@ -3817,6 +3817,172 @@ function TabMonthlyClose({ M, farol, monthlyClose, range, isLive, ytd }) {
   );
 }
 
+// ===== Investimento por Campanha — canal × campanha × grupo de risco (aba de otimização) =====
+// Fetch próprio (only=invcamp). Junta spend (performance) à coorte de FTD; investimento RATEADO ao grupo
+// por share de FTD → CPA fica igual entre grupos (matemático); a diferença aparece em ROAS/multiplicadores.
+// Multiplicadores/ROAS são re-agregados no CLIENTE somando os blocos crus (dep_d0, val_d1/14/30, ftd$, ngr)
+// e dividindo — nunca média de razão — ao empilhar grupo→campanha→canal.
+function InvCampanhaTab({ range, chFilter }) {
+  const [rows, setRows] = React.useState(null);
+  const [loading, setLoading] = React.useState(!!ENDPOINT_URL);
+  const [error, setError] = React.useState(null);
+  const [expanded, setExpanded] = React.useState({});
+  const [sortKey, setSortKey] = React.useState('invest');
+  const [sortDir, setSortDir] = React.useState('desc');
+
+  React.useEffect(() => {
+    if (!ENDPOINT_URL || !range) { setLoading(false); return; }
+    let live = true; setLoading(true); setError(null);
+    fetch(`${ENDPOINT_URL}?${authParam_()}&only=invcamp&from=${range.from}&to=${range.to}`)
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(j => { if (!live) return; if (j.error) throw new Error(j.error); setRows(j.invCampanha || []); setLoading(false); })
+      .catch(e => { if (live) { setError(String(e.message || e)); setLoading(false); } });
+    return () => { live = false; };
+  }, [range && range.from, range && range.to]);
+
+  // Blocos crus → métricas derivadas. Só computa razão com denominador > 0.
+  const blank = () => ({ ftds: 0, invest: 0, ftdAmount: 0, depD0: 0, valD1: 0, valD14: 0, valD30: 0, ngrM0: 0 });
+  const addInto = (a, r) => { a.ftds += r.ftds || 0; a.invest += r.invest || 0; a.ftdAmount += r.ftdAmount || 0; a.depD0 += r.depD0 || 0; a.valD1 += r.valD1 || 0; a.valD14 += r.valD14 || 0; a.valD30 += r.valD30 || 0; a.ngrM0 += r.ngrM0 || 0; return a; };
+  const derive = (a) => ({
+    ...a,
+    cpa: (a.invest > 0 && a.ftds > 0) ? a.invest / a.ftds : null,
+    roasFtd: a.invest > 0 ? a.ftdAmount / a.invest : null,
+    roasGgr: a.invest > 0 ? a.ngrM0 / a.invest : null,
+    multD1: a.depD0 > 0 ? (a.depD0 + a.valD1) / a.depD0 : null,
+    multD14: a.depD0 > 0 ? (a.depD0 + a.valD14) / a.depD0 : null,
+    multD30: a.depD0 > 0 ? (a.depD0 + a.valD30) / a.depD0 : null,
+  });
+
+  if (!ENDPOINT_URL) return (<div className="tab-header"><div><h1>Investimento por Campanha</h1><div className="subtitle">Disponível só no modo live (BigQuery).</div></div></div>);
+
+  const chSel = chList_(chFilter);
+  const channelPass = (canal) => chSel.length ? chSel.includes(canal) : (chFilter.scope === 'growth' ? isGrowthCh_(canal) : true);
+  const src = (rows || []).filter(r => channelPass(r.canal));
+
+  // canal → Map(campanha → { label, groups[], agg })
+  const byCanal = new Map();
+  src.forEach(r => {
+    if (!byCanal.has(r.canal)) byCanal.set(r.canal, new Map());
+    const camps = byCanal.get(r.canal);
+    const ck = r.campanha || '(sem campanha)';
+    if (!camps.has(ck)) camps.set(ck, { key: ck, label: r.campanhaLabel || ck, groups: [], agg: blank() });
+    const c = camps.get(ck);
+    c.groups.push(r); addInto(c.agg, r);
+  });
+
+  const SORTS = { invest: r => r.invest, ftds: r => r.ftds, cpa: r => r.cpa, depD0: r => r.depD0, roasFtd: r => r.roasFtd, roasGgr: r => r.roasGgr, multD1: r => r.multD1, multD14: r => r.multD14, multD30: r => r.multD30 };
+  const cmp = (a, b) => { const acc = SORTS[sortKey] || SORTS.invest, d = sortDir === 'asc' ? 1 : -1; let va = acc(a), vb = acc(b); va = (va == null || isNaN(va)) ? -Infinity : va; vb = (vb == null || isNaN(vb)) ? -Infinity : vb; return va < vb ? -d : va > vb ? d : 0; };
+
+  // canais montados + subtotais; ordena canais por investimento; total geral.
+  const canais = Array.from(byCanal.entries()).map(([canal, camps]) => {
+    const campaigns = Array.from(camps.values()).map(c => ({ ...c, d: derive(c.agg) }));
+    const sub = blank(); campaigns.forEach(c => addInto(sub, c.agg));
+    campaigns.sort((a, b) => cmp(a.d, b.d));
+    return { canal, campaigns, sub: derive(sub) };
+  }).sort((a, b) => b.sub.invest - a.sub.invest);
+  const grand = blank(); canais.forEach(c => addInto(grand, c.sub)); const gd = derive(grand);
+
+  const onSort = (k) => { if (sortKey === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortKey(k); setSortDir('desc'); } };
+  const arrow = (k) => sortKey === k ? (sortDir === 'desc' ? ' ▾' : ' ▴') : '';
+  const Th = (k, label, title) => <th key={k} onClick={() => onSort(k)} title={(title ? title + ' · ' : '') + 'clique p/ ordenar'} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', textAlign: 'right' }}>{label}{arrow(k)}</th>;
+  const roasStyle = (v) => ({ textAlign: 'right', color: v == null ? 'var(--text-muted)' : (v < 0 ? 'var(--accent-red, #ef4444)' : (v >= 1 ? 'var(--accent-green, #22c55e)' : 'inherit')), fontWeight: v != null && v >= 1 ? 600 : 400 });
+  const num = (v, f) => <td style={{ textAlign: 'right' }}>{f(v)}</td>;
+
+  // células de métrica (reusadas por campanha/grupo/subtotal/total)
+  const metricCells = (d, key) => [
+    <td key="inv" style={{ textAlign: 'right', fontWeight: 600 }}>{fmtBRL(d.invest)}</td>,
+    <td key="ftd" style={{ textAlign: 'right' }}>{fmtQty(d.ftds)}</td>,
+    <td key="cpa" style={{ textAlign: 'right' }}>{d.cpa == null ? '—' : fmtBRL(d.cpa)}</td>,
+    <td key="d0" style={{ textAlign: 'right' }}>{fmtBRL(d.depD0)}</td>,
+    <td key="rf" style={roasStyle(d.roasFtd)}>{fmtMultiple(d.roasFtd)}</td>,
+    <td key="rg" style={roasStyle(d.roasGgr)}>{fmtMultiple(d.roasGgr)}</td>,
+    <td key="m1" style={{ textAlign: 'right' }}>{fmtMultiple(d.multD1)}</td>,
+    <td key="m14" style={{ textAlign: 'right' }}>{fmtMultiple(d.multD14)}</td>,
+    <td key="m30" style={{ textAlign: 'right' }}>{fmtMultiple(d.multD30)}</td>,
+  ];
+
+  const chLabel = chLabel_(chFilter);
+  const nCamp = canais.reduce((n, c) => n + c.campaigns.length, 0);
+
+  return (
+    <React.Fragment>
+      <div className="tab-header">
+        <div>
+          <h1>Investimento por Campanha</h1>
+          <div className="subtitle">Investimento, CPA, ROAS e multiplicadores por campanha e grupo de risco — para otimização de verba</div>
+        </div>
+      </div>
+      <div className="hero-grid">
+        <Hero metric={{ label: 'Investimento', act: gd.invest, m1: null, pctBp: null, fmt: 'brl' }} />
+        <Hero metric={{ label: 'FTDs', act: gd.ftds, m1: null, pctBp: null, fmt: 'qty' }} />
+        <Hero metric={{ label: 'CPA FTD', act: gd.cpa, m1: null, pctBp: null, fmt: 'brl' }} />
+        <Hero metric={{ label: 'ROAS FTD', act: gd.roasFtd, m1: null, pctBp: null, fmt: 'multiple' }} />
+      </div>
+      <div className="support">
+        <div className="support-title">Canal × Campanha × Grupo de Risco · {chLabel}</div>
+        {loading && <div className="ch-note">Carregando do BigQuery…</div>}
+        {error && <div className="ch-note" style={{ color: 'var(--accent-red, #ef4444)' }}>Erro: {error}</div>}
+        {!loading && !error && !nCamp && <div className="ch-note">Sem campanhas com investimento na janela / filtro atual.</div>}
+        {!loading && !error && !!nCamp && (
+          <div className="table-scroll tall"><table className="ch-table">
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left', whiteSpace: 'nowrap' }}>Campanha</th>
+                {Th('invest', 'Investimento', 'Spend rateado (Meta já com imposto ×1,1383)')}
+                {Th('ftds', 'FTDs')}
+                {Th('cpa', 'CPA FTD', 'Investimento ÷ FTDs')}
+                {Th('depD0', 'Dep D0', 'Depósito no dia do FTD')}
+                {Th('roasFtd', 'ROAS FTD', 'FTD$ ÷ investimento')}
+                {Th('roasGgr', 'ROAS GGR', 'NGR do mês do FTD ÷ investimento')}
+                {Th('multD1', 'Mult D1', '(Dep D0 + dep dia 1) ÷ Dep D0')}
+                {Th('multD14', 'Mult D14', '(Dep D0 + dep dias 1–14) ÷ Dep D0')}
+                {Th('multD30', 'Mult D30', '(Dep D0 + dep dias 1–30) ÷ Dep D0 · imaturo p/ coortes < 30 dias')}
+              </tr>
+            </thead>
+            {canais.map(c => (
+              <tbody key={c.canal}>
+                <tr style={{ background: 'var(--surface-2)', fontWeight: 700 }}>
+                  <td style={{ textAlign: 'left' }}>{c.canal}</td>
+                  {metricCells(c.sub)}
+                </tr>
+                {c.campaigns.map(camp => {
+                  const isOpen = !!expanded[c.canal + '|' + camp.key];
+                  const multiGrupo = camp.groups.length > 1;
+                  return (
+                    <React.Fragment key={camp.key}>
+                      <tr onClick={() => multiGrupo && setExpanded(e => ({ ...e, [c.canal + '|' + camp.key]: !isOpen }))} style={{ cursor: multiGrupo ? 'pointer' : 'default' }}>
+                        <td className="ch-name" style={{ textAlign: 'left' }} title={camp.key}>
+                          {multiGrupo ? (isOpen ? '▾ ' : '▸ ') : '   '}{camp.label}
+                        </td>
+                        {metricCells(camp.d)}
+                      </tr>
+                      {isOpen && camp.groups.slice().map(g => derive(g)).sort(cmp).map((g, i) => (
+                        <tr key={i} style={{ fontSize: '0.92em', color: 'var(--text-muted)' }}>
+                          <td style={{ textAlign: 'left', paddingLeft: 28 }}>grupo {g.grupo}</td>
+                          {metricCells(g)}
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            ))}
+            <tfoot>
+              <tr style={{ fontWeight: 700 }}><td style={{ textAlign: 'left' }}>Total</td>{metricCells(gd)}</tr>
+            </tfoot>
+          </table></div>
+        )}
+        <div className="ch-note">
+          Grão <strong>canal × campanha</strong>; clique numa campanha com múltiplos grupos p/ abrir a quebra por <strong>grupo de risco</strong>.
+          <strong> Investimento</strong> = spend da performance (Meta com imposto ×1,1383) casado à coorte de FTD pela campanha; no nível de grupo é <strong>rateado por share de FTD</strong> (premissa — por isso o CPA fica igual entre grupos; a diferença real aparece em <strong>ROAS e multiplicadores</strong>).
+          <strong> Mult DN</strong> = (Dep D0 + depósitos dias 1–N) ÷ Dep D0. <strong>Mult D14/D30 ficam imaturos para coortes recentes</strong> (a safra ainda não viveu N dias) — leia como piso, não teto.
+          Campanhas com spend e <strong>sem FTD atribuído</strong> (ex.: remarketing) aparecem como grupo <em>(sem FTD atribuído)</em>. Programática não entra (sem spend por campanha).
+        </div>
+      </div>
+    </React.Fragment>
+  );
+}
+
 const TABS = [
   { id: 'farol', label: 'Farol', component: TabFarol },
   { id: 'monthlyclose', label: 'Monthly Close', component: TabMonthlyClose },
@@ -3825,6 +3991,7 @@ const TABS = [
   { id: 'safras', label: 'Safras Diárias', component: TabSafras },
   { id: 'retencao', label: 'Retenções', component: TabRetencao },
   { id: 'retfaixa', label: 'Multiplicadores e Retenção', component: TabRetencaoFaixa },
+  { id: 'invcampanha', label: 'Investimento p/ Campanha', component: InvCampanhaTab },
   { id: 'ggr', label: 'GGR', component: TabGgr },
   { id: 'depositos', label: 'Depósitos', component: TabDepositos },
   { id: 'apostas', label: 'Turnover', component: TabApostas },
