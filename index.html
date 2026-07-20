@@ -3901,7 +3901,18 @@ async function exportFarolYtd_({ chFilter, escopo, onProgress }) {
         M: p.metrics, componentsByChannel: p.componentsByChannel, retentionChannels: p.retentionChannels,
         depM0Channels: p.depM0Channels, bp: p.bp, ggrSafra: p.ggrSafra, channels: p.channels, ggrChannels: p.ggrChannels,
       }, chFilter, true);
-      blocks.push({ mo, dispM, farol, monthlyClose: p.monthlyClose || null, channels: p.channels || [] });
+      // GGR e Turnover por SAFRA (idade de coorte) — mesma lógica dos depósitos: soma o bucket ggrSafra
+      // no escopo do canal. turnover só existe no payload a partir do backend v34 (senão fica em branco).
+      const bucketSum = (bucket, key) => {
+        const arr = filterChannelList_((p.ggrSafra && p.ggrSafra[bucket]) || [], chFilter);
+        if (!arr.length || !arr.some(c => c[key] != null)) return null;
+        return arr.reduce((a, c) => a + (c[key] || 0), 0);
+      };
+      const safra = {
+        ggr:      { m0: bucketSum('m0', 'ggr'),      m1: bucketSum('m1', 'ggr'),      m2: bucketSum('m2', 'ggr'),      m3plus: bucketSum('m3plus', 'ggr') },
+        turnover: { m0: bucketSum('m0', 'turnover'), m1: bucketSum('m1', 'turnover'), m2: bucketSum('m2', 'turnover'), m3plus: bucketSum('m3plus', 'turnover') },
+      };
+      blocks.push({ mo, dispM, farol, monthlyClose: p.monthlyClose || null, channels: p.channels || [], safra });
     } catch (e) {
       blocks.push({ mo, error: String(e.message || e) });
     }
@@ -3957,6 +3968,16 @@ async function exportFarolYtd_({ chFilter, escopo, onProgress }) {
       if (row.fmt) { mFmts[`${r},3`] = numFmt(row.fmt); mFmts[`${r},4`] = numFmt(row.fmt); }
       mFmts[`${r},5`] = PCT;
     });
+    // GGR e Turnover por SAFRA (idade de coorte M0/M+1/M+2/M3+) — sem BP (o plano não separa por safra).
+    const safraRows = (title, obj) => {
+      if (!obj) return;
+      [['M0', 'm0'], ['M+1', 'm1'], ['M+2', 'm2'], ['M3+', 'm3plus']].forEach(([lbl, k]) => {
+        const r = mAoa.length;
+        mAoa.push([title, b.mo.label, lbl, obj[k] != null ? obj[k] : null, null, null]);
+        mFmts[`${r},3`] = numFmt('brl');
+      });
+    };
+    if (b.safra) { safraRows('GGR por safra', b.safra.ggr); safraRows('Turnover por safra', b.safra.turnover); }
   });
 
   const wb = XLSX.utils.book_new();
