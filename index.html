@@ -3850,88 +3850,126 @@ function buildFarolExportGroups_(MM, f, monthlyClose, channels, chFilter, range,
 // Exporta Farol + Monthly Close num .xlsx (2 abas). Farol = a tela + splits Growth/Not-Growth e coortes
 // absolutas (buildFarolExportGroups_); Monthly Close reusa buildMonthlyCloseRows_ (1:1 com a aba).
 // Valores crus + número formatado por tipo (R$, %, multiplicador, qtd) via cell.z.
-function exportFarolMonthlyClose_({ M, farol, monthlyClose, channels, chFilter, range, ytd, isLive, escopo }) {
-  if (typeof XLSX === 'undefined') { alert('Biblioteca de Excel ainda carregando. Aguarde 1s e tente de novo.'); return; }
-  const MM = M || {}, f = farol || {}, useYtd = !!ytd;
-  const numFmt = (fmt) => fmt === 'brl' ? 'R$ #,##0.00'
-    : fmt === 'pct' ? '0.0%'
-    : fmt === 'multiple' ? '0.00"x"'
-    : fmt === 'qty' ? '#,##0'
-    : '#,##0.00';
-  const PCT = '0.0%';
-  const periodo = (range && range.from) ? `${fmtBR_(range.from)} a ${fmtBR_(range.to)}` : '';
-  const fonte = isLive ? 'BigQuery (live)' : 'Mock (BQ pendente)';
-  // Atingimento vs BP idêntico ao card (Hero): maior=melhor → act/bp; custo (lowerBetter) → bp/act.
-  const attain = (m) => {
-    if (!m || m.act == null || m.bp == null || m.bp === 0) return null;
-    return m.lowerBetter ? m.bp / m.act : m.act / m.bp;
-  };
-  const applyFmts = (ws, fmts) => {
-    Object.keys(fmts).forEach(k => {
-      const [r, c] = k.split(',').map(Number);
-      const cell = ws[XLSX.utils.encode_cell({ r, c })];
-      if (cell && typeof cell.v === 'number') { cell.t = 'n'; cell.z = fmts[k]; }
-    });
-  };
+const MONTH_ABBR_ = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 
-  // ---------- Aba 1: Farol (grupos → uma linha por KPI) ----------
+// Export SEMPRE YTD, MÊS A MÊS. Busca cada mês (abr→ontem) no backend, deriva as métricas com a MESMA
+// fonte do App (derivePayloadMetrics_) e monta Farol + Monthly Close em formato LONGO, com a coluna
+// "Mês/Ano" entre Grupo/Seção e Métrica. Ignora o slicer de data; respeita o escopo de canal (chFilter).
+// Reusa buildFarolExportGroups_ (splits Growth/Not-Growth + coortes) e buildMonthlyCloseRows_ por mês.
+// onProgress(feito, total) opcional p/ o botão mostrar o andamento. Assíncrona (N fetches, sequenciais).
+async function exportFarolYtd_({ chFilter, escopo, onProgress }) {
+  if (typeof XLSX === 'undefined') { alert('Biblioteca de Excel ainda carregando. Aguarde 1s e tente de novo.'); return; }
+  if (!ENDPOINT_URL) { alert('Sem endpoint (modo mock) — o export YTD precisa do backend.'); return; }
+  const numFmt = (fmt) => fmt === 'brl' ? 'R$ #,##0.00'
+    : fmt === 'pct' ? '0.0%' : fmt === 'multiple' ? '0.00"x"' : fmt === 'qty' ? '#,##0' : '#,##0.00';
+  const PCT = '0.0%';
+  const attain = (m) => (!m || m.act == null || m.bp == null || m.bp === 0) ? null : (m.lowerBetter ? m.bp / m.act : m.act / m.bp);
+  const applyFmts = (ws, fmts) => Object.keys(fmts).forEach(k => {
+    const [r, c] = k.split(',').map(Number);
+    const cell = ws[XLSX.utils.encode_cell({ r, c })];
+    if (cell && typeof cell.v === 'number') { cell.t = 'n'; cell.z = fmts[k]; }
+  });
+
+  // Lista de meses do YTD (abr do ano fiscal → mês de ontem), uma janela por mês-calendário.
+  const startISO = ytdStartISO_(), endISO = todayISO_();
+  const [sy, sm] = startISO.split('-').map(Number);
+  const [ey, em] = endISO.split('-').map(Number);
+  const months = [];
+  let y = sy, m = sm;
+  while (y < ey || (y === ey && m <= em)) {
+    const mm = String(m).padStart(2, '0');
+    const lastDay = new Date(y, m, 0).getDate();          // m 1-based → último dia do mês m
+    let to = `${y}-${mm}-${String(lastDay).padStart(2, '0')}`;
+    if (to > endISO) to = endISO;                          // mês corrente: até ontem
+    months.push({ y, m, from: `${y}-${mm}-01`, to, label: `${MONTH_ABBR_[m - 1]}/${y}` });
+    m++; if (m > 12) { m = 1; y++; }
+  }
+
+  // Fetch sequencial (não estoura a concorrência do Apps Script). Cada mês → dispM/farol via fonte única.
+  const auth = authParam_();
+  if (onProgress) onProgress(0, months.length);
+  const blocks = [];
+  for (let i = 0; i < months.length; i++) {
+    const mo = months[i];
+    try {
+      const r = await fetch(`${ENDPOINT_URL}?${auth}&from=${mo.from}&to=${mo.to}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const p = await r.json();
+      if (p.error === 'unauthorized') { alert('Sessão expirada — faça login de novo no cockpit e tente outra vez.'); return; }
+      if (p.error) throw new Error(p.error);
+      const { dispM, farol } = derivePayloadMetrics_({
+        M: p.metrics, componentsByChannel: p.componentsByChannel, retentionChannels: p.retentionChannels,
+        depM0Channels: p.depM0Channels, bp: p.bp, ggrSafra: p.ggrSafra, channels: p.channels, ggrChannels: p.ggrChannels,
+      }, chFilter, true);
+      blocks.push({ mo, dispM, farol, monthlyClose: p.monthlyClose || null, channels: p.channels || [] });
+    } catch (e) {
+      blocks.push({ mo, error: String(e.message || e) });
+    }
+    if (onProgress) onProgress(i + 1, months.length);
+  }
+  const ok = blocks.filter(b => !b.error);
+  if (!ok.length) { alert('Nenhum mês retornou dado. Verifique o login no cockpit e tente de novo.'); return; }
+  const failed = blocks.filter(b => b.error).map(b => b.mo.label);
+  const escLbl = escopo || 'Total Casa';
+  const periodo = `${fmtBR_(startISO)} a ${fmtBR_(endISO)}`;
+
+  // ---------- Aba 1: Farol YTD (formato longo, coluna Mês/Ano entre Grupo e Métrica) ----------
   const fAoa = [
-    [`RevOps Cockpit — Farol${useYtd ? ' · YTD' : ''}`],
+    ['RevOps Cockpit — Farol · YTD (mês a mês)'],
     [`Período: ${periodo}`],
-    [`Escopo: ${escopo || 'Total Casa'}`],
-    [`Fonte: ${fonte}`],
+    [`Escopo: ${escLbl}`],
+    [`Fonte: BigQuery (live)${failed.length ? ' · meses sem dado: ' + failed.join(', ') : ''}`],
     [],
-    ['Grupo', 'Métrica', 'Actual', 'BP', '% vs BP', 'M-1', 'Proj. Fechamento'],
+    ['Grupo', 'Mês/Ano', 'Métrica', 'Actual', 'BP', '% vs BP', 'M-1', 'Proj. Fechamento'],
   ];
   const fFmts = {};
-  buildFarolExportGroups_(MM, f, monthlyClose, channels, chFilter, range, useYtd).forEach(g => {
-    (g.cards || []).forEach(m => {
-      if (!m) return;
-      const r = fAoa.length;
-      fAoa.push([g.title, m.label,
-        m.act != null ? m.act : null,
-        m.bp != null ? m.bp : null,
-        attain(m),
-        m.m1 != null ? m.m1 : null,
-        m.trend != null ? m.trend : null]);
-      if (m.fmt) [2, 3, 5, 6].forEach(c => { fFmts[`${r},${c}`] = numFmt(m.fmt); });
-      fFmts[`${r},4`] = PCT;
+  ok.forEach(b => {
+    buildFarolExportGroups_(b.dispM, b.farol, b.monthlyClose, b.channels, chFilter, { from: b.mo.from, to: b.mo.to }, false).forEach(g => {
+      (g.cards || []).forEach(mm2 => {
+        if (!mm2) return;
+        const r = fAoa.length;
+        fAoa.push([g.title, b.mo.label, mm2.label,
+          mm2.act != null ? mm2.act : null, mm2.bp != null ? mm2.bp : null, attain(mm2),
+          mm2.m1 != null ? mm2.m1 : null, mm2.trend != null ? mm2.trend : null]);
+        if (mm2.fmt) [3, 4, 6, 7].forEach(c => { fFmts[`${r},${c}`] = numFmt(mm2.fmt); });
+        fFmts[`${r},5`] = PCT;
+      });
     });
   });
 
-  // ---------- Aba 2: Monthly Close (tabela linear ACT vs BP) ----------
+  // ---------- Aba 2: Monthly Close YTD (formato longo, coluna Mês/Ano) ----------
   const mAoa = [
-    [`RevOps Cockpit — Monthly Close${useYtd ? ' · YTD' : ''}`],
+    ['RevOps Cockpit — Monthly Close · YTD (mês a mês)'],
     [`Período: ${periodo}`],
-    [`Escopo: ${escopo || 'Total Casa'} (house-level segue o backend)`],
-    [`Fonte: ${fonte}`],
+    [`Escopo: ${escLbl} (house-level segue o backend)`],
+    ['Fonte: BigQuery (live)'],
     [],
-    ['Seção', 'Métrica', 'ACT', 'BP', '% vs BP'],
+    ['Seção', 'Mês/Ano', 'Métrica', 'ACT', 'BP', '% vs BP'],
   ];
   const mFmts = {};
-  buildMonthlyCloseRows_(M, farol, monthlyClose).forEach(row => {
-    if (row.sec) { mAoa.push([row.sec]); return; }
-    const r = mAoa.length;
-    mAoa.push(['', row.label,
-      row.act != null ? row.act : null,
-      row.bp != null ? row.bp : null,
-      monthlyClosePct_(row)]);
-    if (row.fmt) { mFmts[`${r},2`] = numFmt(row.fmt); mFmts[`${r},3`] = numFmt(row.fmt); }
-    mFmts[`${r},4`] = PCT;
+  ok.forEach(b => {
+    let sec = '';
+    buildMonthlyCloseRows_(b.dispM, b.farol, b.monthlyClose).forEach(row => {
+      if (row.sec) { sec = row.sec; return; }
+      const r = mAoa.length;
+      mAoa.push([sec, b.mo.label, row.label,
+        row.act != null ? row.act : null, row.bp != null ? row.bp : null, monthlyClosePct_(row)]);
+      if (row.fmt) { mFmts[`${r},3`] = numFmt(row.fmt); mFmts[`${r},4`] = numFmt(row.fmt); }
+      mFmts[`${r},5`] = PCT;
+    });
   });
 
   const wb = XLSX.utils.book_new();
   const ws1 = XLSX.utils.aoa_to_sheet(fAoa);
-  ws1['!cols'] = [{ wch: 13 }, { wch: 24 }, { wch: 15 }, { wch: 15 }, { wch: 9 }, { wch: 15 }, { wch: 16 }];
+  ws1['!cols'] = [{ wch: 13 }, { wch: 10 }, { wch: 24 }, { wch: 15 }, { wch: 15 }, { wch: 9 }, { wch: 15 }, { wch: 16 }];
   applyFmts(ws1, fFmts);
-  XLSX.utils.book_append_sheet(wb, ws1, 'Farol');
+  XLSX.utils.book_append_sheet(wb, ws1, 'Farol YTD');
   const ws2 = XLSX.utils.aoa_to_sheet(mAoa);
-  ws2['!cols'] = [{ wch: 18 }, { wch: 26 }, { wch: 15 }, { wch: 15 }, { wch: 9 }];
+  ws2['!cols'] = [{ wch: 18 }, { wch: 10 }, { wch: 26 }, { wch: 15 }, { wch: 15 }, { wch: 9 }];
   applyFmts(ws2, mFmts);
-  XLSX.utils.book_append_sheet(wb, ws2, 'Monthly Close');
+  XLSX.utils.book_append_sheet(wb, ws2, 'Monthly Close YTD');
 
-  const stamp = (range && range.from ? `${range.from}_${range.to}` : 'periodo').replace(/-/g, '');
-  XLSX.writeFile(wb, `cockpit_farol${useYtd ? '_ytd' : ''}_${stamp}.xlsx`);
+  XLSX.writeFile(wb, `cockpit_farol_ytd_${startISO.replace(/-/g, '')}_${endISO.replace(/-/g, '')}.xlsx`);
 }
 
 function TabMonthlyClose({ M, farol, monthlyClose, range, isLive, ytd }) {
@@ -4680,6 +4718,36 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
   );
 }
 
+// Filtra [{channel,...}] pelo escopo do chFilter (seleção explícita > growth > todos). Espelha o
+// filterByChannel do App (que é closure sobre chFilter) numa forma standalone reusável.
+function filterChannelList_(list, chFilter) {
+  if (!list) return list;
+  const sel = chList_(chFilter);
+  if (sel.length) return list.filter(c => sel.indexOf(c.channel) >= 0);
+  if (chFilter && chFilter.scope === 'growth') return list.filter(c => isGrowthCh_(c.channel));
+  return list;
+}
+
+// Deriva dispM (hero cards, com override WINDOW-AWARE de DEP M0 pela coorte ggrSafra.m0) + farolMetrics
+// de um dataset {M, componentsByChannel, retentionChannels, depM0Channels, bp, ggrSafra, channels, ggrChannels}
+// no escopo do chFilter. FONTE ÚNICA: o App (janela atual) e o export YTD (mês a mês) consomem daqui.
+function derivePayloadMetrics_(src, chFilter, isLive) {
+  const s = src || {};
+  const displayM = isLive
+    ? deriveLiveM_(s.M, chFilter, s.componentsByChannel, s.retentionChannels, s.depM0Channels, s.bp)
+    : deriveMockM_(s.M, chFilter);
+  const m0 = (s.ggrSafra && s.ggrSafra.m0) ? filterChannelList_(s.ggrSafra.m0, chFilter) : null;
+  let dispM = displayM;
+  if (m0 && m0.length) {
+    let dep = 0, depM1 = 0, gDep = 0, gDepM1 = 0;
+    m0.forEach(c => { dep += c.dep || 0; depM1 += c.depM1 || 0; if (isGrowthCh_(c.channel)) { gDep += c.dep || 0; gDepM1 += c.depM1 || 0; } });
+    const over = (mm, act, m1) => mm ? { ...mm, act, m1 } : mm;
+    dispM = { ...displayM, depM0Total: over(displayM.depM0Total, dep, depM1), depM0Growth: over(displayM.depM0Growth, gDep, gDepM1) };
+  }
+  const farol = buildFarolMetrics_(dispM, s.componentsByChannel, s.channels, s.ggrChannels, s.bp, chFilter);
+  return { dispM, farol };
+}
+
 function App({ user, onLogout, config }) {
   const [tabId, setTabId] = usePersistedState('rvops:tab', 'aquisicao');
   // Visibilidade de abas (global, editável por admin). hiddenTabs = ids ocultas p/ não-admins.
@@ -4701,6 +4769,8 @@ function App({ user, onLogout, config }) {
   const [activePreset, setActivePreset] = useState('mtd');
   // Filtro de canal: channels = [] (Todos, cai no escopo) ou lista de canais · scope = 'all' (Total Casa) | 'growth' (Canais Growth)
   const [chFilter, setChFilter] = usePersistedState('rvops:chFilter', { channels: [], scope: 'all' });
+  const [exportBusy, setExportBusy] = React.useState(false);   // export YTD (mês a mês) em andamento
+  const [exportProg, setExportProg] = React.useState('');      // "2/4" enquanto busca os meses
   const ytd = activePreset === 'ytd';   // YTD ativo = preset de data 'ytd' (janela abril→ontem); vale p/ todas as abas via appliedRange
   const [state, setState] = useState({
     loading: !!ENDPOINT_URL,
@@ -4857,24 +4927,14 @@ function App({ user, onLogout, config }) {
   // Opções do dropdown: nomes dos canais presentes no dado (sem filtro aplicado)
   const channelOptions = (state.channels || []).map(c => c.channel);
 
-  // Heroes: live = backend já filtrado · mock = deriva das tabelas mock
-  const displayM = state.isLive
-    ? deriveLiveM_(state.M, chFilter, state.componentsByChannel, state.retentionChannels, state.depM0Channels, state.bp)
-    : deriveMockM_(state.M, chFilter);
-  // DEP M0 WINDOW-AWARE: o deriveLiveM_ pega o M0 da view de coorte MENSAL (mês do início da janela, não
-  // respeita a sub-janela → quebra em YTD/7d/30d). ggrSafra.m0[].dep JÁ é o depósito M0 (bucket 0 = mês do
-  // FTD = mês da atividade) DENTRO da janela → sobrescreve act/m1 do DEP M0 p/ SEGUIR a data. BP fica o do
-  // plano. ROAS Dep M0 herda (buildFarolMetrics_ divide dm0.act/m1 por invest).
-  const dispM = (() => {
-    const m0 = fGgrSafra && fGgrSafra.m0;
-    if (!m0 || !m0.length) return displayM;
-    let dep = 0, depM1 = 0, gDep = 0, gDepM1 = 0;
-    m0.forEach(c => { dep += c.dep || 0; depM1 += c.depM1 || 0; if (isGrowthCh_(c.channel)) { gDep += c.dep || 0; gDepM1 += c.depM1 || 0; } });
-    const over = (m, act, m1) => m ? { ...m, act, m1 } : m;
-    return { ...displayM, depM0Total: over(displayM.depM0Total, dep, depM1), depM0Growth: over(displayM.depM0Growth, gDep, gDepM1) };
-  })();
-  // Métricas derivadas da aba Farol (CAC, Tkt FTD, ROAS Dep D0/M0, FreeSpins/Bonif por dep) — escopo do filtro.
-  const farolMetrics = buildFarolMetrics_(dispM, state.componentsByChannel, state.channels, state.ggrChannels, state.bp, chFilter);
+  // Hero cards (dispM, com override WINDOW-AWARE de DEP M0 via ggrSafra.m0: o deriveLiveM_ pega o M0 da view
+  // de coorte MENSAL — mês do início da janela — que quebra em YTD/7d/30d; ggrSafra.m0[].dep já é o DEP M0
+  // DENTRO da janela) + métricas do Farol (CAC/Tkt/ROAS/FreeSpins…). FONTE ÚNICA derivePayloadMetrics_ —
+  // a MESMA derivação que o export YTD roda mês a mês.
+  const { dispM, farol: farolMetrics } = derivePayloadMetrics_({
+    M: state.M, componentsByChannel: state.componentsByChannel, retentionChannels: state.retentionChannels,
+    depM0Channels: state.depM0Channels, bp: state.bp, ggrSafra: state.ggrSafra, channels: state.channels, ggrChannels: state.ggrChannels,
+  }, chFilter, state.isLive);
 
   function applyPreset(presetId) {
     const p = PRESETS.find(x => x.id === presetId);
@@ -4954,17 +5014,23 @@ function App({ user, onLogout, config }) {
             </button>
           )}
           <button
-            className="refresh-btn"
-            onClick={() => exportFarolMonthlyClose_({ M: dispM, farol: farolMetrics, monthlyClose: state.monthlyClose, channels: state.channels, chFilter, range: appliedRange, ytd, isLive: state.isLive, escopo: chLabel_(chFilter) })}
-            disabled={state.loading}
-            title="Baixar Farol + Monthly Close em Excel (.xlsx) — ACT vs BP do período e escopo atuais"
+            className={exportBusy ? 'refresh-btn spinning' : 'refresh-btn'}
+            onClick={async () => {
+              setExportBusy(true); setExportProg('');
+              try {
+                await exportFarolYtd_({ chFilter, escopo: chLabel_(chFilter), onProgress: (done, total) => setExportProg(`${done}/${total}`) });
+              } catch (e) { alert('Falha ao gerar o Excel YTD: ' + (e && e.message || e)); }
+              finally { setExportBusy(false); setExportProg(''); }
+            }}
+            disabled={state.loading || exportBusy}
+            title="Baixar YTD mês a mês (abr→ontem) — Farol + Monthly Close em Excel (.xlsx), no escopo de canal atual"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
               <path d="M7 10l5 5 5-5"/>
               <path d="M12 15V3"/>
             </svg>
-            Excel
+            {exportBusy ? `Gerando…${exportProg ? ' ' + exportProg : ''}` : 'Excel YTD'}
           </button>
           {user && <span className="user-chip" title={user.email}>{user.name}{user.admin ? ' · admin' : ''}</span>}
           {onLogout && <button className="logout-btn" onClick={onLogout} title="Encerrar sessão">Sair</button>}
