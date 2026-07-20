@@ -3788,10 +3788,69 @@ function monthlyClosePct_(r) {
   return (r.bp && r.act != null && r.bp !== 0) ? (r.lower ? r.bp / r.act : r.act / r.bp) : null;
 }
 
-// Exporta Farol + Monthly Close num .xlsx (2 abas). Consome as MESMAS fontes das abas
-// (buildFarolGroups_ / buildMonthlyCloseRows_) → os números batem 1:1 com a tela.
+// Grupos do Farol PARA O EXPORT — parte da tela (buildFarolGroups_) e INJETA detalhe que só o Excel tem:
+//  • Aquisição: FTD Amount e #FTD split Growth / Not Growth (+ Total); Investimento é growth-only (relabel).
+//  • Depósito M0: DEP M0 split Growth / Not Growth (+ Total).
+//  • Retenção: valor ABSOLUTO da coorte retida em R$ (M+1/M+2/M3+, de monthlyClose) sob cada % de retenção.
+// Growth = allowlist isGrowthCh_, no MESMO escopo do resto da planilha (respeita o filtro de canal via chFilter).
+// Splits usam os canais atribuídos (Actual); BP só nas linhas Total (o plano não separa orgânico). A tela NÃO muda.
+function buildFarolExportGroups_(MM, f, monthlyClose, channels, chFilter, range, useYtd) {
+  const groups = buildFarolGroups_(MM, f, range, useYtd);
+  const G = {}; groups.forEach(g => { G[g.title] = {}; (g.cards || []).forEach(c => { if (c) G[g.title][c.label] = c; }); });
+  const relabel = (m, label) => m ? { ...m, label } : null;
+
+  // Canais no escopo atual — mesma regra do filterByChannel do App (seleção explícita > growth-scope > todos).
+  const sel = chList_(chFilter);
+  const scoped = (channels || []).filter(c => sel.length ? sel.indexOf(c.channel) >= 0
+    : (chFilter && chFilter.scope === 'growth') ? isGrowthCh_(c.channel) : true);
+  const sum = (arr, k) => arr.length ? arr.reduce((a, c) => a + (c[k] || 0), 0) : null;
+  const gCh = scoped.filter(c => isGrowthCh_(c.channel));
+  const ngCh = scoped.filter(c => !isGrowthCh_(c.channel));
+  const split = (label, fmt, act, bp) => ({ label, fmt, act: act == null ? null : act, bp: (bp != null && bp !== 0) ? bp : null, m1: null, lowerBetter: false });
+
+  // DEP M0 growth/não-growth (de MM; não-growth = total − growth).
+  const dm0T = MM.depM0Total || {}, dm0G = MM.depM0Growth || {};
+  const sub = (a, b) => (a != null && b != null) ? a - b : null;
+  const dm0NG = { label: 'DEP M0 — Not Growth', fmt: 'brl', act: sub(dm0T.act, dm0G.act), bp: sub(dm0T.bp, dm0G.bp), m1: sub(dm0T.m1, dm0G.m1) };
+
+  // Coortes retidas absolutas (house-level, de monthlyClose — não segue o filtro de canal, igual à aba Monthly Close).
+  const mca = (monthlyClose && monthlyClose.act) || {}, mcb = (monthlyClose && monthlyClose.bp) || {};
+  const coh = (label, actv, bpv) => ({ label, fmt: 'brl', act: actv != null ? actv : null, bp: bpv != null ? bpv : null, m1: null });
+  const ftdQtyTot = { label: '#FTD — Total', fmt: 'qty',
+    act: (MM.ftdQty && MM.ftdQty.act != null) ? MM.ftdQty.act : sum(scoped, 'ftdQty'),
+    bp: (MM.ftdQty && MM.ftdQty.bp != null) ? MM.ftdQty.bp : null,
+    m1: (MM.ftdQty && MM.ftdQty.m1 != null) ? MM.ftdQty.m1 : null };
+
+  return [
+    { title: 'Aquisição', cards: [
+      relabel(G['Aquisição']['Investimento'], 'Investimento (Growth)'),
+      split('FTD Amount — Growth', 'brl', sum(gCh, 'ftdAmount'), null),
+      split('FTD Amount — Not Growth', 'brl', sum(ngCh, 'ftdAmount'), null),
+      relabel(G['Aquisição']['FTD Amount'], 'FTD Amount — Total'),
+      split('#FTD — Growth', 'qty', sum(gCh, 'ftdQty'), null),
+      split('#FTD — Not Growth', 'qty', sum(ngCh, 'ftdQty'), null),
+      ftdQtyTot,
+      G['Aquisição']['ROAS FTD'], G['Aquisição']['ROAS Dep D0'], G['Aquisição']['CAC'], G['Aquisição']['Tkt Médio FTD'],
+    ] },
+    { title: 'Depósito M0', cards: [
+      relabel(MM.depM0Growth, 'DEP M0 — Growth'),
+      dm0NG,
+      relabel(G['Depósito M0']['DEP M0 Total'], 'DEP M0 — Total'),
+      G['Depósito M0']['ROAS Dep M0'],
+    ] },
+    { title: 'Retenção', cards: [
+      G['Retenção']['Retenção M0→M1'], coh('↳ Retido M+1 (R$)', mca.m1, mcb.m1),
+      G['Retenção']['Retenção M1→M2'], coh('↳ Retido M+2 (R$)', mca.m2, mcb.m2),
+      G['Retenção']['Retenção M3+'],   coh('↳ Retido M3+ (R$)', mca.m3plus, mcb.m3plus),
+    ] },
+    { title: 'Volume & GGR', cards: (groups.find(g => g.title === 'Volume & GGR') || {}).cards || [] },
+  ];
+}
+
+// Exporta Farol + Monthly Close num .xlsx (2 abas). Farol = a tela + splits Growth/Not-Growth e coortes
+// absolutas (buildFarolExportGroups_); Monthly Close reusa buildMonthlyCloseRows_ (1:1 com a aba).
 // Valores crus + número formatado por tipo (R$, %, multiplicador, qtd) via cell.z.
-function exportFarolMonthlyClose_({ M, farol, monthlyClose, range, ytd, isLive, escopo }) {
+function exportFarolMonthlyClose_({ M, farol, monthlyClose, channels, chFilter, range, ytd, isLive, escopo }) {
   if (typeof XLSX === 'undefined') { alert('Biblioteca de Excel ainda carregando. Aguarde 1s e tente de novo.'); return; }
   const MM = M || {}, f = farol || {}, useYtd = !!ytd;
   const numFmt = (fmt) => fmt === 'brl' ? 'R$ #,##0.00'
@@ -3825,7 +3884,7 @@ function exportFarolMonthlyClose_({ M, farol, monthlyClose, range, ytd, isLive, 
     ['Grupo', 'Métrica', 'Actual', 'BP', '% vs BP', 'M-1', 'Proj. Fechamento'],
   ];
   const fFmts = {};
-  buildFarolGroups_(MM, f, range, useYtd).forEach(g => {
+  buildFarolExportGroups_(MM, f, monthlyClose, channels, chFilter, range, useYtd).forEach(g => {
     (g.cards || []).forEach(m => {
       if (!m) return;
       const r = fAoa.length;
@@ -4896,7 +4955,7 @@ function App({ user, onLogout, config }) {
           )}
           <button
             className="refresh-btn"
-            onClick={() => exportFarolMonthlyClose_({ M: dispM, farol: farolMetrics, monthlyClose: state.monthlyClose, range: appliedRange, ytd, isLive: state.isLive, escopo: chLabel_(chFilter) })}
+            onClick={() => exportFarolMonthlyClose_({ M: dispM, farol: farolMetrics, monthlyClose: state.monthlyClose, channels: state.channels, chFilter, range: appliedRange, ytd, isLive: state.isLive, escopo: chLabel_(chFilter) })}
             disabled={state.loading}
             title="Baixar Farol + Monthly Close em Excel (.xlsx) — ACT vs BP do período e escopo atuais"
           >
