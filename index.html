@@ -10,6 +10,8 @@
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+<!-- SheetJS: export .xlsx client-side (Farol + Monthly Close). Global XLSX. -->
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <style>
   :root {
     --bg: #000000;
@@ -3683,13 +3685,9 @@ function monthCloseMult_(range) {
 // Trend (projeção de fechamento): volumes ADITIVOS (Investimento, FTD, DEP M0, Depósitos, GGR) via run-rate;
 // Rollover via razão dos COMPONENTES projetados. Demais razões (ROAS, CAC, Tkt, retenção, %/Dep) sem trend.
 // Multiplicador = ggrTrend/ggr do backend (mesma base do card "Close Trend GGR"), com fallback pra janela.
-function TabFarol({ M, farol, range, ytd }) {
-  // YTD é preset GLOBAL de data: a janela (appliedRange) já é abril→ontem, então usa o M/farol normais.
-  // Só muda a comparação: SÓ vs BP — tira M-1 (mesma janela 1 mês atrás) e a projeção de fechamento, que
-  // não fazem sentido num acumulado de vários meses.
-  const useYtd = !!ytd;
-  const MM = M || {};
-  const f = farol || {};
+// Monta os 4 grupos de cards do Farol — cada card já com trend (projeção de fechamento) e M-1 ajustado.
+// FONTE ÚNICA: a aba Farol E o export de Excel consomem daqui, pra os números nunca divergirem.
+function buildFarolGroups_(MM, f, range, useYtd) {
   const mult = useYtd ? null : monthCloseMult_(range);
   const tf = mult == null ? null
     : (MM.ggr && MM.ggr.act && MM.ggrTrend && MM.ggrTrend.act != null && MM.ggr.act !== 0)
@@ -3707,12 +3705,22 @@ function TabFarol({ M, farol, range, ytd }) {
   const roasFtdCard = dressPlain(MM.roasFtd ? { ...MM.roasFtd, m1: roasFtdM1 != null ? roasFtdM1 : (MM.roasFtd.m1 != null ? MM.roasFtd.m1 : null) } : null);
   const roasM0M1 = div_(MM.depM0Total && MM.depM0Total.m1, MM.invest && MM.invest.m1);
   const roasDepM0Card = dressPlain(f.roasDepM0 ? { ...f.roasDepM0, m1: roasM0M1 != null ? roasM0M1 : (f.roasDepM0.m1 != null ? f.roasDepM0.m1 : null) } : null);
-  const groups = [
+  return [
     { title: 'Aquisição', cards: [dress(MM.invest), dress(MM.ftdAmount), roasFtdCard, dressPlain(f.roasDepD0), dressPlain(f.cac), dressPlain(f.ticketFtd)] },
     { title: 'Depósito M0', cards: [dress(MM.depM0Total), roasDepM0Card] },
     { title: 'Retenção', cards: [dressPlain(MM.retM0M1), dressPlain(MM.retM1M2), dressPlain(MM.retM3plus)] },
     { title: 'Volume & GGR', cards: [dress(MM.depTotal), dress(MM.ggr), dressPlain(MM.ggrPerDep), rolloverCard, dressPlain(f.freespinDep), dressPlain(f.bonusDep)] },
   ];
+}
+
+function TabFarol({ M, farol, range, ytd }) {
+  // YTD é preset GLOBAL de data: a janela (appliedRange) já é abril→ontem, então usa o M/farol normais.
+  // Só muda a comparação: SÓ vs BP — tira M-1 (mesma janela 1 mês atrás) e a projeção de fechamento, que
+  // não fazem sentido num acumulado de vários meses.
+  const useYtd = !!ytd;
+  const MM = M || {};
+  const f = farol || {};
+  const groups = buildFarolGroups_(MM, f, range, useYtd);
   const rangeLbl = (range && range.from) ? `${fmtBR_(range.from)} → ${fmtBR_(range.to)}` : '';
   return (
     <React.Fragment>
@@ -3741,18 +3749,14 @@ function TabFarol({ M, farol, range, ytd }) {
 // Aba MONTHLY CLOSE — fechamento do mês no formato do FAROL: ACT (BigQuery, consistente com o resto
 // do cockpit) vs BP, linha a linha. Depósitos por safra (M+1/M+2/M3+) vêm de payload.monthlyClose;
 // o resto reusa M (hero metrics) + farolMetrics (CAC/ROAS Dep). % vs BP = atingimento (custo inverte).
-function TabMonthlyClose({ M, farol, monthlyClose, range, isLive, ytd }) {
-  // YTD é preset GLOBAL de data: a janela (appliedRange) já é abril→ontem, então usa o M/farol/monthlyClose
-  // normais — a tabela ACT vs BP fica igual, só muda o rótulo/período p/ YTD.
-  const useYtd = !!ytd;
-  const MM = M || {};
-  const f = farol || {};
-  const mc = monthlyClose || {};
+// Monta as linhas ACT vs BP do Monthly Close. FONTE ÚNICA: aba Monthly Close + export de Excel.
+function buildMonthlyCloseRows_(M, farol, monthlyClose) {
+  const MM = M || {}, f = farol || {}, mc = monthlyClose || {};
   const mca = mc.act || {}, mcb = mc.bp || {};
   const A = (m) => (m && m.act != null) ? m.act : null;
   const B = (m) => (m && m.bp != null) ? m.bp : null;
   const div = (a, b) => (a != null && b) ? a / b : null;
-  const rows = [
+  return [
     { sec: 'Aquisição' },
     { label: 'Investimento', act: A(MM.invest), bp: B(MM.invest), fmt: 'brl' },
     { label: 'ROAS FTD', act: A(MM.roasFtd), bp: B(MM.roasFtd), fmt: 'multiple' },
@@ -3778,7 +3782,105 @@ function TabMonthlyClose({ M, farol, monthlyClose, range, isLive, ytd }) {
     { label: 'GGR', act: A(MM.ggr), bp: B(MM.ggr), fmt: 'brl' },
     { label: 'GGR / Depósito', act: A(MM.ggrPerDep), bp: B(MM.ggrPerDep), fmt: 'pct' },
   ];
-  const pctBp = (r) => (r.bp && r.act != null && r.bp !== 0) ? (r.lower ? r.bp / r.act : r.act / r.bp) : null;
+}
+// % vs BP do Monthly Close = atingimento (custo/lower inverte). Compartilhado aba + export.
+function monthlyClosePct_(r) {
+  return (r.bp && r.act != null && r.bp !== 0) ? (r.lower ? r.bp / r.act : r.act / r.bp) : null;
+}
+
+// Exporta Farol + Monthly Close num .xlsx (2 abas). Consome as MESMAS fontes das abas
+// (buildFarolGroups_ / buildMonthlyCloseRows_) → os números batem 1:1 com a tela.
+// Valores crus + número formatado por tipo (R$, %, multiplicador, qtd) via cell.z.
+function exportFarolMonthlyClose_({ M, farol, monthlyClose, range, ytd, isLive, escopo }) {
+  if (typeof XLSX === 'undefined') { alert('Biblioteca de Excel ainda carregando. Aguarde 1s e tente de novo.'); return; }
+  const MM = M || {}, f = farol || {}, useYtd = !!ytd;
+  const numFmt = (fmt) => fmt === 'brl' ? 'R$ #,##0.00'
+    : fmt === 'pct' ? '0.0%'
+    : fmt === 'multiple' ? '0.00"x"'
+    : fmt === 'qty' ? '#,##0'
+    : '#,##0.00';
+  const PCT = '0.0%';
+  const periodo = (range && range.from) ? `${fmtBR_(range.from)} a ${fmtBR_(range.to)}` : '';
+  const fonte = isLive ? 'BigQuery (live)' : 'Mock (BQ pendente)';
+  // Atingimento vs BP idêntico ao card (Hero): maior=melhor → act/bp; custo (lowerBetter) → bp/act.
+  const attain = (m) => {
+    if (!m || m.act == null || m.bp == null || m.bp === 0) return null;
+    return m.lowerBetter ? m.bp / m.act : m.act / m.bp;
+  };
+  const applyFmts = (ws, fmts) => {
+    Object.keys(fmts).forEach(k => {
+      const [r, c] = k.split(',').map(Number);
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      if (cell && typeof cell.v === 'number') { cell.t = 'n'; cell.z = fmts[k]; }
+    });
+  };
+
+  // ---------- Aba 1: Farol (grupos → uma linha por KPI) ----------
+  const fAoa = [
+    [`RevOps Cockpit — Farol${useYtd ? ' · YTD' : ''}`],
+    [`Período: ${periodo}`],
+    [`Escopo: ${escopo || 'Total Casa'}`],
+    [`Fonte: ${fonte}`],
+    [],
+    ['Grupo', 'Métrica', 'Actual', 'BP', '% vs BP', 'M-1', 'Proj. Fechamento'],
+  ];
+  const fFmts = {};
+  buildFarolGroups_(MM, f, range, useYtd).forEach(g => {
+    (g.cards || []).forEach(m => {
+      if (!m) return;
+      const r = fAoa.length;
+      fAoa.push([g.title, m.label,
+        m.act != null ? m.act : null,
+        m.bp != null ? m.bp : null,
+        attain(m),
+        m.m1 != null ? m.m1 : null,
+        m.trend != null ? m.trend : null]);
+      if (m.fmt) [2, 3, 5, 6].forEach(c => { fFmts[`${r},${c}`] = numFmt(m.fmt); });
+      fFmts[`${r},4`] = PCT;
+    });
+  });
+
+  // ---------- Aba 2: Monthly Close (tabela linear ACT vs BP) ----------
+  const mAoa = [
+    [`RevOps Cockpit — Monthly Close${useYtd ? ' · YTD' : ''}`],
+    [`Período: ${periodo}`],
+    [`Escopo: ${escopo || 'Total Casa'} (house-level segue o backend)`],
+    [`Fonte: ${fonte}`],
+    [],
+    ['Seção', 'Métrica', 'ACT', 'BP', '% vs BP'],
+  ];
+  const mFmts = {};
+  buildMonthlyCloseRows_(M, farol, monthlyClose).forEach(row => {
+    if (row.sec) { mAoa.push([row.sec]); return; }
+    const r = mAoa.length;
+    mAoa.push(['', row.label,
+      row.act != null ? row.act : null,
+      row.bp != null ? row.bp : null,
+      monthlyClosePct_(row)]);
+    if (row.fmt) { mFmts[`${r},2`] = numFmt(row.fmt); mFmts[`${r},3`] = numFmt(row.fmt); }
+    mFmts[`${r},4`] = PCT;
+  });
+
+  const wb = XLSX.utils.book_new();
+  const ws1 = XLSX.utils.aoa_to_sheet(fAoa);
+  ws1['!cols'] = [{ wch: 13 }, { wch: 24 }, { wch: 15 }, { wch: 15 }, { wch: 9 }, { wch: 15 }, { wch: 16 }];
+  applyFmts(ws1, fFmts);
+  XLSX.utils.book_append_sheet(wb, ws1, 'Farol');
+  const ws2 = XLSX.utils.aoa_to_sheet(mAoa);
+  ws2['!cols'] = [{ wch: 18 }, { wch: 26 }, { wch: 15 }, { wch: 15 }, { wch: 9 }];
+  applyFmts(ws2, mFmts);
+  XLSX.utils.book_append_sheet(wb, ws2, 'Monthly Close');
+
+  const stamp = (range && range.from ? `${range.from}_${range.to}` : 'periodo').replace(/-/g, '');
+  XLSX.writeFile(wb, `cockpit_farol${useYtd ? '_ytd' : ''}_${stamp}.xlsx`);
+}
+
+function TabMonthlyClose({ M, farol, monthlyClose, range, isLive, ytd }) {
+  // YTD é preset GLOBAL de data: a janela (appliedRange) já é abril→ontem, então usa o M/farol/monthlyClose
+  // normais — a tabela ACT vs BP fica igual, só muda o rótulo/período p/ YTD.
+  const useYtd = !!ytd;
+  const rows = buildMonthlyCloseRows_(M, farol, monthlyClose);
+  const pctBp = monthlyClosePct_;
   const pctCls = (p) => p == null ? '' : (p >= 0.95 ? 'ch-roas-pos' : p >= 0.85 ? '' : 'ch-roas-neg');
   const rangeLbl = (range && range.from) ? `${fmtBR_(range.from)} → ${fmtBR_(range.to)}` : '';
   return (
@@ -4792,6 +4894,19 @@ function App({ user, onLogout, config }) {
               {state.loading ? 'Atualizando…' : 'Atualizar'}
             </button>
           )}
+          <button
+            className="refresh-btn"
+            onClick={() => exportFarolMonthlyClose_({ M: dispM, farol: farolMetrics, monthlyClose: state.monthlyClose, range: appliedRange, ytd, isLive: state.isLive, escopo: chLabel_(chFilter) })}
+            disabled={state.loading}
+            title="Baixar Farol + Monthly Close em Excel (.xlsx) — ACT vs BP do período e escopo atuais"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <path d="M7 10l5 5 5-5"/>
+              <path d="M12 15V3"/>
+            </svg>
+            Excel
+          </button>
           {user && <span className="user-chip" title={user.email}>{user.name}{user.admin ? ' · admin' : ''}</span>}
           {onLogout && <button className="logout-btn" onClick={onLogout} title="Encerrar sessão">Sair</button>}
         </div>
