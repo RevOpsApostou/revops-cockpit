@@ -3260,7 +3260,13 @@ function buildFarolGroups_(MM, f, range, useYtd) {
   const dress = (m) => { if (!m) return m; if (useYtd) return { ...m, m1: null, trend: undefined }; const t = proj(m); return t != null ? { ...m, trend: t } : m; };
   const dressPlain = (m) => (useYtd && m) ? { ...m, m1: null, trend: undefined } : m;   // cards de razão (sem trend), só tira M-1 no YTD
   // Rollover: BP FIXO 5,10x (não é meta diária do plano) e SEM trend — não faz sentido projetar uma razão.
-  const rolloverCard = MM.rollover ? { ...MM.rollover, bp: 5.10, trend: undefined, m1: useYtd ? null : MM.rollover.m1 } : null;
+  const ROLLOVER_BP = 5.10;
+  const rolloverCard = MM.rollover ? { ...MM.rollover, bp: ROLLOVER_BP, trend: undefined, m1: useYtd ? null : MM.rollover.m1 } : null;
+  // Hold % = House Edge (GGR/Turnover). BP FIXO 3,5% (meta de margem da casa, não vem do plano); maior=melhor.
+  const holdCard = MM.hold ? { ...MM.hold, label: 'Hold % (House Edge)', bp: 0.035 } : null;
+  // Turnover BP = Depósito Total BP × Rollover BP (turnover = rollover × depósito). — quando não há BP de depósito no escopo.
+  const depTotalBp = (MM.depTotal && MM.depTotal.bp != null) ? MM.depTotal.bp : null;
+  const turnoverCard = MM.turnover ? { ...MM.turnover, bp: depTotalBp != null ? depTotalBp * ROLLOVER_BP : null } : null;
   // ROAS FTD e ROAS Dep M0 — posição do M-1 = razão dos M-1 dos componentes (FTD Amount÷Invest, DEP M0÷Invest),
   // já que ambos os componentes trazem M-1. Fallback pro m1 do próprio card se algum componente não tiver M-1.
   const div_ = (a, b) => (a != null && b) ? a / b : null;
@@ -3272,7 +3278,7 @@ function buildFarolGroups_(MM, f, range, useYtd) {
     { title: 'Aquisição', cards: [dress(MM.invest), dress(MM.ftdAmount), roasFtdCard, dressPlain(f.roasDepD0), dressPlain(f.cac), dressPlain(f.ticketFtd)] },
     { title: 'Depósito M0', cards: [dress(MM.depM0Total), roasDepM0Card] },
     { title: 'Retenção', cards: [dressPlain(MM.retM0M1), dressPlain(MM.retM1M2), dressPlain(MM.retM3plus)] },
-    { title: 'Volume & GGR', cards: [dress(MM.depTotal), dress(MM.turnover), dress(MM.ggr), dressPlain(MM.ggrPerDep), dressPlain(MM.hold), rolloverCard, dressPlain(f.freespinDep), dressPlain(f.bonusDep)] },
+    { title: 'Volume & GGR', cards: [dress(MM.depTotal), dress(turnoverCard), dress(MM.ggr), dressPlain(MM.ggrPerDep), dressPlain(holdCard), rolloverCard, dressPlain(f.freespinDep), dressPlain(f.bonusDep)] },
   ];
 }
 
