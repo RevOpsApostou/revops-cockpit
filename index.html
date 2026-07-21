@@ -3713,14 +3713,41 @@ function buildFarolGroups_(MM, f, range, useYtd) {
   ];
 }
 
-function TabFarol({ M, farol, range, ytd }) {
+// Recomputa as métricas de AQUISIÇÃO do Farol com FTDs cohortados por DATA DE CADASTRO (registro), não por
+// data de FTD. Afeta FTD Amount / ROAS FTD / CAC / Tkt FTD; Investimento e ROAS Dep D0 ficam iguais.
+// Fonte = payload.ftdByRegister (por canal), somado no escopo do filtro de canal. BP não muda (é o plano).
+function applyFtdByRegister_(MM, f, ftdByRegister, chFilter) {
+  const scoped = filterChannelList_(ftdByRegister || [], chFilter);
+  if (!scoped.length) return { MM, f };
+  const sum = (k) => scoped.reduce((a, c) => a + (c[k] || 0), 0);
+  const regA = sum('ftdAmount'), regQ = sum('ftdQty'), regAm1 = sum('ftdAmountM1'), regQm1 = sum('ftdQtyM1');
+  const inv = MM.invest || {};
+  const div = (a, b) => (a != null && b) ? a / b : null;
+  const over = (m, act, m1) => m ? { ...m, act: act != null ? act : null, m1: m1 != null ? m1 : null } : m;
+  return {
+    MM: { ...MM,
+      ftdAmount: over(MM.ftdAmount, regA, regAm1 || null),
+      ftdQty:    over(MM.ftdQty, regQ, regQm1 || null),
+      roasFtd:   over(MM.roasFtd, div(regA, inv.act), div(regAm1, inv.m1)),
+    },
+    f: { ...f,
+      cac:       f.cac ? { ...f.cac, act: div(inv.act, regQ), m1: div(inv.m1, regQm1) } : f.cac,
+      ticketFtd: f.ticketFtd ? { ...f.ticketFtd, act: div(regA, regQ), m1: div(regAm1, regQm1) } : f.ticketFtd,
+    },
+  };
+}
+
+function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter }) {
   // YTD é preset GLOBAL de data: a janela (appliedRange) já é abril→ontem, então usa o M/farol normais.
   // Só muda a comparação: SÓ vs BP — tira M-1 (mesma janela 1 mês atrás) e a projeção de fechamento, que
   // não fazem sentido num acumulado de vários meses.
   const useYtd = !!ytd;
-  const MM = M || {};
-  const f = farol || {};
-  const groups = buildFarolGroups_(MM, f, range, useYtd);
+  // Toggle (só Aquisição): FTD por data de FTD ↔ por data de CADASTRO. Só liga se o backend mandou o dado.
+  const [byReg, setByReg] = usePersistedState('rvops:farolFtdReg', false);
+  const hasReg = !!(ftdByRegister && ftdByRegister.length);
+  const active = byReg && hasReg;
+  const src = active ? applyFtdByRegister_(M || {}, farol || {}, ftdByRegister, chFilter) : { MM: M || {}, f: farol || {} };
+  const groups = buildFarolGroups_(src.MM, src.f, range, useYtd);
   const rangeLbl = (range && range.from) ? `${fmtBR_(range.from)} → ${fmtBR_(range.to)}` : '';
   return (
     <React.Fragment>
@@ -3732,7 +3759,22 @@ function TabFarol({ M, farol, range, ytd }) {
               ? <>YTD · acumulado desde abril · {rangeLbl} · variação vs BP</>
               : <>Visão consolidada — todos os indicadores em cards, variação vs M-1 e vs BP</>}
           </div>
+          {active && (
+            <div className="subtitle" style={{ color: 'var(--accent-yellow)', marginTop: 6, maxWidth: 720 }}>
+              Aquisição normalizada por <strong>data de cadastro</strong>: FTD Amount, ROAS FTD, CAC e Ticket contam FTDs de quem <em>registrou</em> na janela (não de quem deu FTD). ⚠️ o mês corrente é uma coorte <strong>maturando</strong> — quem registrou e ainda não deu FTD não conta, então o CAC começa alto e cai conforme matura (~30–45d).
+            </div>
+          )}
         </div>
+        <button
+          className={`preset-btn ${active ? 'active' : ''}`}
+          onClick={() => setByReg(v => !v)}
+          disabled={!hasReg}
+          title={hasReg
+            ? 'Aquisição: alterna FTD por data de FTD ↔ por data de cadastro (registro). Afeta FTD Amount, ROAS FTD, CAC e Ticket.'
+            : 'Requer o backend v34 (deploy pendente do clasp) — ainda não há dado de FTD por cadastro.'}
+        >
+          FTD por cadastro{!hasReg ? ' (pendente)' : ''}
+        </button>
       </div>
       {groups.map((g, i) => (
         <div className="support" key={i}>
@@ -4808,6 +4850,7 @@ function App({ user, onLogout, config }) {
     ggrSafra: MOCK_GGR_SAFRA,       // GGR por safra (M0/M1/M2/M3+) — mock durante o load; live vem de payload.ggrSafra
     ggrSafraRoas: MOCK_GGR_SAFRA_ROAS, // invest + GGR acumulado por safra (cohort ROAS) — live vem de payload.ggrSafraRoas
     monthlyClose: null,        // depósitos por safra {act,bp} — aba Monthly Close
+    ftdByRegister: null,       // FTDs por canal cohortados por data de CADASTRO — toggle no Farol (só live/backend v34+)
     ggrPayback: MOCK_GGR_PAYBACK,
     dailyCohort: MOCK_DAILY_COHORT,
     retencaoFaixa: MOCK_RETENCAO_FAIXA,
@@ -4846,6 +4889,7 @@ function App({ user, onLogout, config }) {
           depComposition: payload.depComposition,
           verticals: payload.verticals,
           channels: payload.channels,
+          ftdByRegister: payload.ftdByRegister || null,
           retentionChannels: payload.retentionChannels,
           ggrChannels: payload.ggrChannels,
           ggrSafra: payload.ggrSafra || prev.ggrSafra,        // mantém o último bom (ou mock) se o live vier vazio → toggle de safra nunca some
@@ -5001,6 +5045,7 @@ function App({ user, onLogout, config }) {
     depM0Channels: fDepM0Channels, depByChannel: fDepByChannel, rolloverMatrix: fRolloverMatrix,
     isLive: state.isLive,
     monthlyClose: state.monthlyClose,   // aba Monthly Close (house-level, segue scope do backend)
+    ftdByRegister: state.ftdByRegister,  // FTDs por canal por data de cadastro — toggle no Farol (Aquisição)
     ytd,   // YTD ativo (preset global): Farol/Monthly Close suprimem M-1/trend e relabelam (a janela já é abril→ontem via appliedRange)
     allTabs: TABS, hiddenTabs, onSetTabHidden: setTabHidden,   // controle de visibilidade (Segurança)
   };
