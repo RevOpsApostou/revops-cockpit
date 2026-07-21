@@ -7,11 +7,14 @@
 <!-- App já é dark nativo: trava o Dark Reader (e similares) p/ não "clarear" fundos escuros (ex.: caixa do tooltip) -->
 <meta name="darkreader-lock">
 <title>RevOps Cockpit — Apostou</title>
+<!-- Aquece a conexão com o endpoint de dados (Apps Script → googleusercontent) p/ o 1º fetch conectar antes. -->
+<link rel="preconnect" href="https://script.google.com" crossorigin>
+<link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
-<!-- SheetJS: export .xlsx client-side (Farol + Monthly Close). Global XLSX. -->
-<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<!-- SheetJS: carregado SOB DEMANDA no export (ensureXLSX_), não em todo load — tira ~1MB do carregamento. -->
+
 <style>
   :root {
     --bg: #000000;
@@ -3894,13 +3897,30 @@ function buildFarolExportGroups_(MM, f, monthlyClose, channels, chFilter, range,
 // Valores crus + número formatado por tipo (R$, %, multiplicador, qtd) via cell.z.
 const MONTH_ABBR_ = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 
+// Carrega o SheetJS SOB DEMANDA (só quando exporta) em vez de em todo carregamento de página — tira ~1MB
+// do caminho crítico. Resolve na hora se já estiver carregado (inclui o harness headless de QA, que já
+// injeta o XLSX real no global). Idempotente: reusa a mesma Promise se um 2º clique vier durante o load.
+let _xlsxPromise = null;
+function ensureXLSX_() {
+  if (typeof XLSX !== 'undefined') return Promise.resolve();
+  if (_xlsxPromise) return _xlsxPromise;
+  _xlsxPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
+    s.onload = () => resolve();
+    s.onerror = () => { _xlsxPromise = null; reject(new Error('Falha ao carregar a biblioteca de Excel (SheetJS).')); };
+    document.head.appendChild(s);
+  });
+  return _xlsxPromise;
+}
+
 // Export SEMPRE YTD, MÊS A MÊS. Busca cada mês (abr→ontem) no backend, deriva as métricas com a MESMA
 // fonte do App (derivePayloadMetrics_) e monta Farol + Monthly Close em formato LONGO, com a coluna
 // "Mês/Ano" entre Grupo/Seção e Métrica. Ignora o slicer de data; respeita o escopo de canal (chFilter).
 // Reusa buildFarolExportGroups_ (splits Growth/Not-Growth + coortes) e buildMonthlyCloseRows_ por mês.
 // onProgress(feito, total) opcional p/ o botão mostrar o andamento. Assíncrona (N fetches, sequenciais).
 async function exportFarolYtd_({ chFilter, escopo, onProgress }) {
-  if (typeof XLSX === 'undefined') { alert('Biblioteca de Excel ainda carregando. Aguarde 1s e tente de novo.'); return; }
+  try { await ensureXLSX_(); } catch (e) { alert((e && e.message) || 'Falha ao carregar a biblioteca de Excel.'); return; }
   if (!ENDPOINT_URL) { alert('Sem endpoint (modo mock) — o export YTD precisa do backend.'); return; }
   const numFmt = (fmt) => fmt === 'brl' ? 'R$ #,##0.00'
     : fmt === 'pct' ? '0.0%' : fmt === 'multiple' ? '0.00"x"' : fmt === 'qty' ? '#,##0' : '#,##0.00';
