@@ -1,0 +1,12 @@
+{
+  "name": "revops-cockpit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RevOps Cockpit (Apostou) — dashboard single-file React. Fonte JSX = app.jsx; build.js compila para o index.html servido (sem Babel em runtime).",
+  "scripts": {
+    "build": "node build.js"
+  },
+  "devDependencies": {
+    "@babel/standalone": "^7.24.7"
+  }
+}
