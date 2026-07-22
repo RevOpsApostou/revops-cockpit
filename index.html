@@ -44,7 +44,9 @@
   .topbar {
     display: flex; align-items: center; justify-content: space-between;
     padding: 16px 32px; border-bottom: 1px solid var(--border);
-    position: sticky; top: 0; z-index: 10; background: var(--bg);
+    /* z acima do .slicer (z-11): o popover de export (Excel) é filho da topbar e cai
+       sobre a linha do slicer — sem isso o slicer inteiro pinta por cima do popover. */
+    position: sticky; top: 0; z-index: 12; background: var(--bg);
     flex-wrap: wrap; gap: 12px;
   }
   .brand { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
@@ -107,8 +109,9 @@
     display: flex; align-items: center; gap: 14px;
     padding: 12px 32px; border-bottom: 1px solid var(--border);
     background: var(--bg); flex-wrap: wrap;
-    /* acima da .tabs (z-9) e .topbar (z-10): senão o painel do multiselect de CANAL,
-       preso no stacking context da .slicer, fica coberto pela barra de abas */
+    /* acima da .tabs (z-9): senão o painel do multiselect de CANAL, preso no stacking
+       context da .slicer, fica coberto pela barra de abas. Abaixo da .topbar (z-12) de
+       propósito, p/ o popover de export (filho da topbar) cair sobre o slicer. */
     position: sticky; top: 65px; z-index: 11;
   }
   .slicer-group { display: flex; align-items: center; gap: 8px; }
