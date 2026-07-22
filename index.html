@@ -8458,6 +8458,29 @@ function SegurancaTab({
   React.useEffect(() => {
     load();
   }, [load]);
+  // Tracker de acessos (últimos 30 dias) — só admin. Carrega 1× ao abrir a aba.
+  const [access, setAccess] = React.useState(null);
+  const [accErr, setAccErr] = React.useState(null);
+  React.useEffect(() => {
+    apiPost_({
+      action: 'accessLog',
+      session
+    }).then(j => {
+      if (j && j.ok) setAccess(j.access);else setAccErr(j && j.error || 'Falha ao carregar acessos');
+    }).catch(() => setAccErr('Erro de conexão'));
+  }, [session]);
+  const fmtWhen_ = ts => {
+    try {
+      return new Date(ts).toLocaleString('pt-BR', {
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (e) {
+      return '—';
+    }
+  };
   const add = ev => {
     ev.preventDefault();
     setBusy(true);
@@ -8551,6 +8574,69 @@ function SegurancaTab({
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", null, "Seguran\xE7a \xB7 Acessos"), /*#__PURE__*/React.createElement("div", {
     className: "subtitle"
   }, "Quem pode entrar no dashboard. Login validado no backend, senha guardada em hash (SHA-256). S\xF3 admin v\xEA esta aba."))), /*#__PURE__*/React.createElement("div", {
+    className: "support"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "support-title"
+  }, "Quem acessou \xB7 \xFAltimos ", access ? access.windowDays : 30, " dias"), /*#__PURE__*/React.createElement("div", {
+    className: "ch-note",
+    style: {
+      marginTop: 0,
+      marginBottom: '12px'
+    }
+  }, "Cada usu\xE1rio ", /*#__PURE__*/React.createElement("strong", null, "autenticado"), " que carrega o dashboard \xE9 registrado (o cockpit \xE9 gated por login \u2192 s\xF3 aparece quem entrou; n\xE3o h\xE1 visita an\xF4nima). No m\xE1x 1 registro por hora por pessoa. S\xF3 admin v\xEA."), accErr && /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: 'var(--negative)',
+      fontSize: '12px',
+      marginBottom: '8px'
+    }
+  }, accErr), /*#__PURE__*/React.createElement("div", {
+    className: "table-scroll"
+  }, /*#__PURE__*/React.createElement("table", {
+    className: "ch-table"
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Usu\xE1rio"), /*#__PURE__*/React.createElement("th", null, "E-mail"), /*#__PURE__*/React.createElement("th", null, "\xDAltimo acesso"), /*#__PURE__*/React.createElement("th", null, "Dias ativos"), /*#__PURE__*/React.createElement("th", null, "Acessos"), /*#__PURE__*/React.createElement("th", {
+    title: "Um bloco por dia (14 dias); aceso = acessou"
+  }, "\xDAltimos 14 dias"))), /*#__PURE__*/React.createElement("tbody", null, (access ? access.users : []).map((u, i) => {
+    const daySet = {};
+    (u.days || []).forEach(d => {
+      daySet[d] = 1;
+    });
+    return /*#__PURE__*/React.createElement("tr", {
+      key: i
+    }, /*#__PURE__*/React.createElement("td", {
+      className: "ch-name"
+    }, u.name, u.admin ? ' · admin' : '', !u.known ? ' · removido' : ''), /*#__PURE__*/React.createElement("td", null, u.email), /*#__PURE__*/React.createElement("td", null, u.lastSeen ? fmtWhen_(u.lastSeen) : '—'), /*#__PURE__*/React.createElement("td", null, u.activeDays), /*#__PURE__*/React.createElement("td", null, u.hits), /*#__PURE__*/React.createElement("td", {
+      style: {
+        whiteSpace: 'nowrap'
+      }
+    }, Array.from({
+      length: 14
+    }, (_, k) => {
+      const iso = daysAgoISO_(13 - k);
+      const on = !!daySet[iso];
+      return /*#__PURE__*/React.createElement("span", {
+        key: k,
+        title: iso,
+        style: {
+          display: 'inline-block',
+          width: '8px',
+          height: '13px',
+          marginRight: '2px',
+          borderRadius: '2px',
+          background: on ? 'var(--accent-yellow)' : 'var(--border)'
+        }
+      });
+    })));
+  }), access && access.users.length === 0 && /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
+    colSpan: "6",
+    style: {
+      color: 'var(--text-muted)'
+    }
+  }, "nenhum acesso registrado ainda")), !access && !accErr && /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
+    colSpan: "6",
+    style: {
+      color: 'var(--text-muted)'
+    }
+  }, "carregando\u2026")))))), /*#__PURE__*/React.createElement("div", {
     className: "support"
   }, /*#__PURE__*/React.createElement("div", {
     className: "support-title"

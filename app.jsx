@@ -4451,6 +4451,15 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
     }).catch(() => setErr('Erro de conexão'));
   }, [session]);
   React.useEffect(() => { load(); }, [load]);
+  // Tracker de acessos (últimos 30 dias) — só admin. Carrega 1× ao abrir a aba.
+  const [access, setAccess] = React.useState(null);
+  const [accErr, setAccErr] = React.useState(null);
+  React.useEffect(() => {
+    apiPost_({ action: 'accessLog', session }).then(j => {
+      if (j && j.ok) setAccess(j.access); else setAccErr((j && j.error) || 'Falha ao carregar acessos');
+    }).catch(() => setAccErr('Erro de conexão'));
+  }, [session]);
+  const fmtWhen_ = (ts) => { try { return new Date(ts).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (e) { return '—'; } };
   const add = (ev) => {
     ev.preventDefault(); setBusy(true); setErr(null);
     apiPost_({ action: 'addUser', session, email: form.email, name: form.name, senha: form.senha, admin: form.admin })
@@ -4496,6 +4505,39 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
         <h1>Segurança · Acessos</h1>
         <div className="subtitle">Quem pode entrar no dashboard. Login validado no backend, senha guardada em hash (SHA-256). Só admin vê esta aba.</div>
       </div></div>
+      <div className="support">
+        <div className="support-title">Quem acessou · últimos {access ? access.windowDays : 30} dias</div>
+        <div className="ch-note" style={{ marginTop: 0, marginBottom: '12px' }}>
+          Cada usuário <strong>autenticado</strong> que carrega o dashboard é registrado (o cockpit é gated por login → só aparece quem entrou; não há visita anônima). No máx 1 registro por hora por pessoa. Só admin vê.
+        </div>
+        {accErr && <div style={{ color: 'var(--negative)', fontSize: '12px', marginBottom: '8px' }}>{accErr}</div>}
+        <div className="table-scroll"><table className="ch-table">
+          <thead><tr><th>Usuário</th><th>E-mail</th><th>Último acesso</th><th>Dias ativos</th><th>Acessos</th><th title="Um bloco por dia (14 dias); aceso = acessou">Últimos 14 dias</th></tr></thead>
+          <tbody>
+            {(access ? access.users : []).map((u, i) => {
+              const daySet = {}; (u.days || []).forEach(d => { daySet[d] = 1; });
+              return (
+                <tr key={i}>
+                  <td className="ch-name">{u.name}{u.admin ? ' · admin' : ''}{!u.known ? ' · removido' : ''}</td>
+                  <td>{u.email}</td>
+                  <td>{u.lastSeen ? fmtWhen_(u.lastSeen) : '—'}</td>
+                  <td>{u.activeDays}</td>
+                  <td>{u.hits}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    {Array.from({ length: 14 }, (_, k) => {
+                      const iso = daysAgoISO_(13 - k);
+                      const on = !!daySet[iso];
+                      return <span key={k} title={iso} style={{ display: 'inline-block', width: '8px', height: '13px', marginRight: '2px', borderRadius: '2px', background: on ? 'var(--accent-yellow)' : 'var(--border)' }} />;
+                    })}
+                  </td>
+                </tr>
+              );
+            })}
+            {access && access.users.length === 0 && <tr><td colSpan="6" style={{ color: 'var(--text-muted)' }}>nenhum acesso registrado ainda</td></tr>}
+            {!access && !accErr && <tr><td colSpan="6" style={{ color: 'var(--text-muted)' }}>carregando…</td></tr>}
+          </tbody>
+        </table></div>
+      </div>
       <div className="support">
         <div className="support-title">Adicionar / atualizar acesso</div>
         <form onSubmit={add} style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', marginBottom: '10px' }}>
