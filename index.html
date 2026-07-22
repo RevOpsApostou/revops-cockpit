@@ -7592,6 +7592,7 @@ function TabAtivacao({
   const grupoQ = grupoActive ? grupoSel.map(g => `&grupo=${encodeURIComponent(g)}`).join('') : '';
   const [med, setMed] = React.useState({
     rows: null,
+    online: null,
     loading: false,
     error: null
   });
@@ -7606,11 +7607,13 @@ function TabAtivacao({
       if (j.error) throw new Error(j.error);
       setMed({
         rows: j.ativacaoMed || [],
+        online: j.ativacaoOnline || [],
         loading: false,
         error: null
       });
     }).catch(e => setMed({
       rows: null,
+      online: null,
       loading: false,
       error: String(e.message || e)
     }));
@@ -7624,6 +7627,19 @@ function TabAtivacao({
     });
     return m;
   }, [med.rows]);
+  // Dias online (GA4) por semana × canal → onlineMap[week][canal] = { ftds, onlineDays }. Somas compõem
+  // client-side (canal no cliente; faixa/grupo já vêm filtrados via os params do fetch).
+  const onlineMap = React.useMemo(() => {
+    const m = {};
+    (med.online || []).forEach(r => {
+      (m[r.week] || (m[r.week] = {}))[r.canal] = r;
+    });
+    return m;
+  }, [med.online]);
+  // GA4 confiável de jun/26 pra frente (começou ~mai). Janela toda em jun+ = hero online válido; senão "—".
+  const GA4_WEEK_MIN = '2026-06-01';
+  const ga4Full = !!(winFrom && winFrom >= GA4_WEEK_MIN); // janela inteira coberta → hero online
+  const ga4Any = !!(winTo && winTo >= GA4_WEEK_MIN); // algum trecho coberto → mostra colunas semanais
   const scopeKey = ativScopeKey_(chFilter);
   const chLabel = chLabel_(chFilter);
   // Agrega por SEMANA (seg), no recorte de canal (slicer global) + faixa + grupo (filtros da aba).
@@ -7641,7 +7657,9 @@ function TabAtivacao({
       depD0: 0,
       bet4d: 0,
       betDays: 0,
-      actDays: 0
+      actDays: 0,
+      oDays: 0,
+      oFtds: 0
     });
     const tot = zero();
     (src || []).forEach(r => {
@@ -7663,8 +7681,21 @@ function TabAtivacao({
       add(b);
       add(tot);
     });
+    // Dias online (GA4): soma oDays/oFtds por semana, no MESMO recorte de canal (faixa/grupo já filtrados no fetch).
+    Object.keys(onlineMap).forEach(wk => {
+      Object.keys(onlineMap[wk]).forEach(canal => {
+        if (!selCh(canal)) return;
+        const o = onlineMap[wk][canal];
+        const b = wm[wk] || (wm[wk] = zero());
+        b.oDays += o.onlineDays || 0;
+        b.oFtds += o.ftds || 0;
+        tot.oDays += o.onlineDays || 0;
+        tot.oFtds += o.ftds || 0;
+      });
+    });
     const derive = (b, wk) => {
       const mrow = scopeKey && medMap[wk] && medMap[wk][scopeKey] ? medMap[wk][scopeKey] : null;
+      const wkGa4 = wk === '__all__' ? ga4Full : wk >= GA4_WEEK_MIN; // gate por semana (esconde pré-GA4)
       return {
         week: wk,
         qtd: b.qtd,
@@ -7676,7 +7707,8 @@ function TabAtivacao({
         vezes: b.qtd ? b.bet4d / b.qtd : null,
         vezesMed: mrow ? mrow.medBet4d : null,
         betDaysR: b.qtd ? b.betDays / (4 * b.qtd) : null,
-        actDaysR: b.qtd ? b.actDays / (4 * b.qtd) : null
+        actDaysR: b.qtd ? b.actDays / (4 * b.qtd) : null,
+        onlineR: wkGa4 && b.oFtds ? b.oDays / (4 * b.oFtds) : null
       };
     };
     const ks = Object.keys(wm).sort();
@@ -7684,7 +7716,7 @@ function TabAtivacao({
       weeks: ks.map(k => derive(wm[k], k)),
       totals: derive(tot, '__all__')
     };
-  }, [src, selCh, medMap, scopeKey, faixaSel, grupoSel, grupoActive]);
+  }, [src, selCh, medMap, onlineMap, scopeKey, faixaSel, grupoSel, grupoActive, ga4Full]);
   const T = totals;
   const H = (label, act, fmt, title) => ({
     label,
@@ -7695,7 +7727,7 @@ function TabAtivacao({
     title
   });
   const d0Heroes = [H('% apostou no D0', T.pctBet, 'pct'), H('Turnover D0 (Σ)', T.turnD0, 'brl'), H('Aposta média D0', T.meanBet, 'brl'), H('Aposta mediana D0', T.medBet, 'brl'), H('Rollover D0', T.rollover, 'multiple')];
-  const w4Heroes = [H('Vezes que apostou · 4D (média)', T.vezes, 'qty'), H('Vezes que apostou · 4D (mediana)', T.vezesMed, 'qty'), H('Dias que apostou ÷ 4', T.betDaysR, 'pct'), H('Dias com atividade ÷ 4', T.actDaysR, 'pct')];
+  const w4Heroes = [H('Vezes que apostou · 4D (média)', T.vezes, 'qty'), H('Vezes que apostou · 4D (mediana)', T.vezesMed, 'qty'), H('Dias que apostou ÷ 4', T.betDaysR, 'pct'), H('Dias online ÷ 4 · GA4', ga4Full ? T.onlineR : null, 'pct')];
   const dm = s => {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s));
     return m ? weekLabel_(s) : String(s);
@@ -7739,7 +7771,12 @@ function TabAtivacao({
   }, fmtQty(r.vezesMed)), /*#__PURE__*/React.createElement("td", {
     key: "bd"
   }, fmtPct(r.betDaysR, 1)), /*#__PURE__*/React.createElement("td", {
-    key: "ad"
+    key: "on"
+  }, fmtPct(r.onlineR, 1)), /*#__PURE__*/React.createElement("td", {
+    key: "ad",
+    style: {
+      color: 'var(--text-muted)'
+    }
   }, fmtPct(r.actDaysR, 1))];
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "tab-header"
@@ -7800,7 +7837,7 @@ function TabAtivacao({
     metric: m
   }))), /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
-  }, "Janela = dias 0 a 3 do FTD. ", /*#__PURE__*/React.createElement("strong", null, "Vezes que apostou"), " = n\xBA de apostas na janela por jogador (a m\xE9dia \xE9 inflada por slots/whales \u2192 veja a mediana).", /*#__PURE__*/React.createElement("strong", null, " Dias que apostou \xF7 4"), " = dias distintos em que apostou (0\u20133) \xF7 4, m\xE9dia da coorte (ex.: 32,6% = 1,30 de 4 dias).", /*#__PURE__*/React.createElement("strong", null, " Dias com atividade \xF7 4"), " = dias com QUALQUER transa\xE7\xE3o (aposta, dep\xF3sito ou saque) \xF7 4 \u2014 ", /*#__PURE__*/React.createElement("em", null, "proxy de \"dias online\""), ": o player_metrics n\xE3o tem dado de login/sess\xE3o, ent\xE3o \"online\" n\xE3o \xE9 mensur\xE1vel direto; esta \xE9 a aproxima\xE7\xE3o mais pr\xF3xima.")), /*#__PURE__*/React.createElement("div", {
+  }, "Janela = dias 0 a 3 do FTD. ", /*#__PURE__*/React.createElement("strong", null, "Vezes que apostou"), " = n\xBA de apostas na janela por jogador (a m\xE9dia \xE9 inflada por slots/whales \u2192 veja a mediana).", /*#__PURE__*/React.createElement("strong", null, " Dias que apostou \xF7 4"), " = dias distintos em que apostou (0\u20133) \xF7 4, m\xE9dia da coorte (ex.: 32,6% = 1,30 de 4 dias).", /*#__PURE__*/React.createElement("strong", null, " Dias online \xF7 4"), " = dias distintos com ", /*#__PURE__*/React.createElement("strong", null, "login/sess\xE3o no GA4"), " (presen\xE7a real \u2014 o cara abriu o app/site) nos dias 0\u20133 \xF7 4. Cobre ~99% das contas FTD e \xE9 ", /*#__PURE__*/React.createElement("strong", null, "confi\xE1vel de jun/26 pra frente"), " (o GA4 come\xE7ou ~mai/26 \u2192 janelas anteriores ficam sem online). Costuma ser maior que \"Dias apostou\" (abre mais dias do que aposta). A coluna ", /*#__PURE__*/React.createElement("em", null, "Dias Ativo/4"), " (cinza) \xE9 o proxy antigo (dias com transa\xE7\xE3o) \u2014 deixei pra comparar; \xE9 sempre menor que o online real.", ga4Full ? '' : ' ⚠️ A janela atual é anterior a jun/26 (ou parcial) — o hero de online fica "—"; as semanas de jun+ ainda mostram.')), /*#__PURE__*/React.createElement("div", {
     className: "support"
   }, /*#__PURE__*/React.createElement("div", {
     className: "support-title"
@@ -7831,7 +7868,9 @@ function TabAtivacao({
   }, "Vezes 4D (med)"), /*#__PURE__*/React.createElement("th", {
     title: "Dias distintos apostando (0\u20133) \xF7 4, m\xE9dia"
   }, "Dias Apostou/4"), /*#__PURE__*/React.createElement("th", {
-    title: "Dias distintos com atividade (0\u20133) \xF7 4, m\xE9dia \u2014 proxy de online"
+    title: "Dias distintos ONLINE (login/sess\xE3o no GA4) nos dias 0\u20133 \xF7 4, m\xE9dia. Cobre ~99% das contas FTD; confi\xE1vel de jun/26."
+  }, "Dias Online/4"), /*#__PURE__*/React.createElement("th", {
+    title: "Dias distintos com atividade transacional (0\u20133) \xF7 4, m\xE9dia \u2014 proxy antigo, menor que o online real"
   }, "Dias Ativo/4"))), /*#__PURE__*/React.createElement("tbody", null, weeks.map((r, i) => /*#__PURE__*/React.createElement("tr", {
     key: i
   }, /*#__PURE__*/React.createElement("td", {

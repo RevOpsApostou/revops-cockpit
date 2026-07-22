@@ -3910,14 +3910,14 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
   // RE-BUSCA com os filtros de faixa/grupo p/ a mediana bater com as somas/contagens filtradas.
   const faixaQ = faixaSel.map(f => `&faixa=${encodeURIComponent(f)}`).join('');
   const grupoQ = grupoActive ? grupoSel.map(g => `&grupo=${encodeURIComponent(g)}`).join('') : '';
-  const [med, setMed] = React.useState({ rows: null, loading: false, error: null });
+  const [med, setMed] = React.useState({ rows: null, online: null, loading: false, error: null });
   React.useEffect(() => {
     if (!winFrom || !winTo || !ENDPOINT_URL) return;
     setMed(s => ({ ...s, loading: true, error: null }));
     fetch(`${ENDPOINT_URL}?${authParam_()}&from=${winFrom}&to=${winTo}&only=ativacao${faixaQ}${grupoQ}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
-      .then(j => { if (j.error) throw new Error(j.error); setMed({ rows: j.ativacaoMed || [], loading: false, error: null }); })
-      .catch(e => setMed({ rows: null, loading: false, error: String(e.message || e) }));
+      .then(j => { if (j.error) throw new Error(j.error); setMed({ rows: j.ativacaoMed || [], online: j.ativacaoOnline || [], loading: false, error: null }); })
+      .catch(e => setMed({ rows: null, online: null, loading: false, error: String(e.message || e) }));
   }, [winFrom, winTo, faixaQ, grupoQ]);
   // Mapa de medianas: medMap[week||'__all__'][key] = { medTurnD0, medBet4d }.
   const medMap = React.useMemo(() => {
@@ -3925,13 +3925,24 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
     (med.rows || []).forEach(r => { const wk = r.week || '__all__'; (m[wk] || (m[wk] = {}))[r.key] = r; });
     return m;
   }, [med.rows]);
+  // Dias online (GA4) por semana × canal → onlineMap[week][canal] = { ftds, onlineDays }. Somas compõem
+  // client-side (canal no cliente; faixa/grupo já vêm filtrados via os params do fetch).
+  const onlineMap = React.useMemo(() => {
+    const m = {};
+    (med.online || []).forEach(r => { (m[r.week] || (m[r.week] = {}))[r.canal] = r; });
+    return m;
+  }, [med.online]);
+  // GA4 confiável de jun/26 pra frente (começou ~mai). Janela toda em jun+ = hero online válido; senão "—".
+  const GA4_WEEK_MIN = '2026-06-01';
+  const ga4Full = !!(winFrom && winFrom >= GA4_WEEK_MIN);   // janela inteira coberta → hero online
+  const ga4Any = !!(winTo && winTo >= GA4_WEEK_MIN);        // algum trecho coberto → mostra colunas semanais
   const scopeKey = ativScopeKey_(chFilter);
   const chLabel = chLabel_(chFilter);
   // Agrega por SEMANA (seg), no recorte de canal (slicer global) + faixa + grupo (filtros da aba).
   const selCh = chSelector_(chFilter);
   const { weeks, totals } = React.useMemo(() => {
     const wm = {};
-    const zero = () => ({ qtd: 0, ftd: 0, turnD0: 0, betD0: 0, depD0: 0, bet4d: 0, betDays: 0, actDays: 0 });
+    const zero = () => ({ qtd: 0, ftd: 0, turnD0: 0, betD0: 0, depD0: 0, bet4d: 0, betDays: 0, actDays: 0, oDays: 0, oFtds: 0 });
     const tot = zero();
     (src || []).forEach(r => {
       if (!selCh(r.canal)) return;
@@ -3942,8 +3953,19 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
       const add = (o) => { o.qtd += r.qtdFtds || 0; o.ftd += r.ftdTotal || 0; o.turnD0 += r.turnD0 || 0; o.betD0 += r.betD0Cnt || 0; o.depD0 += r.depD0 || 0; o.bet4d += r.betCnt4d || 0; o.betDays += r.betDays4d || 0; o.actDays += r.actDays4d || 0; };
       add(b); add(tot);
     });
+    // Dias online (GA4): soma oDays/oFtds por semana, no MESMO recorte de canal (faixa/grupo já filtrados no fetch).
+    Object.keys(onlineMap).forEach(wk => {
+      Object.keys(onlineMap[wk]).forEach(canal => {
+        if (!selCh(canal)) return;
+        const o = onlineMap[wk][canal];
+        const b = wm[wk] || (wm[wk] = zero());
+        b.oDays += o.onlineDays || 0; b.oFtds += o.ftds || 0;
+        tot.oDays += o.onlineDays || 0; tot.oFtds += o.ftds || 0;
+      });
+    });
     const derive = (b, wk) => {
       const mrow = (scopeKey && medMap[wk] && medMap[wk][scopeKey]) ? medMap[wk][scopeKey] : null;
+      const wkGa4 = wk === '__all__' ? ga4Full : (wk >= GA4_WEEK_MIN);   // gate por semana (esconde pré-GA4)
       return {
         week: wk, qtd: b.qtd, turnD0: b.turnD0,
         pctBet: b.qtd ? b.betD0 / b.qtd : null,
@@ -3954,11 +3976,12 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
         vezesMed: mrow ? mrow.medBet4d : null,
         betDaysR: b.qtd ? b.betDays / (4 * b.qtd) : null,
         actDaysR: b.qtd ? b.actDays / (4 * b.qtd) : null,
+        onlineR: (wkGa4 && b.oFtds) ? b.oDays / (4 * b.oFtds) : null,
       };
     };
     const ks = Object.keys(wm).sort();
     return { weeks: ks.map(k => derive(wm[k], k)), totals: derive(tot, '__all__') };
-  }, [src, selCh, medMap, scopeKey, faixaSel, grupoSel, grupoActive]);
+  }, [src, selCh, medMap, onlineMap, scopeKey, faixaSel, grupoSel, grupoActive, ga4Full]);
 
   const T = totals;
   const H = (label, act, fmt, title) => ({ label, act, fmt, bp: null, m1: null, title });
@@ -3973,7 +3996,7 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
     H('Vezes que apostou · 4D (média)', T.vezes, 'qty'),
     H('Vezes que apostou · 4D (mediana)', T.vezesMed, 'qty'),
     H('Dias que apostou ÷ 4', T.betDaysR, 'pct'),
-    H('Dias com atividade ÷ 4', T.actDaysR, 'pct'),
+    H('Dias online ÷ 4 · GA4', ga4Full ? T.onlineR : null, 'pct'),
   ];
   const dm = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); return m ? weekLabel_(s) : String(s); };
   const rng = (key) => { const v = weeks.map(x => x[key]).filter(x => x != null && !isNaN(x)); return v.length ? { min: Math.min(...v), max: Math.max(...v) } : { min: 0, max: 1 }; };
@@ -3994,7 +4017,8 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
     <td key="vz">{fmtQty(r.vezes)}</td>,
     <td key="vm">{fmtQty(r.vezesMed)}</td>,
     <td key="bd">{fmtPct(r.betDaysR, 1)}</td>,
-    <td key="ad">{fmtPct(r.actDaysR, 1)}</td>,
+    <td key="on">{fmtPct(r.onlineR, 1)}</td>,
+    <td key="ad" style={{ color: 'var(--text-muted)' }}>{fmtPct(r.actDaysR, 1)}</td>,
   ];
   return (
     <React.Fragment>
@@ -4026,7 +4050,7 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
         <div className="ch-note">
           Janela = dias 0 a 3 do FTD. <strong>Vezes que apostou</strong> = nº de apostas na janela por jogador (a média é inflada por slots/whales → veja a mediana).
           <strong> Dias que apostou ÷ 4</strong> = dias distintos em que apostou (0–3) ÷ 4, média da coorte (ex.: 32,6% = 1,30 de 4 dias).
-          <strong> Dias com atividade ÷ 4</strong> = dias com QUALQUER transação (aposta, depósito ou saque) ÷ 4 — <em>proxy de "dias online"</em>: o player_metrics não tem dado de login/sessão, então "online" não é mensurável direto; esta é a aproximação mais próxima.
+          <strong> Dias online ÷ 4</strong> = dias distintos com <strong>login/sessão no GA4</strong> (presença real — o cara abriu o app/site) nos dias 0–3 ÷ 4. Cobre ~99% das contas FTD e é <strong>confiável de jun/26 pra frente</strong> (o GA4 começou ~mai/26 → janelas anteriores ficam sem online). Costuma ser maior que "Dias apostou" (abre mais dias do que aposta). A coluna <em>Dias Ativo/4</em> (cinza) é o proxy antigo (dias com transação) — deixei pra comparar; é sempre menor que o online real.{ga4Full ? '' : ' ⚠️ A janela atual é anterior a jun/26 (ou parcial) — o hero de online fica "—"; as semanas de jun+ ainda mostram.'}
         </div>
       </div>
       <div className="support">
@@ -4044,7 +4068,8 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
               <th title="Nº médio de apostas por jogador nos dias 0–3">Vezes 4D (méd)</th>
               <th title="Mediana do nº de apostas nos dias 0–3">Vezes 4D (med)</th>
               <th title="Dias distintos apostando (0–3) ÷ 4, média">Dias Apostou/4</th>
-              <th title="Dias distintos com atividade (0–3) ÷ 4, média — proxy de online">Dias Ativo/4</th>
+              <th title="Dias distintos ONLINE (login/sessão no GA4) nos dias 0–3 ÷ 4, média. Cobre ~99% das contas FTD; confiável de jun/26.">Dias Online/4</th>
+              <th title="Dias distintos com atividade transacional (0–3) ÷ 4, média — proxy antigo, menor que o online real">Dias Ativo/4</th>
             </tr>
           </thead>
           <tbody>
