@@ -3865,6 +3865,163 @@ function InvCampanhaTab({ range, chFilter }) {
   );
 }
 
+// ============================================================
+// ABA ATIVAÇÃO D0 — sinais precoces da coorte de FTD (visão semanal, seg–dom).
+// Seção D0: % que apostou no D0, turnover D0, aposta média/mediana D0, rollover D0 (turnover D0 ÷ dep D0).
+// Seção janela 4D (dias 0–3): nº de apostas, dias que apostou ÷ 4, dias com atividade ÷ 4 (proxy de online —
+// não há dado de login/sessão no player_metrics). Somas/contagens vêm do payload compartilhado `retencaoFaixa`
+// (mesma coorte da aba Multiplicadores e Retenção, filtrada por canal client-side); a MEDIANA não compõe de
+// linhas diárias → vem de `only=ativacao` pré-computada por (semana × escopo). "Apostou" = turnover > 0
+// (não há split real×bônus na aposta — bônus é ~1% do turnover, então é bom proxy de "apostou saldo real").
+// Chave de escopo p/ a mediana: canal específico (1 sel) · __growth__ (Canais Growth) · __total__ (Total Casa);
+// combinação de 2+ canais não tem mediana pré-computada → "—".
+function ativScopeKey_(chFilter) {
+  const list = chList_(chFilter);
+  if (list.length === 1) return list[0];
+  if (list.length > 1) return null;
+  return (chFilter && chFilter.scope === 'growth') ? '__growth__' : '__total__';
+}
+function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
+  const winFrom = meta && meta.from, winTo = meta && meta.to;
+  // Medianas (turnover D0 + nº de apostas 4D) por semana × escopo + janela toda (week=null). Fetch próprio.
+  const [med, setMed] = React.useState({ rows: null, loading: false, error: null });
+  React.useEffect(() => {
+    if (!winFrom || !winTo || !ENDPOINT_URL) return;
+    setMed(s => ({ ...s, loading: true, error: null }));
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${winFrom}&to=${winTo}&only=ativacao`)
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(j => { if (j.error) throw new Error(j.error); setMed({ rows: j.ativacaoMed || [], loading: false, error: null }); })
+      .catch(e => setMed({ rows: null, loading: false, error: String(e.message || e) }));
+  }, [winFrom, winTo]);
+  // Mapa de medianas: medMap[week||'__all__'][key] = { medTurnD0, medBet4d }.
+  const medMap = React.useMemo(() => {
+    const m = {};
+    (med.rows || []).forEach(r => { const wk = r.week || '__all__'; (m[wk] || (m[wk] = {}))[r.key] = r; });
+    return m;
+  }, [med.rows]);
+  const scopeKey = ativScopeKey_(chFilter);
+  const chLabel = chLabel_(chFilter);
+  // Agrega o payload compartilhado por SEMANA (seg), no recorte de canal do slicer global.
+  const selCh = chSelector_(chFilter);
+  const { weeks, totals } = React.useMemo(() => {
+    const wm = {};
+    const zero = () => ({ qtd: 0, ftd: 0, turnD0: 0, betD0: 0, depD0: 0, bet4d: 0, betDays: 0, actDays: 0 });
+    const tot = zero();
+    (retencaoFaixa || []).forEach(r => {
+      if (!selCh(r.canal)) return;
+      const wk = weekStartISO_(String(r.date));
+      const b = wm[wk] || (wm[wk] = zero());
+      const add = (o) => { o.qtd += r.qtdFtds || 0; o.ftd += r.ftdTotal || 0; o.turnD0 += r.turnD0 || 0; o.betD0 += r.betD0Cnt || 0; o.depD0 += r.depD0 || 0; o.bet4d += r.betCnt4d || 0; o.betDays += r.betDays4d || 0; o.actDays += r.actDays4d || 0; };
+      add(b); add(tot);
+    });
+    const derive = (b, wk) => {
+      const mrow = (scopeKey && medMap[wk] && medMap[wk][scopeKey]) ? medMap[wk][scopeKey] : null;
+      return {
+        week: wk, qtd: b.qtd, turnD0: b.turnD0,
+        pctBet: b.qtd ? b.betD0 / b.qtd : null,
+        meanBet: b.qtd ? b.turnD0 / b.qtd : null,
+        medBet: mrow ? mrow.medTurnD0 : null,
+        rollover: b.depD0 ? b.turnD0 / b.depD0 : null,
+        vezes: b.qtd ? b.bet4d / b.qtd : null,
+        vezesMed: mrow ? mrow.medBet4d : null,
+        betDaysR: b.qtd ? b.betDays / (4 * b.qtd) : null,
+        actDaysR: b.qtd ? b.actDays / (4 * b.qtd) : null,
+      };
+    };
+    const ks = Object.keys(wm).sort();
+    return { weeks: ks.map(k => derive(wm[k], k)), totals: derive(tot, '__all__') };
+  }, [retencaoFaixa, selCh, medMap, scopeKey]);
+
+  const T = totals;
+  const H = (label, act, fmt, title) => ({ label, act, fmt, bp: null, m1: null, title });
+  const d0Heroes = [
+    H('% apostou no D0', T.pctBet, 'pct'),
+    H('Turnover D0 (Σ)', T.turnD0, 'brl'),
+    H('Aposta média D0', T.meanBet, 'brl'),
+    H('Aposta mediana D0', T.medBet, 'brl'),
+    H('Rollover D0', T.rollover, 'multiple'),
+  ];
+  const w4Heroes = [
+    H('Vezes que apostou · 4D (média)', T.vezes, 'qty'),
+    H('Vezes que apostou · 4D (mediana)', T.vezesMed, 'qty'),
+    H('Dias que apostou ÷ 4', T.betDaysR, 'pct'),
+    H('Dias com atividade ÷ 4', T.actDaysR, 'pct'),
+  ];
+  const dm = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); return m ? weekLabel_(s) : String(s); };
+  const rng = (key) => { const v = weeks.map(x => x[key]).filter(x => x != null && !isNaN(x)); return v.length ? { min: Math.min(...v), max: Math.max(...v) } : { min: 0, max: 1 }; };
+  const rPct = rng('pctBet'), rRoll = rng('rollover');
+  const heat = (v, r) => ({ background: heatBg_(v, r.min, r.max) });
+  const medNote = scopeKey == null
+    ? ' Mediana indisponível para combinação de 2+ canais (só Total, Growth ou 1 canal) — mostra "—".'
+    : (med.loading ? ' Medianas carregando…' : (med.error ? ' Erro ao carregar medianas.' : ''));
+  const cells = (r) => [
+    <td key="q">{fmtQty(r.qtd)}</td>,
+    <td key="pb" style={heat(r.pctBet, rPct)}>{fmtPct(r.pctBet, 1)}</td>,
+    <td key="t">{fmtBRL(r.turnD0)}</td>,
+    <td key="am">{fmtBRL(r.meanBet)}</td>,
+    <td key="md">{fmtBRL(r.medBet)}</td>,
+    <td key="ro" style={heat(r.rollover, rRoll)}>{fmtMultiple(r.rollover)}</td>,
+    <td key="vz">{fmtQty(r.vezes)}</td>,
+    <td key="vm">{fmtQty(r.vezesMed)}</td>,
+    <td key="bd">{fmtPct(r.betDaysR, 1)}</td>,
+    <td key="ad">{fmtPct(r.actDaysR, 1)}</td>,
+  ];
+  return (
+    <React.Fragment>
+      <div className="tab-header">
+        <div>
+          <h1>Ativação D0</h1>
+          <div className="subtitle">Sinais precoces da coorte de FTD (visão semanal, seg–dom) — o que o novo jogador faz no dia do 1º depósito e nos 4 primeiros dias. Segue o slicer de canal · {chLabel}</div>
+        </div>
+      </div>
+      <div className="support">
+        <div className="support-title">Ativação no D0 · {chLabel}</div>
+        <div className="hero-grid">{d0Heroes.map((m, i) => <Hero key={i} metric={m} />)}</div>
+        <div className="ch-note">
+          <strong>% apostou no D0</strong> = FTDs com turnover &gt; 0 no dia do FTD ÷ Qtd FTD. <strong>Turnover D0</strong> = Σ valor apostado (casino+esporte+loteria) no D0.
+          <strong> Aposta média D0</strong> = Turnover D0 ÷ Qtd FTD; <strong>mediana</strong> = valor típico por jogador (robusta a whale — a média é muito puxada por poucos grandes apostadores).
+          <strong> Rollover D0</strong> = Turnover D0 ÷ Depósito D0 (quantas vezes o depósito do dia foi apostado). "Apostou" usa o turnover total — não há split real×bônus na aposta, mas o bônus é ~1% do turnover.{medNote}
+        </div>
+      </div>
+      <div className="support">
+        <div className="support-title">Janela dos 4 primeiros dias (D0–D3) · {chLabel}</div>
+        <div className="hero-grid">{w4Heroes.map((m, i) => <Hero key={i} metric={m} />)}</div>
+        <div className="ch-note">
+          Janela = dias 0 a 3 do FTD. <strong>Vezes que apostou</strong> = nº de apostas na janela por jogador (a média é inflada por slots/whales → veja a mediana).
+          <strong> Dias que apostou ÷ 4</strong> = dias distintos em que apostou (0–3) ÷ 4, média da coorte (ex.: 32,6% = 1,30 de 4 dias).
+          <strong> Dias com atividade ÷ 4</strong> = dias com QUALQUER transação (aposta, depósito ou saque) ÷ 4 — <em>proxy de "dias online"</em>: o player_metrics não tem dado de login/sessão, então "online" não é mensurável direto; esta é a aproximação mais próxima.
+        </div>
+      </div>
+      <div className="support">
+        <div className="support-title">Semana a semana (safra de FTD) · {chLabel}{med.loading ? ' · medianas carregando…' : ''}</div>
+        <div className="table-scroll tall"><table className="ch-table">
+          <thead>
+            <tr>
+              <th style={{ whiteSpace: 'nowrap' }}>Semana</th>
+              <th title="Qtd de FTDs na semana">Qtd FTD</th>
+              <th title="% dos FTDs que apostaram (turnover > 0) no D0">% Apostou D0</th>
+              <th title="Σ valor apostado no D0">Turnover D0</th>
+              <th title="Turnover D0 ÷ Qtd FTD">Aposta Méd. D0</th>
+              <th title="Mediana do valor apostado no D0 por jogador (por escopo)">Aposta Med. D0</th>
+              <th title="Turnover D0 ÷ Depósito D0">Rollover D0</th>
+              <th title="Nº médio de apostas por jogador nos dias 0–3">Vezes 4D (méd)</th>
+              <th title="Mediana do nº de apostas nos dias 0–3">Vezes 4D (med)</th>
+              <th title="Dias distintos apostando (0–3) ÷ 4, média">Dias Apostou/4</th>
+              <th title="Dias distintos com atividade (0–3) ÷ 4, média — proxy de online">Dias Ativo/4</th>
+            </tr>
+          </thead>
+          <tbody>
+            {weeks.map((r, i) => (<tr key={i}><td className="ch-name">{dm(r.week)}</td>{cells(r)}</tr>))}
+          </tbody>
+          <tfoot>
+            <tr><td>Total</td>{cells(T)}</tr>
+          </tfoot>
+        </table></div>
+      </div>
+    </React.Fragment>
+  );
+}
+
 const TABS = [
   { id: 'farol', label: 'Farol', component: TabFarol },
   { id: 'monthlyclose', label: 'Monthly Close', component: TabMonthlyClose },
@@ -3873,6 +4030,7 @@ const TABS = [
   { id: 'safras', label: 'Safras Diárias', component: TabSafras },
   { id: 'retencao', label: 'Retenções', component: TabRetencao },
   { id: 'retfaixa', label: 'Multiplicadores e Retenção', component: TabRetencaoFaixa },
+  { id: 'ativacao', label: 'Ativação D0', component: TabAtivacao },
   { id: 'invcampanha', label: 'Investimento p/ Campanha', component: InvCampanhaTab },
   { id: 'ggr', label: 'GGR', component: TabGgr },
   { id: 'depositos', label: 'Depósitos', component: TabDepositos },
