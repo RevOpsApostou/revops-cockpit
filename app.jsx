@@ -3866,216 +3866,217 @@ function InvCampanhaTab({ range, chFilter }) {
 }
 
 // ============================================================
-// ABA ATIVAÇÃO — sinais precoces da coorte de FTD (visão semanal, seg–dom), com JANELA CUMULATIVA selecionável
-// D0/D1/D7/D14/D30 (dias 0..N; tamanho = N+1). Métricas por janela: % apostou (≥1 aposta em 0..N), turnover,
-// aposta média/mediana, rollover (turnover ÷ depósito), nº de apostas (média/mediana), dias apostou ÷ (N+1) e
-// dias ONLINE ÷ (N+1) (login/sessão no GA4). TUDO vem de `only=ativacao` (ativacaoAgg=somas · ativacaoMed=
-// medianas · ativacaoOnline=GA4), com todas as janelas de uma vez → o toggle só seleciona no cliente. "Apostou"
-// = turnover > 0 (não há split real×bônus; bônus é ~1% do turnover). Mediana por escopo: 1 canal · __growth__ ·
-// __total__; combinação de 2+ canais → "—". Semanas imaturas p/ a janela (não fecharam N dias) ficam esmaecidas
-// e FORA do hero total. GA4 confiável de jun/26. ATIV_WINS_F espelha ATIV_WINS do backend.
-const ATIV_WINS_F = [0, 1, 7, 14, 30];
+// ABA ATIVAÇÃO D0 — sinais precoces da coorte de FTD (visão semanal, seg–dom).
+// Seção D0: % que apostou no D0, turnover D0, aposta média/mediana D0, rollover D0 (turnover D0 ÷ dep D0).
+// Seção janela 4D (dias 0–3): nº de apostas, dias que apostou ÷ 4, dias com atividade ÷ 4 (proxy de online —
+// não há dado de login/sessão no player_metrics). Somas/contagens vêm do payload compartilhado `retencaoFaixa`
+// (mesma coorte da aba Multiplicadores e Retenção, filtrada por canal client-side); a MEDIANA não compõe de
+// linhas diárias → vem de `only=ativacao` pré-computada por (semana × escopo). "Apostou" = turnover > 0
+// (não há split real×bônus na aposta — bônus é ~1% do turnover, então é bom proxy de "apostou saldo real").
+// Chave de escopo p/ a mediana: canal específico (1 sel) · __growth__ (Canais Growth) · __total__ (Total Casa);
+// combinação de 2+ canais não tem mediana pré-computada → "—".
 function ativScopeKey_(chFilter) {
   const list = chList_(chFilter);
   if (list.length === 1) return list[0];
   if (list.length > 1) return null;
   return (chFilter && chFilter.scope === 'growth') ? '__growth__' : '__total__';
 }
-function TabAtivacao({ chFilter, meta }) {
+function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
   const winFrom = meta && meta.from, winTo = meta && meta.to;
-  const dataMax = meta && meta.dataMaxDate;
-  // JANELA selecionável D0/D1/D7/D14/D30 (cumulativa 0..N). Coage valor inválido/legado p/ 0.
-  const [winRaw, setWin] = usePersistedState('rvops:ativWin', 0);
-  const win = ATIV_WINS_F.indexOf(Number(winRaw)) >= 0 ? Number(winRaw) : 0;
-  const winLen = win + 1;                        // dias na janela (divisor de "dias apostou/online")
-  const winLabel = 'D' + win;
-  // Filtros DA ABA (canal já é o slicer global): faixa de FTD e grupo de risco.
+  // Filtros DA ABA (canal já é o slicer global): faixa de FTD e grupo de risco — iguais aos da aba
+  // Multiplicadores e Retenção. Faixa filtra client-side (já vem no payload). Grupo exige a base &byGrupo=1.
   const [faixaSel, setFaixaSel] = React.useState([]);   // multi; [] = todas
   const [grupoSel, setGrupoSel] = React.useState([]);   // multi; [] = todos
   const grupoActive = grupoSel.length > 0;
   const faixaAll = faixaSel.length === 0;
   const faixaLabelTxt = faixaAll ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
   const grupoLabelTxt = !grupoActive ? 'todos os grupos' : (grupoSel.length <= 2 ? grupoSel.map(grupoLabel_).join(' + ') : grupoSel.length + ' grupos');
+  // Base COM grupo (&byGrupo=1) — só quando o filtro de grupo está ligado (a aba toda passa a usar essa base).
+  // Traz o campo `grupo` + as mesmas colunas de ativação (turnD0/betD0Cnt/etc) do payload padrão.
+  const [grSrc, setGrSrc] = React.useState({ rows: null, loading: false, error: null });
+  React.useEffect(() => {
+    if (!grupoActive || !winFrom || !winTo || !ENDPOINT_URL) return;
+    setGrSrc(s => ({ ...s, loading: true, error: null }));
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${winFrom}&to=${winTo}&only=retfaixa&byGrupo=1`)
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(j => { if (j.error) throw new Error(j.error); setGrSrc({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
+      .catch(e => setGrSrc({ rows: null, loading: false, error: String(e.message || e) }));
+  }, [grupoActive, winFrom, winTo]);
+  const src = grupoActive ? (grSrc.rows || []) : (retencaoFaixa || []);
+  const grupoOptions = (grSrc.rows && grSrc.rows.length)
+    ? Array.from(new Set(grSrc.rows.map(r => r.grupo != null ? String(r.grupo) : 'sem grupo'))).sort()
+    : GRUPO_LIST;
+  // Medianas (turnover D0 + nº de apostas 4D) por semana × escopo + janela toda (week=null). Fetch próprio,
+  // RE-BUSCA com os filtros de faixa/grupo p/ a mediana bater com as somas/contagens filtradas.
   const faixaQ = faixaSel.map(f => `&faixa=${encodeURIComponent(f)}`).join('');
   const grupoQ = grupoActive ? grupoSel.map(g => `&grupo=${encodeURIComponent(g)}`).join('') : '';
-  // Fetch ÚNICO: agg (somas) + med (medianas) + online (GA4), TODAS as janelas de uma vez. Re-fetch só ao
-  // mudar janela de DATA / faixa / grupo (o toggle D0..D30 é 100% client-side).
-  const [av, setAv] = React.useState({ agg: null, med: null, online: null, loading: false, error: null });
+  const [med, setMed] = React.useState({ rows: null, online: null, loading: false, error: null });
   React.useEffect(() => {
     if (!winFrom || !winTo || !ENDPOINT_URL) return;
-    setAv(s => ({ ...s, loading: true, error: null }));
+    setMed(s => ({ ...s, loading: true, error: null }));
     fetch(`${ENDPOINT_URL}?${authParam_()}&from=${winFrom}&to=${winTo}&only=ativacao${faixaQ}${grupoQ}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
-      .then(j => { if (j.error) throw new Error(j.error); setAv({ agg: j.ativacaoAgg || [], med: j.ativacaoMed || [], online: j.ativacaoOnline || [], loading: false, error: null }); })
-      .catch(e => setAv({ agg: null, med: null, online: null, loading: false, error: String(e.message || e) }));
+      .then(j => { if (j.error) throw new Error(j.error); setMed({ rows: j.ativacaoMed || [], online: j.ativacaoOnline || [], loading: false, error: null }); })
+      .catch(e => setMed({ rows: null, online: null, loading: false, error: String(e.message || e) }));
   }, [winFrom, winTo, faixaQ, grupoQ]);
-  const grupoOptions = GRUPO_LIST;
-  // medMap[week||'__all__'][scopeKey] = { med:{0:{turn,bet},1:…}, n }
+  // Mapa de medianas: medMap[week||'__all__'][key] = { medTurnD0, medBet4d }.
   const medMap = React.useMemo(() => {
     const m = {};
-    (av.med || []).forEach(r => { const wk = r.week || '__all__'; (m[wk] || (m[wk] = {}))[r.key] = r; });
+    (med.rows || []).forEach(r => { const wk = r.week || '__all__'; (m[wk] || (m[wk] = {}))[r.key] = r; });
     return m;
-  }, [av.med]);
-  // onlineMap[week][canal] = { ftds, online:{0:days,1:…} }
+  }, [med.rows]);
+  // Dias online (GA4) por semana × canal → onlineMap[week][canal] = { ftds, onlineDays }. Somas compõem
+  // client-side (canal no cliente; faixa/grupo já vêm filtrados via os params do fetch).
   const onlineMap = React.useMemo(() => {
     const m = {};
-    (av.online || []).forEach(r => { (m[r.week] || (m[r.week] = {}))[r.canal] = r; });
+    (med.online || []).forEach(r => { (m[r.week] || (m[r.week] = {}))[r.canal] = r; });
     return m;
-  }, [av.online]);
-  // GA4 confiável de jun/26 pra frente (começou ~mai). Janela inteira em jun+ → hero online válido; senão "—".
+  }, [med.online]);
+  // GA4 confiável de jun/26 pra frente (começou ~mai). Janela toda em jun+ = hero online válido; senão "—".
   const GA4_WEEK_MIN = '2026-06-01';
-  const ga4Full = !!(winFrom && winFrom >= GA4_WEEK_MIN);
-  // Maturidade: a coorte de uma semana fecha a janela DN quando (domingo da semana + N) <= dataMax.
-  const isMatured = (wk) => !dataMax || isoAddDays_(wk, 6 + win) <= dataMax;
+  const ga4Full = !!(winFrom && winFrom >= GA4_WEEK_MIN);   // janela inteira coberta → hero online
+  const ga4Any = !!(winTo && winTo >= GA4_WEEK_MIN);        // algum trecho coberto → mostra colunas semanais
   const scopeKey = ativScopeKey_(chFilter);
   const chLabel = chLabel_(chFilter);
+  // Agrega por SEMANA (seg), no recorte de canal (slicer global) + faixa + grupo (filtros da aba).
   const selCh = chSelector_(chFilter);
-  // Agrega por SEMANA (seg) p/ a janela selecionada, no recorte de canal (slicer global). Faixa/grupo já
-  // filtrados no backend (via params do fetch). Hero total = só semanas MADURAS p/ a janela.
-  const { weeks, totals, immatureCount } = React.useMemo(() => {
+  const { weeks, totals } = React.useMemo(() => {
     const wm = {};
-    const zero = () => ({ ftds: 0, bettors: 0, turn: 0, dep: 0, betcnt: 0, betdays: 0, oFtds: 0, oDays: 0 });
-    (av.agg || []).forEach(r => {
+    const zero = () => ({ qtd: 0, ftd: 0, turnD0: 0, betD0: 0, depD0: 0, bet4d: 0, betDays: 0, actDays: 0, oDays: 0, oFtds: 0 });
+    const tot = zero();
+    (src || []).forEach(r => {
       if (!selCh(r.canal)) return;
-      const d = r.win && r.win[win];
-      if (!d) return;
-      const b = wm[r.week] || (wm[r.week] = zero());
-      b.ftds += r.ftds || 0; b.bettors += d.bettors || 0; b.turn += d.turn || 0; b.dep += d.dep || 0; b.betcnt += d.betcnt || 0; b.betdays += d.betdays || 0;
+      if (faixaSel.length && faixaSel.indexOf(r.faixa) < 0) return;
+      if (grupoActive && grupoSel.indexOf(r.grupo != null ? String(r.grupo) : 'sem grupo') < 0) return;
+      const wk = weekStartISO_(String(r.date));
+      const b = wm[wk] || (wm[wk] = zero());
+      const add = (o) => { o.qtd += r.qtdFtds || 0; o.ftd += r.ftdTotal || 0; o.turnD0 += r.turnD0 || 0; o.betD0 += r.betD0Cnt || 0; o.depD0 += r.depD0 || 0; o.bet4d += r.betCnt4d || 0; o.betDays += r.betDays4d || 0; o.actDays += r.actDays4d || 0; };
+      add(b); add(tot);
     });
+    // Dias online (GA4): soma oDays/oFtds por semana, no MESMO recorte de canal (faixa/grupo já filtrados no fetch).
     Object.keys(onlineMap).forEach(wk => {
       Object.keys(onlineMap[wk]).forEach(canal => {
         if (!selCh(canal)) return;
-        const r = onlineMap[wk][canal];
+        const o = onlineMap[wk][canal];
         const b = wm[wk] || (wm[wk] = zero());
-        b.oFtds += r.ftds || 0; b.oDays += (r.online && r.online[win]) || 0;
+        b.oDays += o.onlineDays || 0; b.oFtds += o.ftds || 0;
+        tot.oDays += o.onlineDays || 0; tot.oFtds += o.ftds || 0;
       });
     });
-    const tot = zero(); let immature = 0;
-    Object.keys(wm).forEach(wk => {
-      if (isMatured(wk)) { const b = wm[wk]; ['ftds', 'bettors', 'turn', 'dep', 'betcnt', 'betdays', 'oFtds', 'oDays'].forEach(k => tot[k] += b[k]); }
-      else immature++;
-    });
     const derive = (b, wk) => {
-      const md = (scopeKey && medMap[wk] && medMap[wk][scopeKey]) ? medMap[wk][scopeKey].med : null;
-      const wkGa4 = wk === '__all__' ? ga4Full : (wk >= GA4_WEEK_MIN);
+      const mrow = (scopeKey && medMap[wk] && medMap[wk][scopeKey]) ? medMap[wk][scopeKey] : null;
+      const wkGa4 = wk === '__all__' ? ga4Full : (wk >= GA4_WEEK_MIN);   // gate por semana (esconde pré-GA4)
       return {
-        week: wk, ftds: b.ftds,
-        pctBet: b.ftds ? b.bettors / b.ftds : null,
-        turn: b.turn,
-        meanBet: b.ftds ? b.turn / b.ftds : null,
-        medBet: (md && md[win]) ? md[win].turn : null,
-        rollover: b.dep ? b.turn / b.dep : null,
-        vezes: b.ftds ? b.betcnt / b.ftds : null,
-        vezesMed: (md && md[win]) ? md[win].bet : null,
-        betDaysR: b.ftds ? b.betdays / (winLen * b.ftds) : null,
-        onlineR: (wkGa4 && b.oFtds) ? b.oDays / (winLen * b.oFtds) : null,
-        immature: wk !== '__all__' && !isMatured(wk),
+        week: wk, qtd: b.qtd, turnD0: b.turnD0,
+        pctBet: b.qtd ? b.betD0 / b.qtd : null,
+        meanBet: b.qtd ? b.turnD0 / b.qtd : null,
+        medBet: mrow ? mrow.medTurnD0 : null,
+        rollover: b.depD0 ? b.turnD0 / b.depD0 : null,
+        vezes: b.qtd ? b.bet4d / b.qtd : null,
+        vezesMed: mrow ? mrow.medBet4d : null,
+        betDaysR: b.qtd ? b.betDays / (4 * b.qtd) : null,
+        actDaysR: b.qtd ? b.actDays / (4 * b.qtd) : null,
+        onlineR: (wkGa4 && b.oFtds) ? b.oDays / (4 * b.oFtds) : null,
       };
     };
     const ks = Object.keys(wm).sort();
-    return { weeks: ks.map(k => derive(wm[k], k)), totals: derive(tot, '__all__'), immatureCount: immature };
-  }, [av.agg, onlineMap, medMap, selCh, scopeKey, win, ga4Full, dataMax]);
+    return { weeks: ks.map(k => derive(wm[k], k)), totals: derive(tot, '__all__') };
+  }, [src, selCh, medMap, onlineMap, scopeKey, faixaSel, grupoSel, grupoActive, ga4Full]);
 
   const T = totals;
-  const H = (label, act, fmt) => ({ label, act, fmt, bp: null, m1: null });
-  const valHeroes = [
-    H(`% apostou até ${winLabel}`, T.pctBet, 'pct'),
-    H(`Turnover ${winLabel} (Σ)`, T.turn, 'brl'),
-    H(`Aposta média ${winLabel}`, T.meanBet, 'brl'),
-    H(`Aposta mediana ${winLabel}`, T.medBet, 'brl'),
-    H(`Rollover ${winLabel}`, T.rollover, 'multiple'),
+  const H = (label, act, fmt, title) => ({ label, act, fmt, bp: null, m1: null, title });
+  const d0Heroes = [
+    H('% apostou no D0', T.pctBet, 'pct'),
+    H('Turnover D0 (Σ)', T.turnD0, 'brl'),
+    H('Aposta média D0', T.meanBet, 'brl'),
+    H('Aposta mediana D0', T.medBet, 'brl'),
+    H('Rollover D0', T.rollover, 'multiple'),
   ];
-  const freqHeroes = [
-    H(`Vezes que apostou · ${winLabel} (média)`, T.vezes, 'qty'),
-    H(`Vezes que apostou · ${winLabel} (mediana)`, T.vezesMed, 'qty'),
-    H(`Dias que apostou ÷ ${winLen}`, T.betDaysR, 'pct'),
-    H(`Dias online ÷ ${winLen} · GA4`, ga4Full ? T.onlineR : null, 'pct'),
+  const w4Heroes = [
+    H('Vezes que apostou · 4D (média)', T.vezes, 'qty'),
+    H('Vezes que apostou · 4D (mediana)', T.vezesMed, 'qty'),
+    H('Dias que apostou ÷ 4', T.betDaysR, 'pct'),
+    H('Dias online ÷ 4 · GA4', ga4Full ? T.onlineR : null, 'pct'),
   ];
-  const dm = (r) => { const s = String(r.week); const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s); return (m ? weekLabel_(s) : s) + (r.immature ? ' *' : ''); };
-  const rng = (key) => { const v = weeks.filter(x => !x.immature).map(x => x[key]).filter(x => x != null && !isNaN(x)); return v.length ? { min: Math.min(...v), max: Math.max(...v) } : { min: 0, max: 1 }; };
+  const dm = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); return m ? weekLabel_(s) : String(s); };
+  const rng = (key) => { const v = weeks.map(x => x[key]).filter(x => x != null && !isNaN(x)); return v.length ? { min: Math.min(...v), max: Math.max(...v) } : { min: 0, max: 1 }; };
   const rPct = rng('pctBet'), rRoll = rng('rollover');
   const heat = (v, r) => ({ background: heatBg_(v, r.min, r.max) });
   const medNote = scopeKey == null
     ? ' Mediana indisponível para combinação de 2+ canais (só Total, Growth ou 1 canal) — mostra "—".'
-    : (av.loading ? ' Carregando…' : (av.error ? ' Erro ao carregar.' : ''));
+    : (med.loading ? ' Medianas carregando…' : (med.error ? ' Erro ao carregar medianas.' : ''));
   const filtSuffix = `${chLabel}${faixaAll ? '' : ' · ' + faixaLabelTxt}${grupoActive ? ' · ' + grupoLabelTxt : ''}`;
-  const matNote = immatureCount > 0
-    ? ` ${immatureCount} semana(s) recente(s) ainda não fecharam ${winLabel} (marcadas com * e esmaecidas) — ficam FORA do total do hero.`
-    : '';
+  const srcLoad = grupoActive && grSrc.loading ? ' · carregando grupo…' : (grupoActive && grSrc.error ? ' · erro ao carregar grupo' : '');
   const cells = (r) => [
-    <td key="q">{fmtQty(r.ftds)}</td>,
-    <td key="pb" style={r.immature ? null : heat(r.pctBet, rPct)}>{fmtPct(r.pctBet, 1)}</td>,
-    <td key="t">{fmtBRL(r.turn)}</td>,
+    <td key="q">{fmtQty(r.qtd)}</td>,
+    <td key="pb" style={heat(r.pctBet, rPct)}>{fmtPct(r.pctBet, 1)}</td>,
+    <td key="t">{fmtBRL(r.turnD0)}</td>,
     <td key="am">{fmtBRL(r.meanBet)}</td>,
     <td key="md">{fmtBRL(r.medBet)}</td>,
-    <td key="ro" style={r.immature ? null : heat(r.rollover, rRoll)}>{fmtMultiple(r.rollover)}</td>,
+    <td key="ro" style={heat(r.rollover, rRoll)}>{fmtMultiple(r.rollover)}</td>,
     <td key="vz">{fmtQty(r.vezes)}</td>,
     <td key="vm">{fmtQty(r.vezesMed)}</td>,
     <td key="bd">{fmtPct(r.betDaysR, 1)}</td>,
     <td key="on">{fmtPct(r.onlineR, 1)}</td>,
+    <td key="ad" style={{ color: 'var(--text-muted)' }}>{fmtPct(r.actDaysR, 1)}</td>,
   ];
   return (
     <React.Fragment>
       <div className="tab-header">
         <div>
-          <h1>Ativação {winLabel}</h1>
-          <div className="subtitle">Sinais precoces da coorte de FTD (visão semanal, seg–dom) — o que o novo jogador faz na janela cumulativa dos primeiros {winLen} dia(s) do 1º depósito. Segue o slicer de canal · {chLabel}</div>
+          <h1>Ativação D0</h1>
+          <div className="subtitle">Sinais precoces da coorte de FTD (visão semanal, seg–dom) — o que o novo jogador faz no dia do 1º depósito e nos 4 primeiros dias. Segue o slicer de canal · {chLabel}</div>
         </div>
       </div>
       <div className="slicer-group slicer-ruler">
-        <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Janela</label>
-        <div className="slicer-presets">
-          {ATIV_WINS_F.map(n => (
-            <button key={n} className={`preset-btn ${win === n ? 'active' : ''}`} onClick={() => setWin(n)} title={`Janela cumulativa: dias 0 a ${n} do FTD (${n + 1} dia(s))`}>{'D' + n}</button>
-          ))}
-        </div>
-        <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>Faixa FTD</label>
+        <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Faixa FTD</label>
         <ChannelMultiSelect options={FAIXA_LIST} selected={faixaSel} onChange={setFaixaSel} labelOf={fxLabel_} allLabel="Todas" countNoun="faixas" />
         <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>Grupo de risco</label>
         <ChannelMultiSelect options={grupoOptions} selected={grupoSel} onChange={setGrupoSel} labelOf={grupoLabel_} allLabel="Todos" countNoun="grupos" />
-        <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>Canal: use os slicers do topo</span>
+        <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>Canal: use os slicers do topo{srcLoad}</span>
       </div>
       <div className="support">
-        <div className="support-title">Valor & rollover · {winLabel} · {filtSuffix}</div>
-        <div className="hero-grid">{valHeroes.map((m, i) => <Hero key={i} metric={m} />)}</div>
+        <div className="support-title">Ativação no D0 · {filtSuffix}</div>
+        <div className="hero-grid">{d0Heroes.map((m, i) => <Hero key={i} metric={m} />)}</div>
         <div className="ch-note">
-          <strong>% apostou até {winLabel}</strong> = FTDs que apostaram (turnover &gt; 0) pelo menos uma vez nos primeiros {winLen} dia(s) ÷ Qtd FTD. <strong>Turnover {winLabel}</strong> = Σ valor apostado (casino+esporte+loteria) acumulado em dias 0–{win}.
-          <strong> Aposta média {winLabel}</strong> = Turnover ÷ Qtd FTD; <strong>mediana</strong> = valor típico por jogador (robusta a whale). <strong>Rollover {winLabel}</strong> = Turnover ÷ Depósito (ambos acumulados na janela).
-          "Apostou" usa o turnover total — não há split real×bônus na aposta, mas o bônus é ~1% do turnover.{medNote}{matNote}
+          <strong>% apostou no D0</strong> = FTDs com turnover &gt; 0 no dia do FTD ÷ Qtd FTD. <strong>Turnover D0</strong> = Σ valor apostado (casino+esporte+loteria) no D0.
+          <strong> Aposta média D0</strong> = Turnover D0 ÷ Qtd FTD; <strong>mediana</strong> = valor típico por jogador (robusta a whale — a média é muito puxada por poucos grandes apostadores).
+          <strong> Rollover D0</strong> = Turnover D0 ÷ Depósito D0 (quantas vezes o depósito do dia foi apostado). "Apostou" usa o turnover total — não há split real×bônus na aposta, mas o bônus é ~1% do turnover.{medNote}
         </div>
       </div>
       <div className="support">
-        <div className="support-title">Frequência & presença · {winLabel} · {filtSuffix}</div>
-        <div className="hero-grid">{freqHeroes.map((m, i) => <Hero key={i} metric={m} />)}</div>
+        <div className="support-title">Janela dos 4 primeiros dias (D0–D3) · {filtSuffix}</div>
+        <div className="hero-grid">{w4Heroes.map((m, i) => <Hero key={i} metric={m} />)}</div>
         <div className="ch-note">
-          Janela = dias 0 a {win} do FTD ({winLen} dia(s)). <strong>Vezes que apostou</strong> = nº de apostas acumulado por jogador (a média é inflada por slots/whales → veja a mediana).
-          <strong> Dias que apostou ÷ {winLen}</strong> = dias distintos em que apostou (0–{win}) ÷ {winLen}, média da coorte.
-          <strong> Dias online ÷ {winLen}</strong> = dias distintos com <strong>login/sessão no GA4</strong> (presença real — abriu o app/site) em 0–{win} ÷ {winLen}. Cobre ~99% das contas FTD, <strong>confiável de jun/26</strong> (GA4 começou ~mai → janelas anteriores ficam sem online). Costuma ser maior que "Dias apostou".{ga4Full ? '' : ' ⚠️ Janela anterior a jun/26 (ou parcial) — hero de online fica "—"; semanas de jun+ ainda mostram.'}
+          Janela = dias 0 a 3 do FTD. <strong>Vezes que apostou</strong> = nº de apostas na janela por jogador (a média é inflada por slots/whales → veja a mediana).
+          <strong> Dias que apostou ÷ 4</strong> = dias distintos em que apostou (0–3) ÷ 4, média da coorte (ex.: 32,6% = 1,30 de 4 dias).
+          <strong> Dias online ÷ 4</strong> = dias distintos com <strong>login/sessão no GA4</strong> (presença real — o cara abriu o app/site) nos dias 0–3 ÷ 4. Cobre ~99% das contas FTD e é <strong>confiável de jun/26 pra frente</strong> (o GA4 começou ~mai/26 → janelas anteriores ficam sem online). Costuma ser maior que "Dias apostou" (abre mais dias do que aposta). A coluna <em>Dias Ativo/4</em> (cinza) é o proxy antigo (dias com transação) — deixei pra comparar; é sempre menor que o online real.{ga4Full ? '' : ' ⚠️ A janela atual é anterior a jun/26 (ou parcial) — o hero de online fica "—"; as semanas de jun+ ainda mostram.'}
         </div>
       </div>
       <div className="support">
-        <div className="support-title">Semana a semana (safra de FTD) · {winLabel} · {filtSuffix}{av.loading ? ' · carregando…' : ''}{av.error ? ' · erro' : ''}</div>
+        <div className="support-title">Semana a semana (safra de FTD) · {filtSuffix}{med.loading ? ' · medianas carregando…' : ''}{srcLoad}</div>
         <div className="table-scroll tall"><table className="ch-table">
           <thead>
             <tr>
               <th style={{ whiteSpace: 'nowrap' }}>Semana</th>
               <th title="Qtd de FTDs na semana">Qtd FTD</th>
-              <th title={`% dos FTDs que apostaram (turnover > 0) em 0–${win}`}>% Apostou</th>
-              <th title={`Σ valor apostado acumulado em 0–${win}`}>Turnover</th>
-              <th title="Turnover ÷ Qtd FTD">Aposta Méd.</th>
-              <th title="Mediana do valor apostado por jogador (por escopo)">Aposta Med.</th>
-              <th title="Turnover ÷ Depósito (acumulados na janela)">Rollover</th>
-              <th title={`Nº médio de apostas por jogador em 0–${win}`}>Vezes (méd)</th>
-              <th title={`Mediana do nº de apostas em 0–${win}`}>Vezes (med)</th>
-              <th title={`Dias distintos apostando (0–${win}) ÷ ${winLen}, média`}>Dias Apostou/{winLen}</th>
-              <th title={`Dias distintos ONLINE (login/sessão GA4) em 0–${win} ÷ ${winLen}, média. ~99% das contas FTD; jun/26+.`}>Dias Online/{winLen}</th>
+              <th title="% dos FTDs que apostaram (turnover > 0) no D0">% Apostou D0</th>
+              <th title="Σ valor apostado no D0">Turnover D0</th>
+              <th title="Turnover D0 ÷ Qtd FTD">Aposta Méd. D0</th>
+              <th title="Mediana do valor apostado no D0 por jogador (por escopo)">Aposta Med. D0</th>
+              <th title="Turnover D0 ÷ Depósito D0">Rollover D0</th>
+              <th title="Nº médio de apostas por jogador nos dias 0–3">Vezes 4D (méd)</th>
+              <th title="Mediana do nº de apostas nos dias 0–3">Vezes 4D (med)</th>
+              <th title="Dias distintos apostando (0–3) ÷ 4, média">Dias Apostou/4</th>
+              <th title="Dias distintos ONLINE (login/sessão no GA4) nos dias 0–3 ÷ 4, média. Cobre ~99% das contas FTD; confiável de jun/26.">Dias Online/4</th>
+              <th title="Dias distintos com atividade transacional (0–3) ÷ 4, média — proxy antigo, menor que o online real">Dias Ativo/4</th>
             </tr>
           </thead>
           <tbody>
-            {weeks.map((r, i) => (<tr key={i} style={r.immature ? { opacity: 0.45 } : null}><td className="ch-name">{dm(r)}</td>{cells(r)}</tr>))}
+            {weeks.map((r, i) => (<tr key={i}><td className="ch-name">{dm(r.week)}</td>{cells(r)}</tr>))}
           </tbody>
           <tfoot>
-            <tr><td>Total{immatureCount > 0 ? ' *' : ''}</td>{cells(T)}</tr>
+            <tr><td>Total</td>{cells(T)}</tr>
           </tfoot>
         </table></div>
       </div>
