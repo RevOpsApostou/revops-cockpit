@@ -3883,16 +3883,42 @@ function ativScopeKey_(chFilter) {
 }
 function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
   const winFrom = meta && meta.from, winTo = meta && meta.to;
-  // Medianas (turnover D0 + nº de apostas 4D) por semana × escopo + janela toda (week=null). Fetch próprio.
+  // Filtros DA ABA (canal já é o slicer global): faixa de FTD e grupo de risco — iguais aos da aba
+  // Multiplicadores e Retenção. Faixa filtra client-side (já vem no payload). Grupo exige a base &byGrupo=1.
+  const [faixaSel, setFaixaSel] = React.useState([]);   // multi; [] = todas
+  const [grupoSel, setGrupoSel] = React.useState([]);   // multi; [] = todos
+  const grupoActive = grupoSel.length > 0;
+  const faixaAll = faixaSel.length === 0;
+  const faixaLabelTxt = faixaAll ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
+  const grupoLabelTxt = !grupoActive ? 'todos os grupos' : (grupoSel.length <= 2 ? grupoSel.map(grupoLabel_).join(' + ') : grupoSel.length + ' grupos');
+  // Base COM grupo (&byGrupo=1) — só quando o filtro de grupo está ligado (a aba toda passa a usar essa base).
+  // Traz o campo `grupo` + as mesmas colunas de ativação (turnD0/betD0Cnt/etc) do payload padrão.
+  const [grSrc, setGrSrc] = React.useState({ rows: null, loading: false, error: null });
+  React.useEffect(() => {
+    if (!grupoActive || !winFrom || !winTo || !ENDPOINT_URL) return;
+    setGrSrc(s => ({ ...s, loading: true, error: null }));
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${winFrom}&to=${winTo}&only=retfaixa&byGrupo=1`)
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(j => { if (j.error) throw new Error(j.error); setGrSrc({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
+      .catch(e => setGrSrc({ rows: null, loading: false, error: String(e.message || e) }));
+  }, [grupoActive, winFrom, winTo]);
+  const src = grupoActive ? (grSrc.rows || []) : (retencaoFaixa || []);
+  const grupoOptions = (grSrc.rows && grSrc.rows.length)
+    ? Array.from(new Set(grSrc.rows.map(r => r.grupo != null ? String(r.grupo) : 'sem grupo'))).sort()
+    : GRUPO_LIST;
+  // Medianas (turnover D0 + nº de apostas 4D) por semana × escopo + janela toda (week=null). Fetch próprio,
+  // RE-BUSCA com os filtros de faixa/grupo p/ a mediana bater com as somas/contagens filtradas.
+  const faixaQ = faixaSel.map(f => `&faixa=${encodeURIComponent(f)}`).join('');
+  const grupoQ = grupoActive ? grupoSel.map(g => `&grupo=${encodeURIComponent(g)}`).join('') : '';
   const [med, setMed] = React.useState({ rows: null, loading: false, error: null });
   React.useEffect(() => {
     if (!winFrom || !winTo || !ENDPOINT_URL) return;
     setMed(s => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${winFrom}&to=${winTo}&only=ativacao`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${winFrom}&to=${winTo}&only=ativacao${faixaQ}${grupoQ}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(j => { if (j.error) throw new Error(j.error); setMed({ rows: j.ativacaoMed || [], loading: false, error: null }); })
       .catch(e => setMed({ rows: null, loading: false, error: String(e.message || e) }));
-  }, [winFrom, winTo]);
+  }, [winFrom, winTo, faixaQ, grupoQ]);
   // Mapa de medianas: medMap[week||'__all__'][key] = { medTurnD0, medBet4d }.
   const medMap = React.useMemo(() => {
     const m = {};
@@ -3901,14 +3927,16 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
   }, [med.rows]);
   const scopeKey = ativScopeKey_(chFilter);
   const chLabel = chLabel_(chFilter);
-  // Agrega o payload compartilhado por SEMANA (seg), no recorte de canal do slicer global.
+  // Agrega por SEMANA (seg), no recorte de canal (slicer global) + faixa + grupo (filtros da aba).
   const selCh = chSelector_(chFilter);
   const { weeks, totals } = React.useMemo(() => {
     const wm = {};
     const zero = () => ({ qtd: 0, ftd: 0, turnD0: 0, betD0: 0, depD0: 0, bet4d: 0, betDays: 0, actDays: 0 });
     const tot = zero();
-    (retencaoFaixa || []).forEach(r => {
+    (src || []).forEach(r => {
       if (!selCh(r.canal)) return;
+      if (faixaSel.length && faixaSel.indexOf(r.faixa) < 0) return;
+      if (grupoActive && grupoSel.indexOf(r.grupo != null ? String(r.grupo) : 'sem grupo') < 0) return;
       const wk = weekStartISO_(String(r.date));
       const b = wm[wk] || (wm[wk] = zero());
       const add = (o) => { o.qtd += r.qtdFtds || 0; o.ftd += r.ftdTotal || 0; o.turnD0 += r.turnD0 || 0; o.betD0 += r.betD0Cnt || 0; o.depD0 += r.depD0 || 0; o.bet4d += r.betCnt4d || 0; o.betDays += r.betDays4d || 0; o.actDays += r.actDays4d || 0; };
@@ -3930,7 +3958,7 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
     };
     const ks = Object.keys(wm).sort();
     return { weeks: ks.map(k => derive(wm[k], k)), totals: derive(tot, '__all__') };
-  }, [retencaoFaixa, selCh, medMap, scopeKey]);
+  }, [src, selCh, medMap, scopeKey, faixaSel, grupoSel, grupoActive]);
 
   const T = totals;
   const H = (label, act, fmt, title) => ({ label, act, fmt, bp: null, m1: null, title });
@@ -3954,6 +3982,8 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
   const medNote = scopeKey == null
     ? ' Mediana indisponível para combinação de 2+ canais (só Total, Growth ou 1 canal) — mostra "—".'
     : (med.loading ? ' Medianas carregando…' : (med.error ? ' Erro ao carregar medianas.' : ''));
+  const filtSuffix = `${chLabel}${faixaAll ? '' : ' · ' + faixaLabelTxt}${grupoActive ? ' · ' + grupoLabelTxt : ''}`;
+  const srcLoad = grupoActive && grSrc.loading ? ' · carregando grupo…' : (grupoActive && grSrc.error ? ' · erro ao carregar grupo' : '');
   const cells = (r) => [
     <td key="q">{fmtQty(r.qtd)}</td>,
     <td key="pb" style={heat(r.pctBet, rPct)}>{fmtPct(r.pctBet, 1)}</td>,
@@ -3974,8 +4004,15 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
           <div className="subtitle">Sinais precoces da coorte de FTD (visão semanal, seg–dom) — o que o novo jogador faz no dia do 1º depósito e nos 4 primeiros dias. Segue o slicer de canal · {chLabel}</div>
         </div>
       </div>
+      <div className="slicer-group slicer-ruler">
+        <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Faixa FTD</label>
+        <ChannelMultiSelect options={FAIXA_LIST} selected={faixaSel} onChange={setFaixaSel} labelOf={fxLabel_} allLabel="Todas" countNoun="faixas" />
+        <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>Grupo de risco</label>
+        <ChannelMultiSelect options={grupoOptions} selected={grupoSel} onChange={setGrupoSel} labelOf={grupoLabel_} allLabel="Todos" countNoun="grupos" />
+        <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>Canal: use os slicers do topo{srcLoad}</span>
+      </div>
       <div className="support">
-        <div className="support-title">Ativação no D0 · {chLabel}</div>
+        <div className="support-title">Ativação no D0 · {filtSuffix}</div>
         <div className="hero-grid">{d0Heroes.map((m, i) => <Hero key={i} metric={m} />)}</div>
         <div className="ch-note">
           <strong>% apostou no D0</strong> = FTDs com turnover &gt; 0 no dia do FTD ÷ Qtd FTD. <strong>Turnover D0</strong> = Σ valor apostado (casino+esporte+loteria) no D0.
@@ -3984,7 +4021,7 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
         </div>
       </div>
       <div className="support">
-        <div className="support-title">Janela dos 4 primeiros dias (D0–D3) · {chLabel}</div>
+        <div className="support-title">Janela dos 4 primeiros dias (D0–D3) · {filtSuffix}</div>
         <div className="hero-grid">{w4Heroes.map((m, i) => <Hero key={i} metric={m} />)}</div>
         <div className="ch-note">
           Janela = dias 0 a 3 do FTD. <strong>Vezes que apostou</strong> = nº de apostas na janela por jogador (a média é inflada por slots/whales → veja a mediana).
@@ -3993,7 +4030,7 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
         </div>
       </div>
       <div className="support">
-        <div className="support-title">Semana a semana (safra de FTD) · {chLabel}{med.loading ? ' · medianas carregando…' : ''}</div>
+        <div className="support-title">Semana a semana (safra de FTD) · {filtSuffix}{med.loading ? ' · medianas carregando…' : ''}{srcLoad}</div>
         <div className="table-scroll tall"><table className="ch-table">
           <thead>
             <tr>
