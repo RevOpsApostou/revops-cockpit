@@ -3480,14 +3480,16 @@ function ensureXLSX_() {
   return _xlsxPromise;
 }
 
-// Export SEMPRE YTD, MÊS A MÊS. Busca cada mês (abr→ontem) no backend, deriva as métricas com a MESMA
-// fonte do App (derivePayloadMetrics_) e monta Farol + Monthly Close em formato LONGO, com a coluna
-// "Mês/Ano" entre Grupo/Seção e Métrica. Ignora o slicer de data; respeita o escopo de canal (chFilter).
-// Reusa buildFarolExportGroups_ (splits Growth/Not-Growth + coortes) e buildMonthlyCloseRows_ por mês.
-// onProgress(feito, total) opcional p/ o botão mostrar o andamento. Assíncrona (N fetches, sequenciais).
-async function exportFarolYtd_({ chFilter, escopo, onProgress }) {
+// Export MÊS A MÊS do PERÍODO escolhido no popover de extração (não mais YTD fixo). Quebra [from, to]
+// nos meses-calendário que ele cobre (o 1º e o último mês são recortados no from/to), busca cada mês no
+// backend, deriva as métricas com a MESMA fonte do App (derivePayloadMetrics_) e monta Farol + Monthly
+// Close em formato LONGO com a coluna "Mês/Ano". Respeita o escopo de canal (chFilter); a data vem do
+// popover, não do slicer do dashboard. Reusa buildFarolExportGroups_ + buildMonthlyCloseRows_ por mês.
+// onProgress(feito, total) p/ o botão mostrar o andamento. Fetches em POOL (concorrência limitada) —
+// bem mais rápido que sequencial quando há vários meses; janelas menores = menos meses = menos consultas.
+async function exportFarolRange_({ from, to, chFilter, escopo, onProgress }) {
   try { await ensureXLSX_(); } catch (e) { alert((e && e.message) || 'Falha ao carregar a biblioteca de Excel.'); return; }
-  if (!ENDPOINT_URL) { alert('Sem endpoint (modo mock) — o export YTD precisa do backend.'); return; }
+  if (!ENDPOINT_URL) { alert('Sem endpoint (modo mock) — o export precisa do backend.'); return; }
   const numFmt = (fmt) => fmt === 'brl' ? 'R$ #,##0.00'
     : fmt === 'pct' ? '0.0%' : fmt === 'multiple' ? '0.00"x"' : fmt === 'qty' ? '#,##0' : '#,##0.00';
   const PCT = '0.0%';
@@ -3498,8 +3500,8 @@ async function exportFarolYtd_({ chFilter, escopo, onProgress }) {
     if (cell && typeof cell.v === 'number') { cell.t = 'n'; cell.z = fmts[k]; }
   });
 
-  // Lista de meses do YTD (abr do ano fiscal → mês de ontem), uma janela por mês-calendário.
-  const startISO = ytdStartISO_(), endISO = todayISO_();
+  // Meses-calendário que o período [from, to] cobre; o 1º mês começa no `from`, o último termina no `to`.
+  const startISO = from, endISO = to;
   const [sy, sm] = startISO.split('-').map(Number);
   const [ey, em] = endISO.split('-').map(Number);
   const months = [];
@@ -3507,23 +3509,24 @@ async function exportFarolYtd_({ chFilter, escopo, onProgress }) {
   while (y < ey || (y === ey && m <= em)) {
     const mm = String(m).padStart(2, '0');
     const lastDay = new Date(y, m, 0).getDate();          // m 1-based → último dia do mês m
-    let to = `${y}-${mm}-${String(lastDay).padStart(2, '0')}`;
-    if (to > endISO) to = endISO;                          // mês corrente: até ontem
-    months.push({ y, m, from: `${y}-${mm}-01`, to, label: `${MONTH_ABBR_[m - 1]}/${y}` });
+    let mFrom = `${y}-${mm}-01`, mTo = `${y}-${mm}-${String(lastDay).padStart(2, '0')}`;
+    if (mFrom < startISO) mFrom = startISO;               // 1º mês: recorta no início do período
+    if (mTo > endISO) mTo = endISO;                       // último mês: recorta no fim do período
+    months.push({ y, m, from: mFrom, to: mTo, label: `${MONTH_ABBR_[m - 1]}/${y}` });
     m++; if (m > 12) { m = 1; y++; }
   }
 
-  // Fetch sequencial (não estoura a concorrência do Apps Script). Cada mês → dispM/farol via fonte única.
+  // Busca UM mês → { mo, dispM, farol, monthlyClose, channels, safra } ou { mo, error }. Deriva via fonte
+  // única. Só LANÇA em sessão expirada (p/ abortar o pool inteiro); demais erros viram bloco com error.
   const auth = authParam_();
+  let done = 0;
   if (onProgress) onProgress(0, months.length);
-  const blocks = [];
-  for (let i = 0; i < months.length; i++) {
-    const mo = months[i];
+  const fetchMonth = async (mo) => {
     try {
       const r = await fetch(`${ENDPOINT_URL}?${auth}&from=${mo.from}&to=${mo.to}`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const p = await r.json();
-      if (p.error === 'unauthorized') { alert('Sessão expirada — faça login de novo no cockpit e tente outra vez.'); return; }
+      if (p.error === 'unauthorized') { const e = new Error('unauthorized'); e.unauth = true; throw e; }
       if (p.error) throw new Error(p.error);
       const { dispM, farol } = derivePayloadMetrics_({
         M: p.metrics, componentsByChannel: p.componentsByChannel, retentionChannels: p.retentionChannels,
@@ -3540,21 +3543,41 @@ async function exportFarolYtd_({ chFilter, escopo, onProgress }) {
         ggr:      { m0: bucketSum('m0', 'ggr'),      m1: bucketSum('m1', 'ggr'),      m2: bucketSum('m2', 'ggr'),      m3plus: bucketSum('m3plus', 'ggr') },
         turnover: { m0: bucketSum('m0', 'turnover'), m1: bucketSum('m1', 'turnover'), m2: bucketSum('m2', 'turnover'), m3plus: bucketSum('m3plus', 'turnover') },
       };
-      blocks.push({ mo, dispM, farol, monthlyClose: p.monthlyClose || null, channels: p.channels || [], safra });
+      return { mo, dispM, farol, monthlyClose: p.monthlyClose || null, channels: p.channels || [], safra };
     } catch (e) {
-      blocks.push({ mo, error: String(e.message || e) });
+      if (e && e.unauth) throw e;
+      return { mo, error: String(e.message || e) };
+    } finally {
+      done++; if (onProgress) onProgress(done, months.length);
     }
-    if (onProgress) onProgress(i + 1, months.length);
+  };
+
+  // Pool com concorrência limitada (não estoura o limite de execuções simultâneas do Apps Script). blocks
+  // é preenchido POR ÍNDICE → mantém a ordem cronológica mesmo com as respostas chegando fora de ordem.
+  const CONCURRENCY = 4;
+  const blocks = new Array(months.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < months.length) {
+      const i = next++;
+      blocks[i] = await fetchMonth(months[i]);   // lança só em unauth
+    }
+  };
+  try {
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, months.length) }, worker));
+  } catch (e) {
+    if (e && e.unauth) { alert('Sessão expirada — faça login de novo no cockpit e tente outra vez.'); return; }
+    throw e;
   }
-  const ok = blocks.filter(b => !b.error);
+  const ok = blocks.filter(b => b && !b.error);
   if (!ok.length) { alert('Nenhum mês retornou dado. Verifique o login no cockpit e tente de novo.'); return; }
-  const failed = blocks.filter(b => b.error).map(b => b.mo.label);
+  const failed = blocks.filter(b => b && b.error).map(b => b.mo.label);
   const escLbl = escopo || 'Total Casa';
   const periodo = `${fmtBR_(startISO)} a ${fmtBR_(endISO)}`;
 
   // ---------- Aba 1: Farol YTD (formato longo, coluna Mês/Ano entre Grupo e Métrica) ----------
   const fAoa = [
-    ['RevOps Cockpit — Farol · YTD (mês a mês)'],
+    ['RevOps Cockpit — Farol (mês a mês)'],
     [`Período: ${periodo}`],
     [`Escopo: ${escLbl}`],
     [`Fonte: BigQuery (live)${failed.length ? ' · meses sem dado: ' + failed.join(', ') : ''}`],
@@ -3578,7 +3601,7 @@ async function exportFarolYtd_({ chFilter, escopo, onProgress }) {
 
   // ---------- Aba 2: Monthly Close YTD (formato longo, coluna Mês/Ano) ----------
   const mAoa = [
-    ['RevOps Cockpit — Monthly Close · YTD (mês a mês)'],
+    ['RevOps Cockpit — Monthly Close (mês a mês)'],
     [`Período: ${periodo}`],
     [`Escopo: ${escLbl} (house-level segue o backend)`],
     ['Fonte: BigQuery (live)'],
@@ -3612,13 +3635,13 @@ async function exportFarolYtd_({ chFilter, escopo, onProgress }) {
   const ws1 = XLSX.utils.aoa_to_sheet(fAoa);
   ws1['!cols'] = [{ wch: 13 }, { wch: 10 }, { wch: 24 }, { wch: 15 }, { wch: 15 }, { wch: 9 }, { wch: 15 }, { wch: 16 }];
   applyFmts(ws1, fFmts);
-  XLSX.utils.book_append_sheet(wb, ws1, 'Farol YTD');
+  XLSX.utils.book_append_sheet(wb, ws1, 'Farol');
   const ws2 = XLSX.utils.aoa_to_sheet(mAoa);
   ws2['!cols'] = [{ wch: 18 }, { wch: 10 }, { wch: 26 }, { wch: 15 }, { wch: 15 }, { wch: 9 }];
   applyFmts(ws2, mFmts);
-  XLSX.utils.book_append_sheet(wb, ws2, 'Monthly Close YTD');
+  XLSX.utils.book_append_sheet(wb, ws2, 'Monthly Close');
 
-  XLSX.writeFile(wb, `cockpit_farol_ytd_${startISO.replace(/-/g, '')}_${endISO.replace(/-/g, '')}.xlsx`);
+  XLSX.writeFile(wb, `cockpit_farol_${startISO.replace(/-/g, '')}_${endISO.replace(/-/g, '')}.xlsx`);
 }
 
 function TabMonthlyClose({ M, farol, monthlyClose, range, isLive, ytd }) {
@@ -4433,6 +4456,93 @@ const PRESETS = [
   { id: 'lm',  label: 'Mês passado', range: () => lastMonthRangeISO_() },
 ];
 
+// Atalhos de período do popover de EXTRAÇÃO (Excel). Cada um devolve {from,to}. Independem do slicer do
+// dashboard — o export tem a própria seleção de data. "Mês atual" é o default (1 mês = 1 consulta, rápido).
+const EXPORT_PRESETS = [
+  { id: 'mtd', label: 'Mês atual',  range: () => { const from = firstOfMonthISO_(), to = todayISO_(); return { from, to: to < from ? from : to }; } },
+  { id: 'lm',  label: 'Mês passado', range: () => lastMonthRangeISO_() },
+  { id: '3m',  label: 'Últimos 3 meses', range: () => { const t = new Date(); return { from: toLocalISO_(new Date(t.getFullYear(), t.getMonth() - 2, 1)), to: todayISO_() }; } },
+  { id: 'ytd', label: 'YTD',        range: () => ({ from: ytdStartISO_(), to: todayISO_() }) },
+];
+// Nº de meses-calendário que [from, to] cobre (inclusivo) — p/ avisar quantas consultas o export fará.
+function monthsBetween_(from, to) {
+  if (!from || !to || from > to) return 0;
+  const [fy, fm] = from.split('-').map(Number);
+  const [ty, tm] = to.split('-').map(Number);
+  return (ty - fy) * 12 + (tm - fm) + 1;
+}
+
+// Botão "Excel" com popover de SELEÇÃO DE DATA da extração (default = janela atual do slicer). Escolhe o
+// período, mostra quantos meses/consultas, e dispara exportFarolRange_ (fetch em pool). Encapsula o
+// próprio estado (aberto/período/ocupado) + fechar-ao-clicar-fora, no mesmo padrão do ChannelMultiSelect.
+function ExcelExportButton({ defaultRange, chFilter, escopo, disabled }) {
+  const [open, setOpen] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [prog, setProg] = React.useState('');
+  const [range, setRange] = React.useState(defaultRange);
+  const ref = React.useRef(null);
+  // Enquanto FECHADO, acompanha o slicer (default zero-fricção); aberto, respeita o que o usuário digitou.
+  React.useEffect(() => { if (!open) setRange(defaultRange); }, [defaultRange.from, defaultRange.to, open]);
+  React.useEffect(() => {
+    if (!open) return;
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+
+  const nMonths = monthsBetween_(range.from, range.to);
+  const badRange = !range.from || !range.to || range.from > range.to;
+  const runExport = async () => {
+    if (badRange) { alert('A data inicial não pode ser maior que a final.'); return; }
+    setBusy(true); setProg('');
+    try {
+      await exportFarolRange_({ from: range.from, to: range.to, chFilter, escopo, onProgress: (d, t) => setProg(`${d}/${t}`) });
+      setOpen(false);
+    } catch (e) { alert('Falha ao gerar o Excel: ' + (e && e.message || e)); }
+    finally { setBusy(false); setProg(''); }
+  };
+  const dInput = { background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--text)', fontFamily: 'inherit', fontSize: '12px', padding: '5px 7px', borderRadius: '6px', colorScheme: 'dark' };
+
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
+      <button
+        className={busy ? 'refresh-btn spinning' : 'refresh-btn'}
+        onClick={() => setOpen(o => !o)}
+        disabled={disabled || busy}
+        title="Exportar Farol + Monthly Close (mês a mês) em Excel — escolha o período da extração"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <path d="M7 10l5 5 5-5"/>
+          <path d="M12 15V3"/>
+        </svg>
+        {busy ? `Gerando…${prog ? ' ' + prog : ''}` : 'Excel'}
+      </button>
+      {open && !busy && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 60, width: '272px', background: 'var(--surface)', border: '1px solid rgba(250,204,21,.45)', borderRadius: '10px', padding: '12px', boxShadow: '0 10px 28px rgba(0,0,0,.55)' }}>
+          <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '9px' }}>Período da extração</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '9px' }}>
+            <input type="date" value={range.from} max={range.to || undefined} onChange={e => setRange(r => ({ ...r, from: e.target.value }))} style={{ ...dInput, flex: 1, minWidth: 0 }} />
+            <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>→</span>
+            <input type="date" value={range.to} min={range.from || undefined} onChange={e => setRange(r => ({ ...r, to: e.target.value }))} style={{ ...dInput, flex: 1, minWidth: 0 }} />
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
+            {EXPORT_PRESETS.map(p => {
+              const r = p.range();
+              const on = r.from === range.from && r.to === range.to;
+              return <button key={p.id} type="button" className={`preset-btn ${on ? 'active' : ''}`} onClick={() => setRange(r)}>{p.label}</button>;
+            })}
+          </div>
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '10px' }}>
+            {badRange ? 'Período inválido.' : `${nMonths} ${nMonths === 1 ? 'mês' : 'meses'} · ${nMonths} ${nMonths === 1 ? 'consulta' : 'consultas'} ao BigQuery`}
+          </div>
+          <button className="apply-btn" style={{ width: '100%' }} disabled={badRange} onClick={runExport}>Exportar Excel</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Aba Segurança (só admin) — designar quem tem acesso. Login validado no backend (doPost).
 function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
   const [users, setUsers] = React.useState(null);
@@ -4680,8 +4790,6 @@ function App({ user, onLogout, config }) {
   const [activePreset, setActivePreset] = useState('mtd');
   // Filtro de canal: channels = [] (Todos, cai no escopo) ou lista de canais · scope = 'all' (Total Casa) | 'growth' (Canais Growth)
   const [chFilter, setChFilter] = usePersistedState('rvops:chFilter', { channels: [], scope: 'all' });
-  const [exportBusy, setExportBusy] = React.useState(false);   // export YTD (mês a mês) em andamento
-  const [exportProg, setExportProg] = React.useState('');      // "2/4" enquanto busca os meses
   const ytd = activePreset === 'ytd';   // YTD ativo = preset de data 'ytd' (janela abril→ontem); vale p/ todas as abas via appliedRange
   const [state, setState] = useState({
     loading: !!ENDPOINT_URL,
@@ -4927,25 +5035,12 @@ function App({ user, onLogout, config }) {
               {state.loading ? 'Atualizando…' : 'Atualizar'}
             </button>
           )}
-          <button
-            className={exportBusy ? 'refresh-btn spinning' : 'refresh-btn'}
-            onClick={async () => {
-              setExportBusy(true); setExportProg('');
-              try {
-                await exportFarolYtd_({ chFilter, escopo: chLabel_(chFilter), onProgress: (done, total) => setExportProg(`${done}/${total}`) });
-              } catch (e) { alert('Falha ao gerar o Excel YTD: ' + (e && e.message || e)); }
-              finally { setExportBusy(false); setExportProg(''); }
-            }}
-            disabled={state.loading || exportBusy}
-            title="Baixar YTD mês a mês (abr→ontem) — Farol + Monthly Close em Excel (.xlsx), no escopo de canal atual"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <path d="M7 10l5 5 5-5"/>
-              <path d="M12 15V3"/>
-            </svg>
-            {exportBusy ? `Gerando…${exportProg ? ' ' + exportProg : ''}` : 'Excel YTD'}
-          </button>
+          <ExcelExportButton
+            defaultRange={appliedRange}
+            chFilter={chFilter}
+            escopo={chLabel_(chFilter)}
+            disabled={state.loading}
+          />
           {user && <span className="user-chip" title={user.email}>{user.name}{user.admin ? ' · admin' : ''}</span>}
           {onLogout && <button className="logout-btn" onClick={onLogout} title="Encerrar sessão">Sair</button>}
         </div>
