@@ -7574,22 +7574,24 @@ function InvCampanhaTab({
 function AtivFunnel({
   base,
   betD0,
-  bet2d
+  bet2d,
+  winN
 }) {
   if (!base) return /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
   }, "Sem coorte de FTD no recorte.");
+  const w = winN || 0;
   const steps = [{
     label: 'FTDs',
     n: base,
     color: 'var(--accent-orange)'
   }, {
-    label: 'Apostou no D0',
+    label: w === 0 ? 'Apostou no D0' : `Apostou (D0–D${w})`,
     n: betD0,
     color: '#fb923c'
   }];
   if (bet2d != null) steps.push({
-    label: 'Apostou 2+ dias (D0–D3)',
+    label: `Apostou 2+ dias (D0–D${w})`,
     n: bet2d,
     color: 'var(--accent)'
   });
@@ -7641,7 +7643,7 @@ function AtivFunnel({
     style: {
       marginTop: '6px'
     }
-  }, bet2d != null ? 'O valor está no D0; a perda está no retorno — quem aposta só 1 dia é one-and-done.' : 'O passo “apostou 2+ dias” precisa da contagem por jogador (backend) — aparece após o deploy do backend v40.'));
+  }, bet2d != null ? 'O valor está cedo; a perda está no retorno — quem aposta só 1 dia é one-and-done.' : 'No D0 (janela de 1 dia) o passo “apostou 2+ dias” não se aplica — escolha D1+ pra vê-lo.'));
 }
 
 // ---- Ativação D0 · distribuição da 1ª aposta (média vs mediana + quartis quando o backend manda) ----
@@ -7650,7 +7652,8 @@ function AtivWhaleStrip({
   median,
   p25,
   p75,
-  p90
+  p90,
+  winLbl
 }) {
   const hasQ = [p25, median, p75, p90].every(x => x != null);
   const maxV = Math.max(mean || 0, p90 || median || 0, 1);
@@ -7694,7 +7697,7 @@ function AtivWhaleStrip({
       color: 'var(--text-muted)',
       marginBottom: '7px'
     }
-  }, "Quartis da 1\xAA aposta (por jogador)"), [['P25', p25], ['Mediana', median], ['P75', p75], ['P90', p90]].map(([l, v], i) => /*#__PURE__*/React.createElement("div", {
+  }, "Quartis da aposta ", winLbl || 'D0', " (por jogador)"), [['P25', p25], ['Mediana', median], ['P75', p75], ['P90', p90]].map(([l, v], i) => /*#__PURE__*/React.createElement("div", {
     key: i,
     style: {
       display: 'flex',
@@ -7997,42 +8000,21 @@ function TabAtivacao({
   const faixaAll = faixaSel.length === 0;
   const faixaLabelTxt = faixaAll ? 'todas as faixas' : faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas';
   const grupoLabelTxt = !grupoActive ? 'todos os grupos' : grupoSel.length <= 2 ? grupoSel.map(grupoLabel_).join(' + ') : grupoSel.length + ' grupos';
-  // Base COM grupo (&byGrupo=1) — só quando o filtro de grupo está ligado (a aba toda passa a usar essa base).
-  // Traz o campo `grupo` + as mesmas colunas de ativação (turnD0/betD0Cnt/etc) do payload padrão.
-  const [grSrc, setGrSrc] = React.useState({
-    rows: null,
-    loading: false,
-    error: null
-  });
-  React.useEffect(() => {
-    if (!grupoActive || !winFrom || !winTo || !ENDPOINT_URL) return;
-    setGrSrc(s => ({
-      ...s,
-      loading: true,
-      error: null
-    }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${winFrom}&to=${winTo}&only=retfaixa&byGrupo=1`).then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))).then(j => {
-      if (j.error) throw new Error(j.error);
-      setGrSrc({
-        rows: j.retencaoFaixa || [],
-        loading: false,
-        error: null
-      });
-    }).catch(e => setGrSrc({
-      rows: null,
-      loading: false,
-      error: String(e.message || e)
-    }));
-  }, [grupoActive, winFrom, winTo]);
-  const src = grupoActive ? grSrc.rows || [] : retencaoFaixa || [];
-  const grupoOptions = grSrc.rows && grSrc.rows.length ? Array.from(new Set(grSrc.rows.map(r => r.grupo != null ? String(r.grupo) : 'sem grupo'))).sort() : GRUPO_LIST;
-  // Medianas (turnover D0 + nº de apostas 4D) por semana × escopo + janela toda (week=null). Fetch próprio,
-  // RE-BUSCA com os filtros de faixa/grupo p/ a mediana bater com as somas/contagens filtradas.
+  const grupoOptions = GRUPO_LIST;
+  // JANELA cumulativa 0..N (seletor da aba). O backend manda TODAS as janelas (ativacaoAgg/Med/Online);
+  // o toggle é CLIENT-SIDE (instantâneo). N=0 = só o dia do FTD; N=30 = dias 0..30 acumulados.
+  const ATIV_WINS_F = [0, 1, 7, 14, 30];
+  const [win, setWinRaw] = usePersistedState('rvops:ativWin', 0);
+  const winN = ATIV_WINS_F.indexOf(win) >= 0 ? win : 0;
+  const setWin = v => setWinRaw(ATIV_WINS_F.indexOf(v) >= 0 ? v : 0);
+  // Fetch único do only=ativacao: agg (somas por canal), med (medianas/quartis por escopo) e online — TODOS
+  // com as 5 janelas. Re-busca só quando faixa/grupo mudam (server-side); a janela não re-busca.
   const faixaQ = faixaSel.map(f => `&faixa=${encodeURIComponent(f)}`).join('');
   const grupoQ = grupoActive ? grupoSel.map(g => `&grupo=${encodeURIComponent(g)}`).join('') : '';
   const [med, setMed] = React.useState({
     rows: null,
     online: null,
+    agg: null,
     loading: false,
     error: null
   });
@@ -8048,17 +8030,33 @@ function TabAtivacao({
       setMed({
         rows: j.ativacaoMed || [],
         online: j.ativacaoOnline || [],
+        agg: j.ativacaoAgg || [],
         loading: false,
         error: null
       });
     }).catch(e => setMed({
       rows: null,
       online: null,
+      agg: null,
       loading: false,
       error: String(e.message || e)
     }));
   }, [winFrom, winTo, faixaQ, grupoQ]);
-  // Mapa de medianas: medMap[week||'__all__'][key] = { medTurnD0, medBet4d }.
+  // src = linhas do ativacaoAgg mapeadas p/ a JANELA selecionada, no formato que a agregação já espera
+  // (canal/week + campos da janela). faixa/grupo já vêm filtrados do servidor → sem filtro client-side.
+  const src = React.useMemo(() => (med.agg || []).map(r => ({
+    canal: r.canal,
+    date: r.week,
+    week: r.week,
+    qtdFtds: r.ftds,
+    betD0Cnt: r['bettors_' + winN],
+    turnD0: r['turn_' + winN],
+    depD0: r['dep_' + winN],
+    bonusD0: r['bonus_' + winN],
+    betCnt4d: r['betcnt_' + winN],
+    betDays4d: r['betdays_' + winN]
+  })), [med.agg, winN]);
+  // Mapa de medianas/quartis/contagens por escopo e JANELA: medMap[week||'__all__'][key] = { n, p25_N, med_N, p75_N, p90_N, medbet_N, nbet_N, nbet2d_N }.
   const medMap = React.useMemo(() => {
     const m = {};
     (med.rows || []).forEach(r => {
@@ -8107,37 +8105,34 @@ function TabAtivacao({
     });
     const tot = zero();
     (src || []).forEach(r => {
-      if (!selCh(r.canal)) return;
-      if (faixaSel.length && faixaSel.indexOf(r.faixa) < 0) return;
-      if (grupoActive && grupoSel.indexOf(r.grupo != null ? String(r.grupo) : 'sem grupo') < 0) return;
+      if (!selCh(r.canal)) return; // faixa/grupo já filtrados no servidor (só o canal é client-side)
       const wk = weekStartISO_(String(r.date));
       const b = wm[wk] || (wm[wk] = zero());
       const add = o => {
         o.qtd += r.qtdFtds || 0;
-        o.ftd += r.ftdTotal || 0;
         o.turnD0 += r.turnD0 || 0;
         o.betD0 += r.betD0Cnt || 0;
         o.depD0 += r.depD0 || 0;
         o.bonusD0 += r.bonusD0 || 0;
         o.bet4d += r.betCnt4d || 0;
         o.betDays += r.betDays4d || 0;
-        o.actDays += r.actDays4d || 0;
       };
       add(b);
       add(tot);
     });
-    // Dias online (GA4): soma oDays/oFtds por semana, no MESMO recorte de canal (faixa/grupo já filtrados no fetch).
+    // Dias online (GA4) da JANELA selecionada: soma oDays/oFtds por semana, mesmo recorte de canal.
     Object.keys(onlineMap).forEach(wk => {
       Object.keys(onlineMap[wk]).forEach(canal => {
         if (!selCh(canal)) return;
         const o = onlineMap[wk][canal];
         const b = wm[wk] || (wm[wk] = zero());
-        b.oDays += o.onlineDays || 0;
+        b.oDays += o['onlineDays_' + winN] || 0;
         b.oFtds += o.ftds || 0;
-        tot.oDays += o.onlineDays || 0;
+        tot.oDays += o['onlineDays_' + winN] || 0;
         tot.oFtds += o.ftds || 0;
       });
     });
+    const denom = winN + 1; // tamanho da janela (0..N inclusivo)
     const derive = (b, wk) => {
       const mrow = scopeKey && medMap[wk] && medMap[wk][scopeKey] ? medMap[wk][scopeKey] : null;
       const wkGa4 = wk === '__all__' ? ga4Full : wk >= GA4_WEEK_MIN; // gate por semana (esconde pré-GA4)
@@ -8148,14 +8143,13 @@ function TabAtivacao({
         bonusD0: b.bonusD0,
         pctBet: b.qtd ? b.betD0 / b.qtd : null,
         meanBet: b.qtd ? b.turnD0 / b.qtd : null,
-        medBet: mrow ? mrow.medTurnD0 : null,
+        medBet: mrow ? mrow['med_' + winN] : null,
         rollover: b.depD0 ? b.turnD0 / b.depD0 : null,
         bonusDep: hasBonus && b.depD0 ? b.bonusD0 / b.depD0 : null,
         vezes: b.qtd ? b.bet4d / b.qtd : null,
-        vezesMed: mrow ? mrow.medBet4d : null,
-        betDaysR: b.qtd ? b.betDays / (4 * b.qtd) : null,
-        actDaysR: b.qtd ? b.actDays / (4 * b.qtd) : null,
-        onlineR: wkGa4 && b.oFtds ? b.oDays / (4 * b.oFtds) : null
+        vezesMed: mrow ? mrow['medbet_' + winN] : null,
+        betDaysR: b.qtd ? b.betDays / (denom * b.qtd) : null,
+        onlineR: wkGa4 && b.oFtds ? b.oDays / (denom * b.oFtds) : null
       };
     };
     const ks = Object.keys(wm).sort();
@@ -8163,7 +8157,7 @@ function TabAtivacao({
       weeks: ks.map(k => derive(wm[k], k)),
       totals: derive(tot, '__all__')
     };
-  }, [src, selCh, medMap, onlineMap, scopeKey, faixaSel, grupoSel, grupoActive, ga4Full, hasBonus]);
+  }, [src, selCh, medMap, onlineMap, scopeKey, ga4Full, hasBonus, winN]);
   const T = totals;
   // Comparação POR CANAL (ignora o seletor de canal do topo — a comparação é multi-canal por natureza;
   // respeita faixa/grupo). Baseline = agregado de todos os canais mostrados (house). Mediana por canal vem
@@ -8185,9 +8179,7 @@ function TabAtivacao({
     });
     const hr = zero();
     (src || []).forEach(r => {
-      if (faixaSel.length && faixaSel.indexOf(r.faixa) < 0) return;
-      if (grupoActive && grupoSel.indexOf(r.grupo != null ? String(r.grupo) : 'sem grupo') < 0) return;
-      const c = r.canal || '—';
+      const c = r.canal || '—'; // faixa/grupo já filtrados no servidor
       const b = cm[c] || (cm[c] = zero());
       const add = o => {
         o.qtd += r.qtdFtds || 0;
@@ -8204,13 +8196,14 @@ function TabAtivacao({
       Object.keys(onlineMap[wk]).forEach(c => {
         const o = onlineMap[wk][c];
         const b = cm[c] || (cm[c] = zero());
-        b.oDays += o.onlineDays || 0;
+        b.oDays += o['onlineDays_' + winN] || 0;
         b.oFtds += o.ftds || 0;
-        hr.oDays += o.onlineDays || 0;
+        hr.oDays += o['onlineDays_' + winN] || 0;
         hr.oFtds += o.ftds || 0;
       });
     });
     const mAll = medMap['__all__'] || {};
+    const denom = winN + 1;
     const rows = Object.keys(cm).map(c => {
       const b = cm[c],
         md = mAll[c] || null;
@@ -8219,8 +8212,8 @@ function TabAtivacao({
         qtd: b.qtd,
         pctBet: b.qtd ? b.betD0 / b.qtd : null,
         rollover: b.depD0 ? b.turnD0 / b.depD0 : null,
-        medBet: md ? md.medTurnD0 : null,
-        online: b.oFtds ? b.oDays / (4 * b.oFtds) : null,
+        medBet: md ? md['med_' + winN] : null,
+        online: b.oFtds ? b.oDays / (denom * b.oFtds) : null,
         bonusDep: hasBonus && b.depD0 ? b.bonusD0 / b.depD0 : null,
         isSel: selSet.has(c),
         isGrowth: isGrowthCh_(c)
@@ -8230,15 +8223,15 @@ function TabAtivacao({
       compRows: rows,
       houseRaw: hr
     };
-  }, [src, faixaSel, grupoSel, grupoActive, onlineMap, medMap, chFilter, hasBonus]);
+  }, [src, onlineMap, medMap, chFilter, hasBonus, winN]);
   const ATIV_METRICS = {
     pctBet: {
-      label: '% apostou D0',
+      label: '% apostou',
       fmt: 'pct',
       hb: true
     },
     rollover: {
-      label: 'Rollover D0',
+      label: 'Rollover',
       fmt: 'multiple',
       hb: true
     },
@@ -8248,7 +8241,7 @@ function TabAtivacao({
       hb: true
     },
     online: {
-      label: 'Dias online ÷ 4',
+      label: 'Dias online',
       fmt: 'pct',
       hb: true
     },
@@ -8261,14 +8254,14 @@ function TabAtivacao({
   const [compMetric, setCompMetric] = React.useState('pctBet');
   const cmKey = ATIV_METRICS[compMetric] ? compMetric : 'pctBet';
   const mAllTot = (medMap['__all__'] || {})['__total__'] || null;
-  const houseFor = k => k === 'pctBet' ? houseRaw.qtd ? houseRaw.betD0 / houseRaw.qtd : null : k === 'rollover' ? houseRaw.depD0 ? houseRaw.turnD0 / houseRaw.depD0 : null : k === 'medBet' ? mAllTot ? mAllTot.medTurnD0 : null : k === 'bonusDep' ? hasBonus && houseRaw.depD0 ? houseRaw.bonusD0 / houseRaw.depD0 : null : houseRaw.oFtds ? houseRaw.oDays / (4 * houseRaw.oFtds) : null;
-  // Funil: prefere as contagens do backend (mesma coorte da mediana, campos n/nBetD0/nBet2d, backend v40+);
-  // sem elas, degrada p/ 2 passos client-side (FTD → apostou D0). Quartis idem (p25/p75/p90).
+  const houseFor = k => k === 'pctBet' ? houseRaw.qtd ? houseRaw.betD0 / houseRaw.qtd : null : k === 'rollover' ? houseRaw.depD0 ? houseRaw.turnD0 / houseRaw.depD0 : null : k === 'medBet' ? mAllTot ? mAllTot['med_' + winN] : null : k === 'bonusDep' ? hasBonus && houseRaw.depD0 ? houseRaw.bonusD0 / houseRaw.depD0 : null : houseRaw.oFtds ? houseRaw.oDays / ((winN + 1) * houseRaw.oFtds) : null;
+  // Funil da JANELA: FTD → apostou (em 0..N) → apostou 2+ dias distintos (0..N). Contagens do backend (mesma
+  // coorte/janela). No D0 (janela de 1 dia) o passo "2+ dias" não existe → funil de 2 passos.
   const scopeMrow = scopeKey && medMap['__all__'] && medMap['__all__'][scopeKey] ? medMap['__all__'][scopeKey] : null;
-  const funnel = scopeMrow && scopeMrow.nBet2d != null ? {
+  const funnel = scopeMrow ? {
     base: scopeMrow.n,
-    betD0: scopeMrow.nBetD0 != null ? scopeMrow.nBetD0 : Math.round((T.qtd || 0) * (T.pctBet || 0)),
-    bet2d: scopeMrow.nBet2d
+    betD0: scopeMrow['nbet_' + winN],
+    bet2d: winN === 0 ? null : scopeMrow['nbet2d_' + winN]
   } : {
     base: T.qtd,
     betD0: Math.round((T.qtd || 0) * (T.pctBet || 0)),
@@ -8282,8 +8275,10 @@ function TabAtivacao({
     m1: null,
     title
   });
-  const d0Heroes = [H('% apostou no D0', T.pctBet, 'pct'), H('Turnover D0 (Σ)', T.turnD0, 'brl'), H('Aposta média D0', T.meanBet, 'brl'), H('Aposta mediana D0', T.medBet, 'brl'), H('Rollover D0', T.rollover, 'multiple'), H('Dep. de bônus D0', hasBonus ? T.bonusDep : null, 'pct')];
-  const w4Heroes = [H('Vezes que apostou · 4D (média)', T.vezes, 'qty'), H('Vezes que apostou · 4D (mediana)', T.vezesMed, 'qty'), H('Dias que apostou ÷ 4', T.betDaysR, 'pct'), H('Dias online ÷ 4 · GA4', ga4Full ? T.onlineR : null, 'pct')];
+  const winLbl = winN === 0 ? 'D0' : `D0–D${winN}`; // rótulo da janela cumulativa
+  const winDen = winN + 1; // tamanho da janela (dias 0..N)
+  const d0Heroes = [H(`% apostou · ${winLbl}`, T.pctBet, 'pct'), H(`Turnover · ${winLbl} (Σ)`, T.turnD0, 'brl'), H(`Aposta média · ${winLbl}`, T.meanBet, 'brl'), H(`Aposta mediana · ${winLbl}`, T.medBet, 'brl'), H(`Rollover · ${winLbl}`, T.rollover, 'multiple'), H(`Dep. de bônus · ${winLbl}`, hasBonus ? T.bonusDep : null, 'pct')];
+  const w4Heroes = [H('Vezes que apostou (média)', T.vezes, 'qty'), H('Vezes que apostou (mediana)', T.vezesMed, 'qty'), H(`Dias que apostou ÷ ${winDen}`, T.betDaysR, 'pct'), H(`Dias online ÷ ${winDen} · GA4`, ga4Full ? T.onlineR : null, 'pct')];
   const dm = s => {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s));
     return m ? weekLabel_(s) : String(s);
@@ -8303,9 +8298,9 @@ function TabAtivacao({
   const heat = (v, r) => ({
     background: heatBg_(v, r.min, r.max)
   });
-  const medNote = scopeKey == null ? ' Mediana indisponível para combinação de 2+ canais (só Total, Growth ou 1 canal) — mostra "—".' : med.loading ? ' Medianas carregando…' : med.error ? ' Erro ao carregar medianas.' : '';
-  const filtSuffix = `${chLabel}${faixaAll ? '' : ' · ' + faixaLabelTxt}${grupoActive ? ' · ' + grupoLabelTxt : ''}`;
-  const srcLoad = grupoActive && grSrc.loading ? ' · carregando grupo…' : grupoActive && grSrc.error ? ' · erro ao carregar grupo' : '';
+  const medNote = scopeKey == null ? ' Mediana/quartis indisponíveis para combinação de 2+ canais (só Total, Growth ou 1 canal) — mostra "—".' : med.loading ? ' Carregando…' : med.error ? ' Erro ao carregar.' : '';
+  const filtSuffix = `${winLbl} · ${chLabel}${faixaAll ? '' : ' · ' + faixaLabelTxt}${grupoActive ? ' · ' + grupoLabelTxt : ''}`;
+  const srcLoad = med.loading ? ' · carregando…' : med.error ? ' · erro' : '';
   const cells = r => [/*#__PURE__*/React.createElement("td", {
     key: "q"
   }, fmtQty(r.qtd)), /*#__PURE__*/React.createElement("td", {
@@ -8330,19 +8325,31 @@ function TabAtivacao({
     key: "bd"
   }, fmtPct(r.betDaysR, 1)), /*#__PURE__*/React.createElement("td", {
     key: "on"
-  }, fmtPct(r.onlineR, 1)), /*#__PURE__*/React.createElement("td", {
-    key: "ad",
-    style: {
-      color: 'var(--text-muted)'
-    }
-  }, fmtPct(r.actDaysR, 1))];
+  }, fmtPct(r.onlineR, 1))];
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "tab-header"
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", null, "Ativa\xE7\xE3o D0"), /*#__PURE__*/React.createElement("div", {
     className: "subtitle"
-  }, "Sinais precoces da coorte de FTD (vis\xE3o semanal, seg\u2013dom) \u2014 o que o novo jogador faz no dia do 1\xBA dep\xF3sito e nos 4 primeiros dias. Segue o slicer de canal \xB7 ", chLabel))), /*#__PURE__*/React.createElement("div", {
+  }, "Sinais precoces da coorte de FTD (vis\xE3o semanal, seg\u2013dom) \u2014 o que o novo jogador faz na janela ap\xF3s o 1\xBA dep\xF3sito (D0 \u2192 D30, cumulativa e selecion\xE1vel). Segue o slicer de canal \xB7 ", chLabel))), /*#__PURE__*/React.createElement("div", {
     className: "slicer-group slicer-ruler"
   }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: '11px',
+      color: 'var(--text-muted)'
+    }
+  }, "Janela"), /*#__PURE__*/React.createElement("div", {
+    className: "slicer-presets"
+  }, ATIV_WINS_F.map(n => /*#__PURE__*/React.createElement("button", {
+    key: n,
+    className: `preset-btn ${winN === n ? 'active' : ''}`,
+    onClick: () => setWin(n),
+    title: n === 0 ? 'Só o dia do FTD (D0)' : `Dias 0 a ${n} acumulados`
+  }, n === 0 ? 'D0' : 'D' + n))), /*#__PURE__*/React.createElement("span", {
+    className: "slicer-divider",
+    style: {
+      margin: '0 4px'
+    }
+  }), /*#__PURE__*/React.createElement("label", {
     style: {
       fontSize: '11px',
       color: 'var(--text-muted)'
@@ -8377,33 +8384,35 @@ function TabAtivacao({
     className: "support"
   }, /*#__PURE__*/React.createElement("div", {
     className: "support-title"
-  }, "Ativa\xE7\xE3o no D0 \xB7 ", filtSuffix), /*#__PURE__*/React.createElement("div", {
+  }, "Ativa\xE7\xE3o \xB7 ", filtSuffix), /*#__PURE__*/React.createElement("div", {
     className: "hero-grid"
   }, d0Heroes.map((m, i) => /*#__PURE__*/React.createElement(Hero, {
     key: i,
     metric: m
   }))), /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
-  }, /*#__PURE__*/React.createElement("strong", null, "% apostou no D0"), " = FTDs com turnover > 0 no dia do FTD \xF7 Qtd FTD. ", /*#__PURE__*/React.createElement("strong", null, "Turnover D0"), " = \u03A3 valor apostado (casino+esporte+loteria) no D0.", /*#__PURE__*/React.createElement("strong", null, " Aposta m\xE9dia D0"), " = Turnover D0 \xF7 Qtd FTD; ", /*#__PURE__*/React.createElement("strong", null, "mediana"), " = valor t\xEDpico por jogador (robusta a whale \u2014 a m\xE9dia \xE9 muito puxada por poucos grandes apostadores).", /*#__PURE__*/React.createElement("strong", null, " Rollover D0"), " = Turnover D0 \xF7 Dep\xF3sito D0 (quantas vezes o dep\xF3sito do dia foi apostado).", /*#__PURE__*/React.createElement("strong", null, " Dep. de b\xF4nus D0"), " = b\xF4nus cash em ", /*#__PURE__*/React.createElement("strong", null, "saldo real"), " (a mesma bonifica\xE7\xE3o do NGR real) concedido no D0 \xF7 Dep\xF3sito D0 \u2014 ", /*#__PURE__*/React.createElement("strong", null, "quanto de b\xF4nus a casa deu pra cada real depositado ativar"), " (menor = melhor; mede a depend\xEAncia de b\xF4nus). \"Apostou\" usa o turnover total \u2014 n\xE3o h\xE1 split real\xD7b\xF4nus na aposta em si (o b\xF4nus \xE9 fatia pequena do turnover).", hasBonus ? '' : ' A Dep. de bônus fica "—" até o deploy do backend v40.', medNote)), /*#__PURE__*/React.createElement("div", {
+  }, "M\xE9tricas na ", /*#__PURE__*/React.createElement("strong", null, "janela ", winLbl), " (dias 0 a ", winN, " acumulados desde o FTD). ", /*#__PURE__*/React.createElement("strong", null, "% apostou"), " = FTDs com turnover > 0 na janela \xF7 Qtd FTD. ", /*#__PURE__*/React.createElement("strong", null, "Turnover"), " = \u03A3 valor apostado (casino+esporte+loteria) na janela.", /*#__PURE__*/React.createElement("strong", null, " Aposta m\xE9dia"), " = Turnover \xF7 Qtd FTD; ", /*#__PURE__*/React.createElement("strong", null, "mediana"), " = valor t\xEDpico por jogador (robusta a whale \u2014 a m\xE9dia \xE9 muito puxada por poucos grandes apostadores).", /*#__PURE__*/React.createElement("strong", null, " Rollover"), " = Turnover \xF7 Dep\xF3sito da janela (quantas vezes o dep\xF3sito foi apostado).", /*#__PURE__*/React.createElement("strong", null, " Dep. de b\xF4nus"), " = b\xF4nus cash em ", /*#__PURE__*/React.createElement("strong", null, "saldo real"), " (a mesma bonifica\xE7\xE3o do NGR real) concedido na janela \xF7 Dep\xF3sito \u2014 ", /*#__PURE__*/React.createElement("strong", null, "quanto de b\xF4nus a casa deu pra cada real depositado ativar"), " (menor = melhor). \"Apostou\" usa o turnover total \u2014 n\xE3o h\xE1 split real\xD7b\xF4nus na aposta em si (o b\xF4nus \xE9 fatia pequena do turnover).", medNote)), /*#__PURE__*/React.createElement("div", {
     className: "ativ-two-col"
   }, /*#__PURE__*/React.createElement("div", {
     className: "support"
   }, /*#__PURE__*/React.createElement("div", {
     className: "support-title"
-  }, "Funil de ativa\xE7\xE3o \u2192 recompra \xB7 ", filtSuffix), /*#__PURE__*/React.createElement(AtivFunnel, {
+  }, "Funil de ativa\xE7\xE3o \xB7 ", filtSuffix), /*#__PURE__*/React.createElement(AtivFunnel, {
     base: funnel.base,
     betD0: funnel.betD0,
-    bet2d: funnel.bet2d
+    bet2d: funnel.bet2d,
+    winN: winN
   })), /*#__PURE__*/React.createElement("div", {
     className: "support"
   }, /*#__PURE__*/React.createElement("div", {
     className: "support-title"
-  }, "Aposta D0 \xB7 m\xE9dia vs mediana"), /*#__PURE__*/React.createElement(AtivWhaleStrip, {
+  }, "Aposta ", winLbl, " \xB7 m\xE9dia vs mediana"), /*#__PURE__*/React.createElement(AtivWhaleStrip, {
     mean: T.meanBet,
     median: T.medBet,
-    p25: scopeMrow ? scopeMrow.p25 : null,
-    p75: scopeMrow ? scopeMrow.p75 : null,
-    p90: scopeMrow ? scopeMrow.p90 : null
+    winLbl: winLbl,
+    p25: scopeMrow ? scopeMrow['p25_' + winN] : null,
+    p75: scopeMrow ? scopeMrow['p75_' + winN] : null,
+    p90: scopeMrow ? scopeMrow['p90_' + winN] : null
   }))), /*#__PURE__*/React.createElement("div", {
     className: "support"
   }, /*#__PURE__*/React.createElement("div", {
@@ -8415,7 +8424,7 @@ function TabAtivacao({
       flexWrap: 'wrap',
       gap: '8px'
     }
-  }, /*#__PURE__*/React.createElement("span", null, "Ativa\xE7\xE3o por canal \xB7 ", ATIV_METRICS[cmKey].label), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("span", null, "Ativa\xE7\xE3o por canal \xB7 ", winLbl, " \xB7 ", ATIV_METRICS[cmKey].label), /*#__PURE__*/React.createElement("div", {
     className: "slicer-presets"
   }, Object.keys(ATIV_METRICS).map(k => /*#__PURE__*/React.createElement("button", {
     key: k,
@@ -8429,7 +8438,7 @@ function TabAtivacao({
     higherBetter: ATIV_METRICS[cmKey].hb
   }), /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
-  }, "Cada barra = um canal; a ", /*#__PURE__*/React.createElement("strong", null, "linha tracejada"), " \xE9 a m\xE9dia da casa. ", /*#__PURE__*/React.createElement("span", {
+  }, "Cada barra = um canal na janela ", /*#__PURE__*/React.createElement("strong", null, winLbl), "; a ", /*#__PURE__*/React.createElement("strong", null, "linha tracejada"), " \xE9 a m\xE9dia da casa. ", /*#__PURE__*/React.createElement("span", {
     style: {
       color: 'var(--accent)'
     }
@@ -8441,14 +8450,14 @@ function TabAtivacao({
     className: "support"
   }, /*#__PURE__*/React.createElement("div", {
     className: "support-title"
-  }, "Janela dos 4 primeiros dias (D0\u2013D3) \xB7 ", filtSuffix), /*#__PURE__*/React.createElement("div", {
+  }, "Engajamento na janela \xB7 ", filtSuffix), /*#__PURE__*/React.createElement("div", {
     className: "hero-grid"
   }, w4Heroes.map((m, i) => /*#__PURE__*/React.createElement(Hero, {
     key: i,
     metric: m
   }))), /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
-  }, "Janela = dias 0 a 3 do FTD. ", /*#__PURE__*/React.createElement("strong", null, "Vezes que apostou"), " = n\xBA de apostas na janela por jogador (a m\xE9dia \xE9 inflada por slots/whales \u2192 veja a mediana).", /*#__PURE__*/React.createElement("strong", null, " Dias que apostou \xF7 4"), " = dias distintos em que apostou (0\u20133) \xF7 4, m\xE9dia da coorte (ex.: 32,6% = 1,30 de 4 dias).", /*#__PURE__*/React.createElement("strong", null, " Dias online \xF7 4"), " = dias distintos com ", /*#__PURE__*/React.createElement("strong", null, "login/sess\xE3o no GA4"), " (presen\xE7a real \u2014 o cara abriu o app/site) nos dias 0\u20133 \xF7 4. Cobre ~99% das contas FTD e \xE9 ", /*#__PURE__*/React.createElement("strong", null, "confi\xE1vel de jun/26 pra frente"), " (o GA4 come\xE7ou ~mai/26 \u2192 janelas anteriores ficam sem online). Costuma ser maior que \"Dias apostou\" (abre mais dias do que aposta). A coluna ", /*#__PURE__*/React.createElement("em", null, "Dias Ativo/4"), " (cinza) \xE9 o proxy antigo (dias com transa\xE7\xE3o) \u2014 deixei pra comparar; \xE9 sempre menor que o online real.", ga4Full ? '' : ' ⚠️ A janela atual é anterior a jun/26 (ou parcial) — o hero de online fica "—"; as semanas de jun+ ainda mostram.')), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("strong", null, "Vezes que apostou"), " = n\xBA de apostas na janela ", winLbl, " por jogador (a m\xE9dia \xE9 inflada por slots/whales \u2192 veja a mediana).", /*#__PURE__*/React.createElement("strong", null, " Dias que apostou \xF7 ", winDen), " = dias distintos em que apostou (0\u2013", winN, ") \xF7 ", winDen, ", m\xE9dia da coorte.", /*#__PURE__*/React.createElement("strong", null, " Dias online \xF7 ", winDen), " = dias distintos com ", /*#__PURE__*/React.createElement("strong", null, "login/sess\xE3o no GA4"), " (presen\xE7a real \u2014 abriu o app/site) na janela \xF7 ", winDen, ". Cobre ~99% das contas FTD e \xE9 ", /*#__PURE__*/React.createElement("strong", null, "confi\xE1vel de jun/26 pra frente"), " (o GA4 come\xE7ou ~mai/26 \u2192 janelas anteriores ficam sem online). Costuma ser maior que \"Dias apostou\" (abre mais dias do que aposta).", ga4Full ? '' : ' ⚠️ A janela do slicer é anterior a jun/26 (ou parcial) — o hero de online fica "—"; as semanas de jun+ ainda mostram.')), /*#__PURE__*/React.createElement("div", {
     className: "support"
   }, /*#__PURE__*/React.createElement("div", {
     className: "support-title"
@@ -8460,11 +8469,11 @@ function TabAtivacao({
     style: {
       color: 'var(--accent-orange)'
     }
-  }, "% apostou no D0"), " e ", /*#__PURE__*/React.createElement("span", {
+  }, "% apostou"), " e ", /*#__PURE__*/React.createElement("span", {
     style: {
       color: 'var(--accent)'
     }
-  }, "dias online \xF7 4"), ". V\xEA a matura\xE7\xE3o da coorte num relance \u2014 semanas anteriores a jun/26 n\xE3o t\xEAm online (GA4).")), /*#__PURE__*/React.createElement("div", {
+  }, "dias online \xF7 ", winDen), " na janela ", winLbl, ". V\xEA a matura\xE7\xE3o da coorte num relance \u2014 semanas anteriores a jun/26 n\xE3o t\xEAm online (GA4).")), /*#__PURE__*/React.createElement("div", {
     className: "support"
   }, /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", {
     style: {
@@ -8473,7 +8482,7 @@ function TabAtivacao({
       color: 'var(--text-muted)',
       fontWeight: 600
     }
-  }, "Ver tabela semana a semana (detalhe)", med.loading ? ' · medianas carregando…' : '', srcLoad), /*#__PURE__*/React.createElement("div", {
+  }, "Ver tabela semana a semana \xB7 janela ", winLbl, " (detalhe)", srcLoad), /*#__PURE__*/React.createElement("div", {
     className: "table-scroll tall",
     style: {
       marginTop: '12px'
@@ -8487,28 +8496,26 @@ function TabAtivacao({
   }, "Semana"), /*#__PURE__*/React.createElement("th", {
     title: "Qtd de FTDs na semana"
   }, "Qtd FTD"), /*#__PURE__*/React.createElement("th", {
-    title: "% dos FTDs que apostaram (turnover > 0) no D0"
-  }, "% Apostou D0"), /*#__PURE__*/React.createElement("th", {
-    title: "\u03A3 valor apostado no D0"
-  }, "Turnover D0"), /*#__PURE__*/React.createElement("th", {
-    title: "Turnover D0 \xF7 Qtd FTD"
-  }, "Aposta M\xE9d. D0"), /*#__PURE__*/React.createElement("th", {
-    title: "Mediana do valor apostado no D0 por jogador (por escopo)"
-  }, "Aposta Med. D0"), /*#__PURE__*/React.createElement("th", {
-    title: "Turnover D0 \xF7 Dep\xF3sito D0"
-  }, "Rollover D0"), /*#__PURE__*/React.createElement("th", {
-    title: "B\xF4nus cash (saldo real) concedido no D0 \xF7 Dep\xF3sito D0 \u2014 depend\xEAncia de b\xF4nus (menor = melhor). '\u2014' at\xE9 o backend v40."
-  }, "Dep. b\xF4nus D0"), /*#__PURE__*/React.createElement("th", {
-    title: "N\xBA m\xE9dio de apostas por jogador nos dias 0\u20133"
-  }, "Vezes 4D (m\xE9d)"), /*#__PURE__*/React.createElement("th", {
-    title: "Mediana do n\xBA de apostas nos dias 0\u20133"
-  }, "Vezes 4D (med)"), /*#__PURE__*/React.createElement("th", {
-    title: "Dias distintos apostando (0\u20133) \xF7 4, m\xE9dia"
-  }, "Dias Apostou/4"), /*#__PURE__*/React.createElement("th", {
-    title: "Dias distintos ONLINE (login/sess\xE3o no GA4) nos dias 0\u20133 \xF7 4, m\xE9dia. Cobre ~99% das contas FTD; confi\xE1vel de jun/26."
-  }, "Dias Online/4"), /*#__PURE__*/React.createElement("th", {
-    title: "Dias distintos com atividade transacional (0\u20133) \xF7 4, m\xE9dia \u2014 proxy antigo, menor que o online real"
-  }, "Dias Ativo/4"))), /*#__PURE__*/React.createElement("tbody", null, weeks.map((r, i) => /*#__PURE__*/React.createElement("tr", {
+    title: "% dos FTDs que apostaram (turnover > 0) na janela selecionada"
+  }, "% Apostou"), /*#__PURE__*/React.createElement("th", {
+    title: "\u03A3 valor apostado na janela"
+  }, "Turnover"), /*#__PURE__*/React.createElement("th", {
+    title: "Turnover \xF7 Qtd FTD"
+  }, "Aposta M\xE9d."), /*#__PURE__*/React.createElement("th", {
+    title: "Mediana do valor apostado na janela por jogador (por escopo)"
+  }, "Aposta Med."), /*#__PURE__*/React.createElement("th", {
+    title: "Turnover \xF7 Dep\xF3sito da janela"
+  }, "Rollover"), /*#__PURE__*/React.createElement("th", {
+    title: "B\xF4nus cash (saldo real) na janela \xF7 Dep\xF3sito \u2014 depend\xEAncia de b\xF4nus (menor = melhor)"
+  }, "Dep. b\xF4nus"), /*#__PURE__*/React.createElement("th", {
+    title: "N\xBA m\xE9dio de apostas por jogador na janela"
+  }, "Vezes (m\xE9d)"), /*#__PURE__*/React.createElement("th", {
+    title: "Mediana do n\xBA de apostas na janela"
+  }, "Vezes (med)"), /*#__PURE__*/React.createElement("th", {
+    title: "Dias distintos apostando \xF7 tamanho da janela, m\xE9dia"
+  }, "Dias Apostou %"), /*#__PURE__*/React.createElement("th", {
+    title: "Dias distintos ONLINE (login/sess\xE3o no GA4) na janela \xF7 tamanho da janela, m\xE9dia. Cobre ~99% das contas FTD; confi\xE1vel de jun/26."
+  }, "Dias Online %"))), /*#__PURE__*/React.createElement("tbody", null, weeks.map((r, i) => /*#__PURE__*/React.createElement("tr", {
     key: i
   }, /*#__PURE__*/React.createElement("td", {
     className: "ch-name"
