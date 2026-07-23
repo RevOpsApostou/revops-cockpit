@@ -4086,9 +4086,12 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
   const chLabel = chLabel_(chFilter);
   // Agrega por SEMANA (seg), no recorte de canal (slicer global) + faixa + grupo (filtros da aba).
   const selCh = chSelector_(chFilter);
+  // Bônus (saldo real) no D0 só existe a partir do backend v40 (campo bonusD0 no retencaoFaixa). Sem ele,
+  // a "dependência de bônus" fica "—" (não 0% — seria enganoso mostrar zero quando o dado ainda não veio).
+  const hasBonus = React.useMemo(() => (src || []).some(r => r.bonusD0 != null), [src]);
   const { weeks, totals } = React.useMemo(() => {
     const wm = {};
-    const zero = () => ({ qtd: 0, ftd: 0, turnD0: 0, betD0: 0, depD0: 0, bet4d: 0, betDays: 0, actDays: 0, oDays: 0, oFtds: 0 });
+    const zero = () => ({ qtd: 0, ftd: 0, turnD0: 0, betD0: 0, depD0: 0, bonusD0: 0, bet4d: 0, betDays: 0, actDays: 0, oDays: 0, oFtds: 0 });
     const tot = zero();
     (src || []).forEach(r => {
       if (!selCh(r.canal)) return;
@@ -4096,7 +4099,7 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
       if (grupoActive && grupoSel.indexOf(r.grupo != null ? String(r.grupo) : 'sem grupo') < 0) return;
       const wk = weekStartISO_(String(r.date));
       const b = wm[wk] || (wm[wk] = zero());
-      const add = (o) => { o.qtd += r.qtdFtds || 0; o.ftd += r.ftdTotal || 0; o.turnD0 += r.turnD0 || 0; o.betD0 += r.betD0Cnt || 0; o.depD0 += r.depD0 || 0; o.bet4d += r.betCnt4d || 0; o.betDays += r.betDays4d || 0; o.actDays += r.actDays4d || 0; };
+      const add = (o) => { o.qtd += r.qtdFtds || 0; o.ftd += r.ftdTotal || 0; o.turnD0 += r.turnD0 || 0; o.betD0 += r.betD0Cnt || 0; o.depD0 += r.depD0 || 0; o.bonusD0 += r.bonusD0 || 0; o.bet4d += r.betCnt4d || 0; o.betDays += r.betDays4d || 0; o.actDays += r.actDays4d || 0; };
       add(b); add(tot);
     });
     // Dias online (GA4): soma oDays/oFtds por semana, no MESMO recorte de canal (faixa/grupo já filtrados no fetch).
@@ -4113,11 +4116,12 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
       const mrow = (scopeKey && medMap[wk] && medMap[wk][scopeKey]) ? medMap[wk][scopeKey] : null;
       const wkGa4 = wk === '__all__' ? ga4Full : (wk >= GA4_WEEK_MIN);   // gate por semana (esconde pré-GA4)
       return {
-        week: wk, qtd: b.qtd, turnD0: b.turnD0,
+        week: wk, qtd: b.qtd, turnD0: b.turnD0, bonusD0: b.bonusD0,
         pctBet: b.qtd ? b.betD0 / b.qtd : null,
         meanBet: b.qtd ? b.turnD0 / b.qtd : null,
         medBet: mrow ? mrow.medTurnD0 : null,
         rollover: b.depD0 ? b.turnD0 / b.depD0 : null,
+        bonusDep: (hasBonus && b.depD0) ? b.bonusD0 / b.depD0 : null,
         vezes: b.qtd ? b.bet4d / b.qtd : null,
         vezesMed: mrow ? mrow.medBet4d : null,
         betDaysR: b.qtd ? b.betDays / (4 * b.qtd) : null,
@@ -4127,7 +4131,7 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
     };
     const ks = Object.keys(wm).sort();
     return { weeks: ks.map(k => derive(wm[k], k)), totals: derive(tot, '__all__') };
-  }, [src, selCh, medMap, onlineMap, scopeKey, faixaSel, grupoSel, grupoActive, ga4Full]);
+  }, [src, selCh, medMap, onlineMap, scopeKey, faixaSel, grupoSel, grupoActive, ga4Full, hasBonus]);
 
   const T = totals;
   // Comparação POR CANAL (ignora o seletor de canal do topo — a comparação é multi-canal por natureza;
@@ -4136,14 +4140,14 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
   const selSet = new Set(chList_(chFilter));
   const { compRows, houseRaw } = React.useMemo(() => {
     const cm = {};
-    const zero = () => ({ qtd: 0, betD0: 0, turnD0: 0, depD0: 0, oDays: 0, oFtds: 0 });
+    const zero = () => ({ qtd: 0, betD0: 0, turnD0: 0, depD0: 0, bonusD0: 0, oDays: 0, oFtds: 0 });
     const hr = zero();
     (src || []).forEach(r => {
       if (faixaSel.length && faixaSel.indexOf(r.faixa) < 0) return;
       if (grupoActive && grupoSel.indexOf(r.grupo != null ? String(r.grupo) : 'sem grupo') < 0) return;
       const c = r.canal || '—';
       const b = cm[c] || (cm[c] = zero());
-      const add = (o) => { o.qtd += r.qtdFtds || 0; o.betD0 += r.betD0Cnt || 0; o.turnD0 += r.turnD0 || 0; o.depD0 += r.depD0 || 0; };
+      const add = (o) => { o.qtd += r.qtdFtds || 0; o.betD0 += r.betD0Cnt || 0; o.turnD0 += r.turnD0 || 0; o.depD0 += r.depD0 || 0; o.bonusD0 += r.bonusD0 || 0; };
       add(b); add(hr);
     });
     Object.keys(onlineMap).forEach(wk => {
@@ -4159,16 +4163,18 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
         rollover: b.depD0 ? b.turnD0 / b.depD0 : null,
         medBet: md ? md.medTurnD0 : null,
         online: b.oFtds ? b.oDays / (4 * b.oFtds) : null,
+        bonusDep: (hasBonus && b.depD0) ? b.bonusD0 / b.depD0 : null,
         isSel: selSet.has(c), isGrowth: isGrowthCh_(c),
       };
     }).filter(r => r.qtd > 0);
     return { compRows: rows, houseRaw: hr };
-  }, [src, faixaSel, grupoSel, grupoActive, onlineMap, medMap, chFilter]);
+  }, [src, faixaSel, grupoSel, grupoActive, onlineMap, medMap, chFilter, hasBonus]);
   const ATIV_METRICS = {
     pctBet:   { label: '% apostou D0',    fmt: 'pct',      hb: true },
     rollover: { label: 'Rollover D0',     fmt: 'multiple', hb: true },
     medBet:   { label: 'Aposta mediana',  fmt: 'brl',      hb: true },
     online:   { label: 'Dias online ÷ 4', fmt: 'pct',      hb: true },
+    bonusDep: { label: 'Dep. bônus',      fmt: 'pct',      hb: false },   // MENOR é melhor (menos dependência)
   };
   const [compMetric, setCompMetric] = React.useState('pctBet');
   const cmKey = ATIV_METRICS[compMetric] ? compMetric : 'pctBet';
@@ -4176,6 +4182,7 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
   const houseFor = (k) => k === 'pctBet' ? (houseRaw.qtd ? houseRaw.betD0 / houseRaw.qtd : null)
     : k === 'rollover' ? (houseRaw.depD0 ? houseRaw.turnD0 / houseRaw.depD0 : null)
     : k === 'medBet' ? (mAllTot ? mAllTot.medTurnD0 : null)
+    : k === 'bonusDep' ? ((hasBonus && houseRaw.depD0) ? houseRaw.bonusD0 / houseRaw.depD0 : null)
     : (houseRaw.oFtds ? houseRaw.oDays / (4 * houseRaw.oFtds) : null);
   // Funil: prefere as contagens do backend (mesma coorte da mediana, campos n/nBetD0/nBet2d, backend v40+);
   // sem elas, degrada p/ 2 passos client-side (FTD → apostou D0). Quartis idem (p25/p75/p90).
@@ -4190,6 +4197,7 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
     H('Aposta média D0', T.meanBet, 'brl'),
     H('Aposta mediana D0', T.medBet, 'brl'),
     H('Rollover D0', T.rollover, 'multiple'),
+    H('Dep. de bônus D0', hasBonus ? T.bonusDep : null, 'pct'),
   ];
   const w4Heroes = [
     H('Vezes que apostou · 4D (média)', T.vezes, 'qty'),
@@ -4213,6 +4221,7 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
     <td key="am">{fmtBRL(r.meanBet)}</td>,
     <td key="md">{fmtBRL(r.medBet)}</td>,
     <td key="ro" style={heat(r.rollover, rRoll)}>{fmtMultiple(r.rollover)}</td>,
+    <td key="bo">{fmtPct(r.bonusDep, 1)}</td>,
     <td key="vz">{fmtQty(r.vezes)}</td>,
     <td key="vm">{fmtQty(r.vezesMed)}</td>,
     <td key="bd">{fmtPct(r.betDaysR, 1)}</td>,
@@ -4240,7 +4249,8 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
         <div className="ch-note">
           <strong>% apostou no D0</strong> = FTDs com turnover &gt; 0 no dia do FTD ÷ Qtd FTD. <strong>Turnover D0</strong> = Σ valor apostado (casino+esporte+loteria) no D0.
           <strong> Aposta média D0</strong> = Turnover D0 ÷ Qtd FTD; <strong>mediana</strong> = valor típico por jogador (robusta a whale — a média é muito puxada por poucos grandes apostadores).
-          <strong> Rollover D0</strong> = Turnover D0 ÷ Depósito D0 (quantas vezes o depósito do dia foi apostado). "Apostou" usa o turnover total — não há split real×bônus na aposta, mas o bônus é ~1% do turnover.{medNote}
+          <strong> Rollover D0</strong> = Turnover D0 ÷ Depósito D0 (quantas vezes o depósito do dia foi apostado).
+          <strong> Dep. de bônus D0</strong> = bônus cash em <strong>saldo real</strong> (a mesma bonificação do NGR real) concedido no D0 ÷ Depósito D0 — <strong>quanto de bônus a casa deu pra cada real depositado ativar</strong> (menor = melhor; mede a dependência de bônus). "Apostou" usa o turnover total — não há split real×bônus na aposta em si (o bônus é fatia pequena do turnover).{hasBonus ? '' : ' A Dep. de bônus fica "—" até o deploy do backend v40.'}{medNote}
         </div>
       </div>
       <div className="ativ-two-col">
@@ -4264,7 +4274,7 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
         </div>
         <AtivChannelBars rows={compRows} house={houseFor(cmKey)} metricKey={cmKey} fmt={ATIV_METRICS[cmKey].fmt} higherBetter={ATIV_METRICS[cmKey].hb} />
         <div className="ch-note">
-          Cada barra = um canal; a <strong>linha tracejada</strong> é a média da casa. <span style={{ color: 'var(--accent)' }}>Azul</span> = acima da casa · <span style={{ color: 'var(--negative)' }}>vermelho</span> = abaixo. A <strong>altura</strong> da barra é proporcional ao volume de FTD; o canal selecionado no topo fica destacado em amarelo. Ignora o seletor de canal do topo (a comparação é multi-canal); respeita faixa/grupo.{medNote}
+          Cada barra = um canal; a <strong>linha tracejada</strong> é a média da casa. <span style={{ color: 'var(--accent)' }}>Azul</span> = melhor que a casa · <span style={{ color: 'var(--negative)' }}>vermelho</span> = pior (em <em>Dep. bônus</em>, menos bônus é melhor → azul = abaixo da casa). A <strong>altura</strong> da barra é proporcional ao volume de FTD; o canal selecionado no topo fica destacado em amarelo. Ignora o seletor de canal do topo (a comparação é multi-canal); respeita faixa/grupo.{cmKey === 'medBet' ? medNote : ''}
         </div>
       </div>
       <div className="support">
@@ -4294,6 +4304,7 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
                 <th title="Turnover D0 ÷ Qtd FTD">Aposta Méd. D0</th>
                 <th title="Mediana do valor apostado no D0 por jogador (por escopo)">Aposta Med. D0</th>
                 <th title="Turnover D0 ÷ Depósito D0">Rollover D0</th>
+                <th title="Bônus cash (saldo real) concedido no D0 ÷ Depósito D0 — dependência de bônus (menor = melhor). '—' até o backend v40.">Dep. bônus D0</th>
                 <th title="Nº médio de apostas por jogador nos dias 0–3">Vezes 4D (méd)</th>
                 <th title="Mediana do nº de apostas nos dias 0–3">Vezes 4D (med)</th>
                 <th title="Dias distintos apostando (0–3) ÷ 4, média">Dias Apostou/4</th>
