@@ -3888,6 +3888,129 @@ function InvCampanhaTab({ range, chFilter }) {
   );
 }
 
+// ---- Ativação D0 · funil de ativação (FTD → apostou D0 → apostou 2+ dias) ----
+// base/betD0/bet2d = CONTAGENS de jogadores. bet2d vem do backend (mesma coorte da mediana); null = ainda
+// não deployado → degrada p/ 2 passos + nota. Larguras proporcionais à base; drop-off entre passos.
+function AtivFunnel({ base, betD0, bet2d }) {
+  if (!base) return <div className="ch-note">Sem coorte de FTD no recorte.</div>;
+  const steps = [
+    { label: 'FTDs', n: base, color: 'var(--accent-orange)' },
+    { label: 'Apostou no D0', n: betD0, color: '#fb923c' },
+  ];
+  if (bet2d != null) steps.push({ label: 'Apostou 2+ dias (D0–D3)', n: bet2d, color: 'var(--accent)' });
+  const pctOf = (n) => base ? (n || 0) / base : 0;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+      {steps.map((s, i) => {
+        const p = pctOf(s.n), drop = i > 0 ? pctOf(steps[i - 1].n) - p : null;
+        return (
+          <React.Fragment key={i}>
+            {i > 0 && <div style={{ fontSize: '10px', color: 'var(--negative)', textAlign: 'center' }}>↓ −{fmtPct(drop, 1)} caem aqui</div>}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginBottom: '3px' }}><span>{s.label}</span><span style={{ color: 'var(--text-muted)' }}>{fmtQty(s.n)} · {fmtPct(p, 1)}</span></div>
+              <div style={{ height: '24px', background: '#161616', borderRadius: '5px' }}><div style={{ height: '100%', width: (Math.max(0.02, p) * 100).toFixed(1) + '%', background: s.color, borderRadius: '5px' }} /></div>
+            </div>
+          </React.Fragment>
+        );
+      })}
+      <div className="ch-note" style={{ marginTop: '6px' }}>{bet2d != null ? 'O valor está no D0; a perda está no retorno — quem aposta só 1 dia é one-and-done.' : 'O passo “apostou 2+ dias” precisa da contagem por jogador (backend) — aparece após o deploy do backend v40.'}</div>
+    </div>
+  );
+}
+
+// ---- Ativação D0 · distribuição da 1ª aposta (média vs mediana + quartis quando o backend manda) ----
+function AtivWhaleStrip({ mean, median, p25, p75, p90 }) {
+  const hasQ = [p25, median, p75, p90].every(x => x != null);
+  const maxV = Math.max(mean || 0, p90 || median || 0, 1);
+  const bar = (v, color, h) => <div style={{ height: (h || 20) + 'px', width: (Math.max(0.01, (v || 0) / maxV) * 100).toFixed(1) + '%', background: color, borderRadius: '5px' }} />;
+  return (
+    <div>
+      <div style={{ fontSize: '11px', marginBottom: '3px' }}>Média <span style={{ color: 'var(--text-muted)' }}>{fmtBRL(mean)}</span></div>
+      <div style={{ marginBottom: '10px' }}>{bar(mean, 'var(--negative)')}</div>
+      <div style={{ fontSize: '11px', marginBottom: '3px' }}>Mediana <span style={{ color: 'var(--text-muted)' }}>{fmtBRL(median)}</span></div>
+      <div>{bar(median, 'var(--accent)')}</div>
+      {hasQ && (
+        <div style={{ marginTop: '13px' }}>
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '7px' }}>Quartis da 1ª aposta (por jogador)</div>
+          {[['P25', p25], ['Mediana', median], ['P75', p75], ['P90', p90]].map(([l, v], i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '5px' }}>
+              <span style={{ fontSize: '10.5px', color: 'var(--text-muted)', width: '54px', flex: 'none' }}>{l}</span>
+              <div style={{ flex: 1, height: '12px', background: '#161616', borderRadius: '3px' }}><div style={{ height: '100%', width: (Math.max(0.01, (v || 0) / maxV) * 100).toFixed(1) + '%', background: 'var(--accent-orange)', borderRadius: '3px' }} /></div>
+              <span style={{ fontSize: '10.5px', color: '#ccc', width: '66px', flex: 'none', textAlign: 'right' }}>{fmtBRL(v)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="ch-note" style={{ marginTop: '10px' }}>{(mean && median) ? `A média é ${(mean / median).toFixed(1)}× a mediana — ` : ''}poucos grandes apostadores puxam a média; a mediana é o jogador típico.{!hasQ ? ' Os quartis (P25/P75/P90) aparecem após o deploy do backend v40.' : ''}</div>
+    </div>
+  );
+}
+
+// ---- Ativação D0 · barras de comparação POR CANAL com baseline da casa (azul=acima, vermelho=abaixo) ----
+function AtivChannelBars({ rows, house, metricKey, fmt, higherBetter }) {
+  const valid = (rows || []).filter(r => r[metricKey] != null && !isNaN(r[metricKey]));
+  if (!valid.length) return <div className="ch-note">Sem dado por canal p/ este recorte.</div>;
+  const sorted = valid.slice().sort((a, b) => (b[metricKey] || 0) - (a[metricKey] || 0));
+  const maxV = (Math.max(house || 0, ...sorted.map(r => r[metricKey] || 0)) || 1) * 1.08;
+  const maxQ = Math.max(1, ...sorted.map(r => r.qtd || 0));
+  const fmtV = (v) => fmt === 'pct' ? fmtPct(v, 1) : fmt === 'multiple' ? fmtMultiple(v) : fmt === 'brl' ? fmtBRL(v) : fmtQty(v);
+  const baseFrac = house != null ? house / maxV : null;
+  return (
+    <div style={{ position: 'relative' }}>
+      {baseFrac != null && <div style={{ position: 'absolute', left: `calc(97px + (100% - 162px) * ${baseFrac.toFixed(4)})`, top: 0, bottom: '4px', width: 0, borderLeft: '1px dashed #7a7a7a', zIndex: 2 }} />}
+      {sorted.map((r, i) => {
+        const v = r[metricKey] || 0;
+        const above = house == null ? true : (higherBetter ? v >= house : v <= house);
+        const color = house == null ? 'var(--accent-orange)' : (above ? 'var(--accent)' : 'var(--negative)');
+        const h = Math.max(11, Math.round((r.qtd || 0) / maxQ * 20) + 10);
+        return (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '9px', marginBottom: '8px' }}>
+            <span title={r.canal} style={{ fontSize: '11px', color: r.isSel ? 'var(--accent-yellow)' : '#ccc', fontWeight: r.isSel ? 700 : 400, width: '88px', flex: 'none', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.canal}</span>
+            <div style={{ flex: 1, background: '#151515', borderRadius: '4px', height: h + 'px', display: 'flex', alignItems: 'center' }}><div style={{ height: '100%', width: ((v / maxV) * 100).toFixed(1) + '%', background: color, borderRadius: '4px' }} /></div>
+            <span style={{ fontSize: '11px', color, width: '56px', flex: 'none' }}>{fmtV(v)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---- Ativação D0 · tendência semanal (2 séries em %: apostou D0 laranja + online/4 azul) ----
+function AtivTrendChart({ weeks }) {
+  const rows = (weeks || []).filter(w => w.week && /^\d{4}-\d{2}-\d{2}$/.test(String(w.week)));
+  if (rows.length < 2) return <div className="ch-note">Poucas semanas no recorte p/ desenhar a tendência (escolha uma janela maior).</div>;
+  const series = [
+    { key: 'pctBet', name: '% apostou D0', color: 'var(--accent-orange)' },
+    { key: 'onlineR', name: 'Dias online ÷ 4', color: 'var(--accent)' },
+  ];
+  const n = rows.length;
+  const slotW = n > 12 ? 90 : n > 7 ? 150 : 220;
+  const padL = 46, padR = 24, padT = 22, padB = 44, plotH = 230;
+  const W = Math.max(680, padL + padR + (n - 1) * slotW);
+  const H = padT + plotH + padB, plotW = W - padL - padR;
+  const xOf = (i) => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const allV = series.flatMap(s => rows.map(r => r[s.key])).filter(v => v != null && !isNaN(v));
+  const vmax = (allV.length ? Math.max(...allV) : 0.1) * 1.18 || 0.1;
+  const yOf = (v) => padT + (1 - Math.max(0, Math.min(v, vmax)) / vmax) * plotH;
+  const path = (key) => { let d = '', pen = false; rows.forEach((r, i) => { const v = r[key]; if (v == null || isNaN(v)) { pen = false; return; } d += (pen ? ' L' : ' M') + xOf(i).toFixed(1) + ',' + yOf(v).toFixed(1); pen = true; }); return d.trim(); };
+  const grid = Array.from({ length: 5 }, (_, i) => vmax * i / 4);
+  const xl = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); return m ? `${m[3]}/${m[2]}` : String(s); };
+  return (
+    <React.Fragment>
+      <div style={{ display: 'flex', gap: '16px', justifyContent: 'center', margin: '2px 0 8px' }}>
+        {series.map((s, i) => (<span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: 'var(--text-muted)' }}><span style={{ width: '12px', height: '3px', background: s.color, borderRadius: '2px' }} />{s.name}</span>))}
+      </div>
+      <div className="table-scroll">
+        <svg viewBox={`0 0 ${W} ${H}`} width={W} style={{ width: '100%', maxWidth: W, minWidth: Math.min(W, 680), height: 'auto', display: 'block', margin: '0 auto' }} preserveAspectRatio="xMidYMid meet">
+          {grid.map((v, i) => (<g key={i}><line x1={padL} x2={W - padR} y1={yOf(v)} y2={yOf(v)} stroke="var(--border)" strokeWidth="1" strokeDasharray={i === 0 ? undefined : '2 4'} /><text x={padL - 8} y={yOf(v) + 3.5} textAnchor="end" fontSize="10.5" fill="#cfcfcf">{fmtPct(v, 0)}</text></g>))}
+          {rows.map((r, i) => (<text key={i} x={xOf(i)} y={padT + plotH + 18} textAnchor="middle" fontSize="10.5" fill="#cfcfcf">{xl(r.week)}</text>))}
+          {series.map((s, si) => (<g key={si}><path d={path(s.key)} fill="none" stroke={s.color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />{rows.map((r, i) => { const v = r[s.key]; return (v != null && !isNaN(v)) ? (<g key={i}><circle cx={xOf(i)} cy={yOf(v)} r="3.6" fill="var(--surface)" stroke={s.color} strokeWidth="1.8" /><text x={xOf(i)} y={yOf(v) - 9} textAnchor="middle" fontSize="10.5" fontWeight="700" fill={s.color}>{fmtPct(v, 0)}</text></g>) : null; })}</g>))}
+        </svg>
+      </div>
+    </React.Fragment>
+  );
+}
+
 // ============================================================
 // ABA ATIVAÇÃO D0 — sinais precoces da coorte de FTD (visão semanal, seg–dom).
 // Seção D0: % que apostou no D0, turnover D0, aposta média/mediana D0, rollover D0 (turnover D0 ÷ dep D0).
@@ -4007,6 +4130,59 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
   }, [src, selCh, medMap, onlineMap, scopeKey, faixaSel, grupoSel, grupoActive, ga4Full]);
 
   const T = totals;
+  // Comparação POR CANAL (ignora o seletor de canal do topo — a comparação é multi-canal por natureza;
+  // respeita faixa/grupo). Baseline = agregado de todos os canais mostrados (house). Mediana por canal vem
+  // do medMap pré-computado (__all__). Online compõe do onlineMap (só semanas GA4).
+  const selSet = new Set(chList_(chFilter));
+  const { compRows, houseRaw } = React.useMemo(() => {
+    const cm = {};
+    const zero = () => ({ qtd: 0, betD0: 0, turnD0: 0, depD0: 0, oDays: 0, oFtds: 0 });
+    const hr = zero();
+    (src || []).forEach(r => {
+      if (faixaSel.length && faixaSel.indexOf(r.faixa) < 0) return;
+      if (grupoActive && grupoSel.indexOf(r.grupo != null ? String(r.grupo) : 'sem grupo') < 0) return;
+      const c = r.canal || '—';
+      const b = cm[c] || (cm[c] = zero());
+      const add = (o) => { o.qtd += r.qtdFtds || 0; o.betD0 += r.betD0Cnt || 0; o.turnD0 += r.turnD0 || 0; o.depD0 += r.depD0 || 0; };
+      add(b); add(hr);
+    });
+    Object.keys(onlineMap).forEach(wk => {
+      if (wk < GA4_WEEK_MIN) return;
+      Object.keys(onlineMap[wk]).forEach(c => { const o = onlineMap[wk][c]; const b = cm[c] || (cm[c] = zero()); b.oDays += o.onlineDays || 0; b.oFtds += o.ftds || 0; hr.oDays += o.onlineDays || 0; hr.oFtds += o.ftds || 0; });
+    });
+    const mAll = medMap['__all__'] || {};
+    const rows = Object.keys(cm).map(c => {
+      const b = cm[c], md = mAll[c] || null;
+      return {
+        canal: c, qtd: b.qtd,
+        pctBet: b.qtd ? b.betD0 / b.qtd : null,
+        rollover: b.depD0 ? b.turnD0 / b.depD0 : null,
+        medBet: md ? md.medTurnD0 : null,
+        online: b.oFtds ? b.oDays / (4 * b.oFtds) : null,
+        isSel: selSet.has(c), isGrowth: isGrowthCh_(c),
+      };
+    }).filter(r => r.qtd > 0);
+    return { compRows: rows, houseRaw: hr };
+  }, [src, faixaSel, grupoSel, grupoActive, onlineMap, medMap, chFilter]);
+  const ATIV_METRICS = {
+    pctBet:   { label: '% apostou D0',    fmt: 'pct',      hb: true },
+    rollover: { label: 'Rollover D0',     fmt: 'multiple', hb: true },
+    medBet:   { label: 'Aposta mediana',  fmt: 'brl',      hb: true },
+    online:   { label: 'Dias online ÷ 4', fmt: 'pct',      hb: true },
+  };
+  const [compMetric, setCompMetric] = React.useState('pctBet');
+  const cmKey = ATIV_METRICS[compMetric] ? compMetric : 'pctBet';
+  const mAllTot = (medMap['__all__'] || {})['__total__'] || null;
+  const houseFor = (k) => k === 'pctBet' ? (houseRaw.qtd ? houseRaw.betD0 / houseRaw.qtd : null)
+    : k === 'rollover' ? (houseRaw.depD0 ? houseRaw.turnD0 / houseRaw.depD0 : null)
+    : k === 'medBet' ? (mAllTot ? mAllTot.medTurnD0 : null)
+    : (houseRaw.oFtds ? houseRaw.oDays / (4 * houseRaw.oFtds) : null);
+  // Funil: prefere as contagens do backend (mesma coorte da mediana, campos n/nBetD0/nBet2d, backend v40+);
+  // sem elas, degrada p/ 2 passos client-side (FTD → apostou D0). Quartis idem (p25/p75/p90).
+  const scopeMrow = (scopeKey && medMap['__all__'] && medMap['__all__'][scopeKey]) ? medMap['__all__'][scopeKey] : null;
+  const funnel = (scopeMrow && scopeMrow.nBet2d != null)
+    ? { base: scopeMrow.n, betD0: scopeMrow.nBetD0 != null ? scopeMrow.nBetD0 : Math.round((T.qtd || 0) * (T.pctBet || 0)), bet2d: scopeMrow.nBet2d }
+    : { base: T.qtd, betD0: Math.round((T.qtd || 0) * (T.pctBet || 0)), bet2d: null };
   const H = (label, act, fmt, title) => ({ label, act, fmt, bp: null, m1: null, title });
   const d0Heroes = [
     H('% apostou no D0', T.pctBet, 'pct'),
@@ -4067,6 +4243,30 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
           <strong> Rollover D0</strong> = Turnover D0 ÷ Depósito D0 (quantas vezes o depósito do dia foi apostado). "Apostou" usa o turnover total — não há split real×bônus na aposta, mas o bônus é ~1% do turnover.{medNote}
         </div>
       </div>
+      <div className="ativ-two-col">
+        <div className="support">
+          <div className="support-title">Funil de ativação → recompra · {filtSuffix}</div>
+          <AtivFunnel base={funnel.base} betD0={funnel.betD0} bet2d={funnel.bet2d} />
+        </div>
+        <div className="support">
+          <div className="support-title">Aposta D0 · média vs mediana</div>
+          <AtivWhaleStrip mean={T.meanBet} median={T.medBet} p25={scopeMrow ? scopeMrow.p25 : null} p75={scopeMrow ? scopeMrow.p75 : null} p90={scopeMrow ? scopeMrow.p90 : null} />
+        </div>
+      </div>
+      <div className="support">
+        <div className="support-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+          <span>Ativação por canal · {ATIV_METRICS[cmKey].label}</span>
+          <div className="slicer-presets">
+            {Object.keys(ATIV_METRICS).map(k => (
+              <button key={k} className={`preset-btn ${cmKey === k ? 'active' : ''}`} onClick={() => setCompMetric(k)}>{ATIV_METRICS[k].label}</button>
+            ))}
+          </div>
+        </div>
+        <AtivChannelBars rows={compRows} house={houseFor(cmKey)} metricKey={cmKey} fmt={ATIV_METRICS[cmKey].fmt} higherBetter={ATIV_METRICS[cmKey].hb} />
+        <div className="ch-note">
+          Cada barra = um canal; a <strong>linha tracejada</strong> é a média da casa. <span style={{ color: 'var(--accent)' }}>Azul</span> = acima da casa · <span style={{ color: 'var(--negative)' }}>vermelho</span> = abaixo. A <strong>altura</strong> da barra é proporcional ao volume de FTD; o canal selecionado no topo fica destacado em amarelo. Ignora o seletor de canal do topo (a comparação é multi-canal); respeita faixa/grupo.{medNote}
+        </div>
+      </div>
       <div className="support">
         <div className="support-title">Janela dos 4 primeiros dias (D0–D3) · {filtSuffix}</div>
         <div className="hero-grid">{w4Heroes.map((m, i) => <Hero key={i} metric={m} />)}</div>
@@ -4077,31 +4277,38 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
         </div>
       </div>
       <div className="support">
-        <div className="support-title">Semana a semana (safra de FTD) · {filtSuffix}{med.loading ? ' · medianas carregando…' : ''}{srcLoad}</div>
-        <div className="table-scroll tall"><table className="ch-table">
-          <thead>
-            <tr>
-              <th style={{ whiteSpace: 'nowrap' }}>Semana</th>
-              <th title="Qtd de FTDs na semana">Qtd FTD</th>
-              <th title="% dos FTDs que apostaram (turnover > 0) no D0">% Apostou D0</th>
-              <th title="Σ valor apostado no D0">Turnover D0</th>
-              <th title="Turnover D0 ÷ Qtd FTD">Aposta Méd. D0</th>
-              <th title="Mediana do valor apostado no D0 por jogador (por escopo)">Aposta Med. D0</th>
-              <th title="Turnover D0 ÷ Depósito D0">Rollover D0</th>
-              <th title="Nº médio de apostas por jogador nos dias 0–3">Vezes 4D (méd)</th>
-              <th title="Mediana do nº de apostas nos dias 0–3">Vezes 4D (med)</th>
-              <th title="Dias distintos apostando (0–3) ÷ 4, média">Dias Apostou/4</th>
-              <th title="Dias distintos ONLINE (login/sessão no GA4) nos dias 0–3 ÷ 4, média. Cobre ~99% das contas FTD; confiável de jun/26.">Dias Online/4</th>
-              <th title="Dias distintos com atividade transacional (0–3) ÷ 4, média — proxy antigo, menor que o online real">Dias Ativo/4</th>
-            </tr>
-          </thead>
-          <tbody>
-            {weeks.map((r, i) => (<tr key={i}><td className="ch-name">{dm(r.week)}</td>{cells(r)}</tr>))}
-          </tbody>
-          <tfoot>
-            <tr><td>Total</td>{cells(T)}</tr>
-          </tfoot>
-        </table></div>
+        <div className="support-title">Tendência semanal · {filtSuffix}</div>
+        <AtivTrendChart weeks={weeks} />
+        <div className="ch-note">Evolução por semana de safra: <span style={{ color: 'var(--accent-orange)' }}>% apostou no D0</span> e <span style={{ color: 'var(--accent)' }}>dias online ÷ 4</span>. Vê a maturação da coorte num relance — semanas anteriores a jun/26 não têm online (GA4).</div>
+      </div>
+      <div className="support">
+        <details>
+          <summary style={{ cursor: 'pointer', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>Ver tabela semana a semana (detalhe){med.loading ? ' · medianas carregando…' : ''}{srcLoad}</summary>
+          <div className="table-scroll tall" style={{ marginTop: '12px' }}><table className="ch-table">
+            <thead>
+              <tr>
+                <th style={{ whiteSpace: 'nowrap' }}>Semana</th>
+                <th title="Qtd de FTDs na semana">Qtd FTD</th>
+                <th title="% dos FTDs que apostaram (turnover > 0) no D0">% Apostou D0</th>
+                <th title="Σ valor apostado no D0">Turnover D0</th>
+                <th title="Turnover D0 ÷ Qtd FTD">Aposta Méd. D0</th>
+                <th title="Mediana do valor apostado no D0 por jogador (por escopo)">Aposta Med. D0</th>
+                <th title="Turnover D0 ÷ Depósito D0">Rollover D0</th>
+                <th title="Nº médio de apostas por jogador nos dias 0–3">Vezes 4D (méd)</th>
+                <th title="Mediana do nº de apostas nos dias 0–3">Vezes 4D (med)</th>
+                <th title="Dias distintos apostando (0–3) ÷ 4, média">Dias Apostou/4</th>
+                <th title="Dias distintos ONLINE (login/sessão no GA4) nos dias 0–3 ÷ 4, média. Cobre ~99% das contas FTD; confiável de jun/26.">Dias Online/4</th>
+                <th title="Dias distintos com atividade transacional (0–3) ÷ 4, média — proxy antigo, menor que o online real">Dias Ativo/4</th>
+              </tr>
+            </thead>
+            <tbody>
+              {weeks.map((r, i) => (<tr key={i}><td className="ch-name">{dm(r.week)}</td>{cells(r)}</tr>))}
+            </tbody>
+            <tfoot>
+              <tr><td>Total</td>{cells(T)}</tr>
+            </tfoot>
+          </table></div>
+        </details>
       </div>
     </React.Fragment>
   );
