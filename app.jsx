@@ -3259,14 +3259,14 @@ function buildFarolGroups_(MM, f, range, useYtd) {
   // Normal: card + projeção. YTD: tira M-1 (mês anterior) e trend — só ACT vs BP acumulado.
   const dress = (m) => { if (!m) return m; if (useYtd) return { ...m, m1: null, trend: undefined }; const t = proj(m); return t != null ? { ...m, trend: t } : m; };
   const dressPlain = (m) => (useYtd && m) ? { ...m, m1: null, trend: undefined } : m;   // cards de razão (sem trend), só tira M-1 no YTD
-  // Rollover: BP FIXO 5,10x (não é meta diária do plano) e SEM trend — não faz sentido projetar uma razão.
+  // Rollover: usa o BP do cenário se veio (DB Plan_RevOps); senão FIXO 5,10x. SEM trend (não projeta razão).
   const ROLLOVER_BP = 5.10;
-  const rolloverCard = MM.rollover ? { ...MM.rollover, bp: ROLLOVER_BP, trend: undefined, m1: useYtd ? null : MM.rollover.m1 } : null;
-  // Hold % = House Edge (GGR/Turnover). BP FIXO 3,5% (meta de margem da casa, não vem do plano); maior=melhor.
-  const holdCard = MM.hold ? { ...MM.hold, label: 'Hold % (House Edge)', bp: 0.035 } : null;
-  // Turnover BP = Depósito Total BP × Rollover BP (turnover = rollover × depósito). — quando não há BP de depósito no escopo.
+  const rolloverCard = MM.rollover ? { ...MM.rollover, bp: (MM.rollover.bp != null ? MM.rollover.bp : ROLLOVER_BP), trend: undefined, m1: useYtd ? null : MM.rollover.m1 } : null;
+  // Hold % = House Edge (NGR/Turnover). BP do cenário (RevOps) se veio; senão FIXO 3,5%. Maior=melhor.
+  const holdCard = MM.hold ? { ...MM.hold, label: 'Hold % (House Edge)', bp: (MM.hold.bp != null ? MM.hold.bp : 0.035) } : null;
+  // Turnover BP: do cenário (RevOps) se veio; senão Depósito Total BP × Rollover BP (turnover = rollover × depósito).
   const depTotalBp = (MM.depTotal && MM.depTotal.bp != null) ? MM.depTotal.bp : null;
-  const turnoverCard = MM.turnover ? { ...MM.turnover, bp: depTotalBp != null ? depTotalBp * ROLLOVER_BP : null } : null;
+  const turnoverCard = MM.turnover ? { ...MM.turnover, bp: (MM.turnover.bp != null ? MM.turnover.bp : (depTotalBp != null ? depTotalBp * ROLLOVER_BP : null)) } : null;
   // ROAS FTD e ROAS Dep M0 — posição do M-1 = razão dos M-1 dos componentes (FTD Amount÷Invest, DEP M0÷Invest),
   // já que ambos os componentes trazem M-1. Fallback pro m1 do próprio card se algum componente não tiver M-1.
   const div_ = (a, b) => (a != null && b) ? a / b : null;
@@ -3317,9 +3317,13 @@ const CENARIOS = [
 ];
 function applyScenarioBp_(M, farol, scenData, chFilter) {
   if (!scenData) return { M, farol };
+  const pos = (v) => (v != null && isFinite(v) && v !== 0) ? v : null;
+  const setBp = (m, v) => m ? { ...m, bp: pos(v) } : m;
+  let newM = M, newFarol = farol;
+  const sel = chList_(chFilter);
+  // --- Aquisição + Dep M0 (DB Plan_Growth Mkt, por canal) — reescopa por chFilter ---
   const KEYS = ['invest', 'ftd', 'ftdAmount', 'depD0', 'depM0'];
   const byCh = scenData.byChannel || {};
-  const sel = chList_(chFilter);
   let agg;
   if (sel && sel.length) {
     agg = {};
@@ -3330,22 +3334,37 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
     agg = scenData.allAgg || {};
   }
   const inv = agg.invest || 0, ftd = agg.ftd || 0, ftdAmt = agg.ftdAmount || 0, depD0 = agg.depD0 || 0, depM0 = agg.depM0 || 0;
-  if (!(inv > 0)) return { M, farol };   // cenário sem plano nesse escopo → mantém o BP atual (farol não muda)
-  const pos = (v) => (v != null && isFinite(v) && v !== 0) ? v : null;
-  const setBp = (m, v) => m ? { ...m, bp: pos(v) } : m;
-  const newM = { ...M,
-    invest:     setBp(M.invest,     inv),
-    ftdAmount:  setBp(M.ftdAmount,  ftdAmt),
-    ftdQty:     setBp(M.ftdQty,     ftd),
-    roasFtd:    setBp(M.roasFtd,    inv ? ftdAmt / inv : null),
-    depM0Total: setBp(M.depM0Total, depM0),
-  };
-  const newFarol = { ...farol,
-    cac:        setBp(farol.cac,        ftd ? inv / ftd : null),
-    ticketFtd:  setBp(farol.ticketFtd,  ftd ? ftdAmt / ftd : null),
-    roasDepD0:  setBp(farol.roasDepD0,  inv ? depD0 / inv : null),
-    roasDepM0:  setBp(farol.roasDepM0,  inv ? depM0 / inv : null),
-  };
+  if (inv > 0) {   // cenário sem plano de aquisição nesse escopo → mantém o BP atual desses cards
+    newM = { ...newM,
+      invest:     setBp(newM.invest,     inv),
+      ftdAmount:  setBp(newM.ftdAmount,  ftdAmt),
+      ftdQty:     setBp(newM.ftdQty,     ftd),
+      roasFtd:    setBp(newM.roasFtd,    inv ? ftdAmt / inv : null),
+      depM0Total: setBp(newM.depM0Total, depM0),
+    };
+    newFarol = { ...newFarol,
+      cac:        setBp(newFarol.cac,        ftd ? inv / ftd : null),
+      ticketFtd:  setBp(newFarol.ticketFtd,  ftd ? ftdAmt / ftd : null),
+      roasDepD0:  setBp(newFarol.roasDepD0,  inv ? depD0 / inv : null),
+      roasDepM0:  setBp(newFarol.roasDepM0,  inv ? depM0 / inv : null),
+    };
+  }
+  // --- Receita / Volume de depósito (DB Plan_RevOps, house-level) — SÓ Total da Casa (a aba não tem canal) ---
+  const house = scenData.house;
+  const isTotal = !(sel && sel.length) && !(chFilter && chFilter.scope === 'growth');
+  if (house && isTotal) {
+    const td = house.totalDeposit || 0, ggr = house.ggr || 0, turn = house.turnover || 0;
+    if (td > 0 || ggr > 0 || turn > 0) {
+      newM = { ...newM,
+        depTotal:  setBp(newM.depTotal,  td),
+        turnover:  setBp(newM.turnover,  turn),
+        ggr:       setBp(newM.ggr,       ggr),
+        ggrPerDep: setBp(newM.ggrPerDep, td ? ggr / td : null),
+        hold:      setBp(newM.hold,      turn ? ggr / turn : null),
+        rollover:  setBp(newM.rollover,  td ? turn / td : null),
+      };
+    }
+  }
   return { M: newM, farol: newFarol };
 }
 
@@ -3382,7 +3401,7 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
           </div>
           {scenOn && activeScen !== 'bp' && (
             <div className="subtitle" style={{ color: 'var(--accent-orange)', marginTop: 6, maxWidth: 720 }}>
-              Aquisição + Depósito M0 comparados vs plano <strong>{scenMeta.label}</strong> — as luzes e os deltas mudam pra esse cenário. Retenção, GGR e Volume seguem no BP (o plano por cenário não cobre esses).
+              Aquisição, Depósito M0 e receita/volume (Depósitos, GGR, Turnover, Hold, Rollover) comparados vs plano <strong>{scenMeta.label}</strong> — as luzes e os deltas mudam pra esse cenário. Receita/volume só no escopo Total da Casa (o plano RevOps não tem canal). Retenção segue no BP.
             </div>
           )}
           {active && (
