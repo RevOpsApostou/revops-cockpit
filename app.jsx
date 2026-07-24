@@ -3379,7 +3379,10 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
   const active = byReg && hasReg;
   const src = active ? applyFtdByRegister_(M || {}, farol || {}, ftdByRegister, chFilter) : { MM: M || {}, f: farol || {} };
   // Cenário do plano (BP/Conservador/Rolling): re-anchora o BP dos cards de aquisição + Dep M0 (payload.planScenarios).
-  const [scen, setScen] = usePersistedState('rvops:farolScen', 'bp');
+  // ⚠️ NÃO persiste (era usePersistedState): o Farol SEMPRE abre no BP/meta (padrão seguro). O switcher muda no
+  // in-session, mas todo load/refresh volta pro BP — assim ninguém entra já carregado num cenário restrito por
+  // resíduo de sessão anterior (defesa em profundidade, além do gate de acesso do activeScen abaixo).
+  const [scen, setScen] = React.useState('bp');
   // Cenários que ESTE usuário pode ver (allowlist "por acesso" — igual às abas). Admin vê todos; null/vazio = todos.
   // É gate de UI (esconde o cenário do switcher); o payload ainda traz os 3, mas o usuário não os seleciona.
   const isAdminU = !!(user && user.admin);
