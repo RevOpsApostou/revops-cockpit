@@ -4312,7 +4312,6 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
   const cells = (r) => [
     <td key="q">{fmtQty(r.qtd)}</td>,
     <td key="pb" style={heat(r.pctBet, rPct)}>{fmtPct(r.pctBet, 1)}</td>,
-    <td key="t">{fmtBRL(r.turnD0)}</td>,
     <td key="am">{fmtBRL(r.meanBet)}</td>,
     <td key="md">{fmtBRL(r.medBet)}</td>,
     <td key="ro" style={heat(r.rollover, rRoll)}>{fmtMultiple(r.rollover)}</td>,
@@ -4348,9 +4347,9 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
         <div className="support-title">Ativação · {filtSuffix}</div>
         <div className="hero-grid">{d0Heroes.map((m, i) => <Hero key={i} metric={m} />)}</div>
         <div className="ch-note">
-          Métricas na <strong>janela {winLbl}</strong> (dias 0 a {winN} acumulados desde o FTD). <strong>% apostou</strong> = FTDs com turnover &gt; 0 na janela ÷ Qtd FTD. <strong>Turnover</strong> = Σ valor apostado (casino+esporte+loteria) na janela.
-          <strong> Aposta média</strong> = Turnover ÷ Qtd FTD; <strong>mediana</strong> = valor típico por jogador (robusta a whale — a média é muito puxada por poucos grandes apostadores).
-          <strong> Rollover</strong> = Turnover ÷ Depósito da janela (quantas vezes o depósito foi apostado).{medNote}
+          Métricas na <strong>janela {winLbl}</strong> (dias 0 a {winN} acumulados desde o FTD). <strong>% apostou</strong> = FTDs com aposta de saldo real (valor apostado &gt; 0) na janela ÷ Qtd FTD.
+          <strong> Aposta média</strong> = valor apostado ÷ Qtd FTD; <strong>mediana</strong> = valor típico por jogador (robusta a whale — a média é muito puxada por poucos grandes apostadores).
+          <strong> Rollover</strong> = valor apostado ÷ Depósito da janela (quantas vezes o depósito foi apostado).{medNote}
         </div>
       </div>
       <div className="ativ-two-col">
@@ -4392,18 +4391,17 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
         <div className="ch-note">Evolução por semana de safra: <span style={{ color: 'var(--accent-orange)' }}>% apostou</span> e <span style={{ color: 'var(--accent)' }}>dias online ÷ {winDen}</span> na janela {winLbl}. Vê a maturação da coorte num relance — semanas anteriores a jun/26 não têm online (GA4).</div>
       </div>
       <div className="support">
-        <details>
-          <summary style={{ cursor: 'pointer', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>Ver tabela semana a semana · janela {winLbl} (detalhe){srcLoad}</summary>
-          <div className="table-scroll tall" style={{ marginTop: '12px' }}><table className="ch-table">
+        <div className="support-title">Ativação por safra · {filtSuffix}</div>
+        <div className="ch-note" style={{ marginTop: '-4px', marginBottom: '10px' }}>Apostas com saldo real (valor apostado &gt; 0, exclui freespin). D0 = dia do FTD. Cada linha = uma semana de safra (2ª–dom).{srcLoad}</div>
+        <div className="table-scroll tall"><table className="ch-table">
             <thead>
               <tr>
-                <th style={{ whiteSpace: 'nowrap' }}>Semana</th>
+                <th style={{ whiteSpace: 'nowrap' }}>Safra</th>
                 <th title="Qtd de FTDs na semana">Qtd FTD</th>
-                <th title="% dos FTDs que apostaram (turnover > 0) na janela selecionada">% Apostou</th>
-                <th title="Σ valor apostado na janela">Turnover</th>
-                <th title="Turnover ÷ Qtd FTD">Aposta Méd.</th>
+                <th title="% dos FTDs que apostaram saldo real (valor apostado > 0) na janela selecionada">% Apostou</th>
+                <th title="Valor apostado ÷ Qtd FTD">Aposta Méd.</th>
                 <th title="Mediana do valor apostado na janela por jogador (por escopo)">Aposta Med.</th>
-                <th title="Turnover ÷ Depósito da janela">Rollover</th>
+                <th title="Valor apostado ÷ Depósito da janela">Rollover</th>
                 <th title="Bônus cash (saldo real) na janela ÷ Depósito — dependência de bônus (menor = melhor)">Dep. bônus</th>
                 <th title="Nº médio de apostas por jogador na janela">Vezes (méd)</th>
                 <th title="Mediana do nº de apostas na janela">Vezes (med)</th>
@@ -4418,7 +4416,6 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
               <tr><td>Total</td>{cells(T)}</tr>
             </tfoot>
           </table></div>
-        </details>
       </div>
     </React.Fragment>
   );

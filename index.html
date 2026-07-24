@@ -8463,8 +8463,6 @@ function TabAtivacao({
     key: "pb",
     style: heat(r.pctBet, rPct)
   }, fmtPct(r.pctBet, 1)), /*#__PURE__*/React.createElement("td", {
-    key: "t"
-  }, fmtBRL(r.turnD0)), /*#__PURE__*/React.createElement("td", {
     key: "am"
   }, fmtBRL(r.meanBet)), /*#__PURE__*/React.createElement("td", {
     key: "md"
@@ -8547,7 +8545,7 @@ function TabAtivacao({
     metric: m
   }))), /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
-  }, "M\xE9tricas na ", /*#__PURE__*/React.createElement("strong", null, "janela ", winLbl), " (dias 0 a ", winN, " acumulados desde o FTD). ", /*#__PURE__*/React.createElement("strong", null, "% apostou"), " = FTDs com turnover > 0 na janela \xF7 Qtd FTD. ", /*#__PURE__*/React.createElement("strong", null, "Turnover"), " = \u03A3 valor apostado (casino+esporte+loteria) na janela.", /*#__PURE__*/React.createElement("strong", null, " Aposta m\xE9dia"), " = Turnover \xF7 Qtd FTD; ", /*#__PURE__*/React.createElement("strong", null, "mediana"), " = valor t\xEDpico por jogador (robusta a whale \u2014 a m\xE9dia \xE9 muito puxada por poucos grandes apostadores).", /*#__PURE__*/React.createElement("strong", null, " Rollover"), " = Turnover \xF7 Dep\xF3sito da janela (quantas vezes o dep\xF3sito foi apostado).", medNote)), /*#__PURE__*/React.createElement("div", {
+  }, "M\xE9tricas na ", /*#__PURE__*/React.createElement("strong", null, "janela ", winLbl), " (dias 0 a ", winN, " acumulados desde o FTD). ", /*#__PURE__*/React.createElement("strong", null, "% apostou"), " = FTDs com aposta de saldo real (valor apostado > 0) na janela \xF7 Qtd FTD.", /*#__PURE__*/React.createElement("strong", null, " Aposta m\xE9dia"), " = valor apostado \xF7 Qtd FTD; ", /*#__PURE__*/React.createElement("strong", null, "mediana"), " = valor t\xEDpico por jogador (robusta a whale \u2014 a m\xE9dia \xE9 muito puxada por poucos grandes apostadores).", /*#__PURE__*/React.createElement("strong", null, " Rollover"), " = valor apostado \xF7 Dep\xF3sito da janela (quantas vezes o dep\xF3sito foi apostado).", medNote)), /*#__PURE__*/React.createElement("div", {
     className: "ativ-two-col"
   }, /*#__PURE__*/React.createElement("div", {
     className: "support"
@@ -8631,36 +8629,32 @@ function TabAtivacao({
     }
   }, "dias online \xF7 ", winDen), " na janela ", winLbl, ". V\xEA a matura\xE7\xE3o da coorte num relance \u2014 semanas anteriores a jun/26 n\xE3o t\xEAm online (GA4).")), /*#__PURE__*/React.createElement("div", {
     className: "support"
-  }, /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", {
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "support-title"
+  }, "Ativa\xE7\xE3o por safra \xB7 ", filtSuffix), /*#__PURE__*/React.createElement("div", {
+    className: "ch-note",
     style: {
-      cursor: 'pointer',
-      fontSize: '12px',
-      color: 'var(--text-muted)',
-      fontWeight: 600
+      marginTop: '-4px',
+      marginBottom: '10px'
     }
-  }, "Ver tabela semana a semana \xB7 janela ", winLbl, " (detalhe)", srcLoad), /*#__PURE__*/React.createElement("div", {
-    className: "table-scroll tall",
-    style: {
-      marginTop: '12px'
-    }
+  }, "Apostas com saldo real (valor apostado > 0, exclui freespin). D0 = dia do FTD. Cada linha = uma semana de safra (2\xAA\u2013dom).", srcLoad), /*#__PURE__*/React.createElement("div", {
+    className: "table-scroll tall"
   }, /*#__PURE__*/React.createElement("table", {
     className: "ch-table"
   }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
     style: {
       whiteSpace: 'nowrap'
     }
-  }, "Semana"), /*#__PURE__*/React.createElement("th", {
+  }, "Safra"), /*#__PURE__*/React.createElement("th", {
     title: "Qtd de FTDs na semana"
   }, "Qtd FTD"), /*#__PURE__*/React.createElement("th", {
-    title: "% dos FTDs que apostaram (turnover > 0) na janela selecionada"
+    title: "% dos FTDs que apostaram saldo real (valor apostado > 0) na janela selecionada"
   }, "% Apostou"), /*#__PURE__*/React.createElement("th", {
-    title: "\u03A3 valor apostado na janela"
-  }, "Turnover"), /*#__PURE__*/React.createElement("th", {
-    title: "Turnover \xF7 Qtd FTD"
+    title: "Valor apostado \xF7 Qtd FTD"
   }, "Aposta M\xE9d."), /*#__PURE__*/React.createElement("th", {
     title: "Mediana do valor apostado na janela por jogador (por escopo)"
   }, "Aposta Med."), /*#__PURE__*/React.createElement("th", {
-    title: "Turnover \xF7 Dep\xF3sito da janela"
+    title: "Valor apostado \xF7 Dep\xF3sito da janela"
   }, "Rollover"), /*#__PURE__*/React.createElement("th", {
     title: "B\xF4nus cash (saldo real) na janela \xF7 Dep\xF3sito \u2014 depend\xEAncia de b\xF4nus (menor = melhor)"
   }, "Dep. b\xF4nus"), /*#__PURE__*/React.createElement("th", {
@@ -8675,7 +8669,7 @@ function TabAtivacao({
     key: i
   }, /*#__PURE__*/React.createElement("td", {
     className: "ch-name"
-  }, dm(r.week)), cells(r)))), /*#__PURE__*/React.createElement("tfoot", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", null, "Total"), cells(T))))))));
+  }, dm(r.week)), cells(r)))), /*#__PURE__*/React.createElement("tfoot", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", null, "Total"), cells(T)))))));
 }
 const TABS = [{
   id: 'farol',
