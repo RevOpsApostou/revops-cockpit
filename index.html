@@ -1507,7 +1507,7 @@ function Hero({
       className: "hf-bp"
     }, /*#__PURE__*/React.createElement("span", {
       className: "bp-label"
-    }, "BP"), " ", /*#__PURE__*/React.createElement("span", {
+    }, metric.bpLabel || 'BP'), " ", /*#__PURE__*/React.createElement("span", {
       className: "bp-val"
     }, fmtVal(metric.bp, metric.fmt)), ' ', /*#__PURE__*/React.createElement("span", {
       className: `pct ${farol}`
@@ -1543,7 +1543,7 @@ function Hero({
     className: "vs-bp-head"
   }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     className: "bp-label"
-  }, "BP"), " ", /*#__PURE__*/React.createElement("span", {
+  }, metric.bpLabel || 'BP'), " ", /*#__PURE__*/React.createElement("span", {
     className: "bp-val"
   }, fmtVal(metric.bp, metric.fmt))), /*#__PURE__*/React.createElement("span", {
     className: `pct ${farol}`
@@ -6682,7 +6682,7 @@ function buildFarolSpark_(spark, chFilter) {
     bonusDep: arr((p, h) => h.dep ? h.bonus / h.dep : null)
   };
 }
-function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
+function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, scenLabel) {
   const mult = useYtd ? null : monthCloseMult_(range);
   const tf = mult == null ? null : MM.ggr && MM.ggr.act && MM.ggrTrend && MM.ggrTrend.act != null && MM.ggr.act !== 0 ? MM.ggrTrend.act / MM.ggr.act : mult;
   const proj = m => m && tf != null && m.act != null ? m.act * tf : null; // valor projetado de fechamento
@@ -6755,18 +6755,26 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
       spark: s
     } : m;
   };
+  // Prefixo do "BP" no card = nome do cenário ATIVO (Orçado/Conservador/Forecast) — segue o toggle lá de cima.
+  // scenLabel = cenário ativo (só nos cards que o applyScenarioBp_ re-anchora); baseLabel = Orçado (meta FIXA:
+  // Retenção/FreeSpins/Bonif NÃO mudam por cenário, então continuam "Orçado" mesmo em Conservador/Forecast).
+  const scenL = scenLabel || SCEN_BP_LABEL;
+  const bl = (m, label) => m ? {
+    ...m,
+    bpLabel: label
+  } : m;
   return [{
     title: 'Aquisição',
-    cards: [ws(dress(MM.invest), 'invest'), ws(dress(MM.ftdAmount), 'ftdAmount'), ws(roasFtdCard, 'roasFtd'), ws(dressPlain(f.roasDepD0), 'roasDepD0'), ws(dressPlain(f.cac), 'cac'), ws(dressPlain(f.ticketFtd), 'ticketFtd')]
+    cards: [bl(ws(dress(MM.invest), 'invest'), scenL), bl(ws(dress(MM.ftdAmount), 'ftdAmount'), scenL), bl(ws(roasFtdCard, 'roasFtd'), scenL), bl(ws(dressPlain(f.roasDepD0), 'roasDepD0'), scenL), bl(ws(dressPlain(f.cac), 'cac'), scenL), bl(ws(dressPlain(f.ticketFtd), 'ticketFtd'), scenL)]
   }, {
     title: 'Depósito M0',
-    cards: [dress(MM.depM0Total), roasDepM0Card]
+    cards: [bl(dress(MM.depM0Total), scenL), bl(roasDepM0Card, scenL)]
   }, {
     title: 'Volume & GGR',
-    cards: [ws(dress(MM.depTotal), 'depTotal'), ws(dress(turnoverCard), 'turnover'), ws(dress(MM.ggr), 'ggr'), ws(dressPlain(MM.ggrPerDep), 'ggrPerDep'), ws(dressPlain(holdCard), 'hold'), ws(rolloverCard, 'rollover'), ws(dressPlain(f.freespinDep), 'freespinDep'), ws(dressPlain(f.bonusDep), 'bonusDep')]
+    cards: [bl(ws(dress(MM.depTotal), 'depTotal'), scenL), bl(ws(dress(turnoverCard), 'turnover'), scenL), bl(ws(dress(MM.ggr), 'ggr'), scenL), bl(ws(dressPlain(MM.ggrPerDep), 'ggrPerDep'), scenL), bl(ws(dressPlain(holdCard), 'hold'), scenL), bl(ws(rolloverCard, 'rollover'), scenL), bl(ws(dressPlain(f.freespinDep), 'freespinDep'), SCEN_BP_LABEL), bl(ws(dressPlain(f.bonusDep), 'bonusDep'), SCEN_BP_LABEL)]
   }, {
     title: 'Retenção',
-    cards: [dressPlain(relabelRet(MM.retM0M1, 'Depósito M0→M1')), dressPlain(relabelRet(MM.retM1M2, 'Depósito M1→M2')), dressPlain(relabelRet(MM.retM3plus, 'Depósito M3+'))]
+    cards: [bl(dressPlain(relabelRet(MM.retM0M1, 'Depósito M0→M1')), SCEN_BP_LABEL), bl(dressPlain(relabelRet(MM.retM1M2, 'Depósito M1→M2')), SCEN_BP_LABEL), bl(dressPlain(relabelRet(MM.retM3plus, 'Depósito M3+')), SCEN_BP_LABEL)]
   }];
 }
 
@@ -6820,7 +6828,7 @@ function applyFtdByRegister_(MM, f, ftdByRegister, chFilter) {
 // sozinho a partir do novo bp. Retenção/GGR/Volume ficam intactos (a aba do plano não tem meta pra eles).
 const CENARIOS = [{
   id: 'bp',
-  label: 'BP / meta',
+  label: 'Orçado',
   color: '#378ADD'
 }, {
   id: 'conserv',
@@ -6828,9 +6836,12 @@ const CENARIOS = [{
   color: '#F0997B'
 }, {
   id: 'rolling',
-  label: 'Rolling',
+  label: 'Forecast',
   color: '#9AA0A6'
 }];
+// Rótulo do cenário BASE (Orçado) — usado no prefixo dos cards de meta FIXA (Retenção/FreeSpins/Bonif), que
+// NÃO mudam por cenário (o applyScenarioBp_ não os re-anchora), mesmo quando o toggle está em Conservador/Forecast.
+const SCEN_BP_LABEL = (CENARIOS.find(c => c.id === 'bp') || CENARIOS[0]).label;
 function applyScenarioBp_(M, farol, scenData, chFilter) {
   if (!scenData) return {
     M,
@@ -6972,8 +6983,10 @@ function TabFarol({
   };
   // Série das 4 semanas fechadas por KPI (ACT — independe de cenário/BP), reescopada no chFilter. Nulls onde não há dado.
   const sparkByKey = React.useMemo(() => buildFarolSpark_(farolSpark, chFilter), [farolSpark, chFilter]);
-  const groups = buildFarolGroups_(ov.M, ov.farol, range, useYtd, sparkByKey);
   const scenMeta = CENARIOS.find(c => c.id === activeScen) || CENARIOS[0];
+  // Prefixo do "BP" nos cards = nome do cenário ATIVO (segue o toggle). Sem cenário aplicado (scenOn=false) → Orçado (base).
+  const scenLabel = scenOn ? scenMeta.label : SCEN_BP_LABEL;
+  const groups = buildFarolGroups_(ov.M, ov.farol, range, useYtd, sparkByKey, scenLabel);
   const rangeLbl = range && range.from ? `${fmtBR_(range.from)} → ${fmtBR_(range.to)}` : '';
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "tab-header"
@@ -6986,7 +6999,7 @@ function TabFarol({
       marginTop: 6,
       maxWidth: 720
     }
-  }, "Aquisi\xE7\xE3o, Dep\xF3sito M0 e receita/volume (Dep\xF3sitos, GGR, Turnover, Hold, Rollover) comparados vs plano ", /*#__PURE__*/React.createElement("strong", null, scenMeta.label), " \u2014 as luzes e os deltas mudam pra esse cen\xE1rio. Receita/volume s\xF3 no escopo Total da Casa (o plano RevOps n\xE3o tem canal). Reten\xE7\xE3o segue no BP."), active && /*#__PURE__*/React.createElement("div", {
+  }, "Aquisi\xE7\xE3o, Dep\xF3sito M0 e receita/volume (Dep\xF3sitos, GGR, Turnover, Hold, Rollover) comparados vs plano ", /*#__PURE__*/React.createElement("strong", null, scenMeta.label), " \u2014 as luzes e os deltas mudam pra esse cen\xE1rio. Receita/volume s\xF3 no escopo Total da Casa (o plano RevOps n\xE3o tem canal). Reten\xE7\xE3o, FreeSpins e Bonifica\xE7\xE3o seguem a meta fixa (Or\xE7ado)."), active && /*#__PURE__*/React.createElement("div", {
     className: "subtitle",
     style: {
       color: 'var(--accent-yellow)',

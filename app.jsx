@@ -356,7 +356,7 @@ function Hero({ metric, variant }) {
           <div className="hf-stats">
             {pct != null && (
               <div className="hf-bp">
-                <span className="bp-label">BP</span> <span className="bp-val">{fmtVal(metric.bp, metric.fmt)}</span>{' '}
+                <span className="bp-label">{metric.bpLabel || 'BP'}</span> <span className="bp-val">{fmtVal(metric.bp, metric.fmt)}</span>{' '}
                 <span className={`pct ${farol}`}>{fmtPct(pct, 0)}</span>
               </div>
             )}
@@ -384,7 +384,7 @@ function Hero({ metric, variant }) {
       {pct != null && (
         <div className="vs-bp">
           <div className="vs-bp-head">
-            <span><span className="bp-label">BP</span> <span className="bp-val">{fmtVal(metric.bp, metric.fmt)}</span></span>
+            <span><span className="bp-label">{metric.bpLabel || 'BP'}</span> <span className="bp-val">{fmtVal(metric.bp, metric.fmt)}</span></span>
             <span className={`pct ${farol}`}>{fmtPct(pct, 0)}</span>
           </div>
         </div>
@@ -3369,7 +3369,7 @@ function buildFarolSpark_(spark, chFilter) {
   };
 }
 
-function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
+function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, scenLabel) {
   const mult = useYtd ? null : monthCloseMult_(range);
   const tf = mult == null ? null
     : (MM.ggr && MM.ggr.act && MM.ggrTrend && MM.ggrTrend.act != null && MM.ggr.act !== 0)
@@ -3400,11 +3400,16 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
   // Dep M0/ROAS Dep M0/Retenção NÃO têm chave (maturação de coorte) → seguem sem linha, com o header novo.
   const SP = sparkByKey || {};
   const ws = (m, key) => { if (!m) return m; const s = SP[key]; return (s && s.some(v => v != null && isFinite(v))) ? { ...m, spark: s } : m; };
+  // Prefixo do "BP" no card = nome do cenário ATIVO (Orçado/Conservador/Forecast) — segue o toggle lá de cima.
+  // scenLabel = cenário ativo (só nos cards que o applyScenarioBp_ re-anchora); baseLabel = Orçado (meta FIXA:
+  // Retenção/FreeSpins/Bonif NÃO mudam por cenário, então continuam "Orçado" mesmo em Conservador/Forecast).
+  const scenL = scenLabel || SCEN_BP_LABEL;
+  const bl = (m, label) => m ? { ...m, bpLabel: label } : m;
   return [
-    { title: 'Aquisição', cards: [ws(dress(MM.invest), 'invest'), ws(dress(MM.ftdAmount), 'ftdAmount'), ws(roasFtdCard, 'roasFtd'), ws(dressPlain(f.roasDepD0), 'roasDepD0'), ws(dressPlain(f.cac), 'cac'), ws(dressPlain(f.ticketFtd), 'ticketFtd')] },
-    { title: 'Depósito M0', cards: [dress(MM.depM0Total), roasDepM0Card] },
-    { title: 'Volume & GGR', cards: [ws(dress(MM.depTotal), 'depTotal'), ws(dress(turnoverCard), 'turnover'), ws(dress(MM.ggr), 'ggr'), ws(dressPlain(MM.ggrPerDep), 'ggrPerDep'), ws(dressPlain(holdCard), 'hold'), ws(rolloverCard, 'rollover'), ws(dressPlain(f.freespinDep), 'freespinDep'), ws(dressPlain(f.bonusDep), 'bonusDep')] },
-    { title: 'Retenção', cards: [dressPlain(relabelRet(MM.retM0M1, 'Depósito M0→M1')), dressPlain(relabelRet(MM.retM1M2, 'Depósito M1→M2')), dressPlain(relabelRet(MM.retM3plus, 'Depósito M3+'))] },
+    { title: 'Aquisição', cards: [bl(ws(dress(MM.invest), 'invest'), scenL), bl(ws(dress(MM.ftdAmount), 'ftdAmount'), scenL), bl(ws(roasFtdCard, 'roasFtd'), scenL), bl(ws(dressPlain(f.roasDepD0), 'roasDepD0'), scenL), bl(ws(dressPlain(f.cac), 'cac'), scenL), bl(ws(dressPlain(f.ticketFtd), 'ticketFtd'), scenL)] },
+    { title: 'Depósito M0', cards: [bl(dress(MM.depM0Total), scenL), bl(roasDepM0Card, scenL)] },
+    { title: 'Volume & GGR', cards: [bl(ws(dress(MM.depTotal), 'depTotal'), scenL), bl(ws(dress(turnoverCard), 'turnover'), scenL), bl(ws(dress(MM.ggr), 'ggr'), scenL), bl(ws(dressPlain(MM.ggrPerDep), 'ggrPerDep'), scenL), bl(ws(dressPlain(holdCard), 'hold'), scenL), bl(ws(rolloverCard, 'rollover'), scenL), bl(ws(dressPlain(f.freespinDep), 'freespinDep'), SCEN_BP_LABEL), bl(ws(dressPlain(f.bonusDep), 'bonusDep'), SCEN_BP_LABEL)] },
+    { title: 'Retenção', cards: [bl(dressPlain(relabelRet(MM.retM0M1, 'Depósito M0→M1')), SCEN_BP_LABEL), bl(dressPlain(relabelRet(MM.retM1M2, 'Depósito M1→M2')), SCEN_BP_LABEL), bl(dressPlain(relabelRet(MM.retM3plus, 'Depósito M3+')), SCEN_BP_LABEL)] },
   ];
 }
 
@@ -3437,10 +3442,13 @@ function applyFtdByRegister_(MM, f, ftdByRegister, chFilter) {
 // soma; scope 'growth' → growthAgg; senão allAgg). Só mexe no .bp desses cards — o Hero recolore o farol e o %
 // sozinho a partir do novo bp. Retenção/GGR/Volume ficam intactos (a aba do plano não tem meta pra eles).
 const CENARIOS = [
-  { id: 'bp',      label: 'BP / meta',    color: '#378ADD' },
+  { id: 'bp',      label: 'Orçado',       color: '#378ADD' },
   { id: 'conserv', label: 'Conservador',  color: '#F0997B' },
-  { id: 'rolling', label: 'Rolling',      color: '#9AA0A6' },
+  { id: 'rolling', label: 'Forecast',     color: '#9AA0A6' },
 ];
+// Rótulo do cenário BASE (Orçado) — usado no prefixo dos cards de meta FIXA (Retenção/FreeSpins/Bonif), que
+// NÃO mudam por cenário (o applyScenarioBp_ não os re-anchora), mesmo quando o toggle está em Conservador/Forecast.
+const SCEN_BP_LABEL = (CENARIOS.find(c => c.id === 'bp') || CENARIOS[0]).label;
 function applyScenarioBp_(M, farol, scenData, chFilter) {
   if (!scenData) return { M, farol };
   const pos = (v) => (v != null && isFinite(v) && v !== 0) ? v : null;
@@ -3532,8 +3540,10 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
   const ov = scenOn ? applyScenarioBp_(src.MM, src.f, planScenarios[activeScen], chFilter) : { M: src.MM, farol: src.f };
   // Série das 4 semanas fechadas por KPI (ACT — independe de cenário/BP), reescopada no chFilter. Nulls onde não há dado.
   const sparkByKey = React.useMemo(() => buildFarolSpark_(farolSpark, chFilter), [farolSpark, chFilter]);
-  const groups = buildFarolGroups_(ov.M, ov.farol, range, useYtd, sparkByKey);
   const scenMeta = CENARIOS.find(c => c.id === activeScen) || CENARIOS[0];
+  // Prefixo do "BP" nos cards = nome do cenário ATIVO (segue o toggle). Sem cenário aplicado (scenOn=false) → Orçado (base).
+  const scenLabel = scenOn ? scenMeta.label : SCEN_BP_LABEL;
+  const groups = buildFarolGroups_(ov.M, ov.farol, range, useYtd, sparkByKey, scenLabel);
   const rangeLbl = (range && range.from) ? `${fmtBR_(range.from)} → ${fmtBR_(range.to)}` : '';
   return (
     <React.Fragment>
@@ -3547,7 +3557,7 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
           </div>
           {scenOn && activeScen !== 'bp' && (
             <div className="subtitle" style={{ color: 'var(--accent-orange)', marginTop: 6, maxWidth: 720 }}>
-              Aquisição, Depósito M0 e receita/volume (Depósitos, GGR, Turnover, Hold, Rollover) comparados vs plano <strong>{scenMeta.label}</strong> — as luzes e os deltas mudam pra esse cenário. Receita/volume só no escopo Total da Casa (o plano RevOps não tem canal). Retenção segue no BP.
+              Aquisição, Depósito M0 e receita/volume (Depósitos, GGR, Turnover, Hold, Rollover) comparados vs plano <strong>{scenMeta.label}</strong> — as luzes e os deltas mudam pra esse cenário. Receita/volume só no escopo Total da Casa (o plano RevOps não tem canal). Retenção, FreeSpins e Bonificação seguem a meta fixa (Orçado).
             </div>
           )}
           {active && (
