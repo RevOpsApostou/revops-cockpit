@@ -3368,7 +3368,7 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
   return { M: newM, farol: newFarol };
 }
 
-function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios }) {
+function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios, user }) {
   // YTD é preset GLOBAL de data: a janela (appliedRange) já é abril→ontem, então usa o M/farol normais.
   // Só muda a comparação: SÓ vs BP — tira M-1 (mesma janela 1 mês atrás) e a projeção de fechamento, que
   // não fazem sentido num acumulado de vários meses.
@@ -3380,10 +3380,17 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
   const src = active ? applyFtdByRegister_(M || {}, farol || {}, ftdByRegister, chFilter) : { MM: M || {}, f: farol || {} };
   // Cenário do plano (BP/Conservador/Rolling): re-anchora o BP dos cards de aquisição + Dep M0 (payload.planScenarios).
   const [scen, setScen] = usePersistedState('rvops:farolScen', 'bp');
+  // Cenários que ESTE usuário pode ver (allowlist "por acesso" — igual às abas). Admin vê todos; null/vazio = todos.
+  // É gate de UI (esconde o cenário do switcher); o payload ainda traz os 3, mas o usuário não os seleciona.
+  const isAdminU = !!(user && user.admin);
+  const allowedScen = isAdminU ? null : ((user && Array.isArray(user.scen) && user.scen.length) ? user.scen : null);
+  const scenAllowed = (id) => !allowedScen || allowedScen.indexOf(id) >= 0;
+  const visCenarios = CENARIOS.filter(c => scenAllowed(c.id));   // só os cenários permitidos p/ este usuário
   const scenAvail = {};
   CENARIOS.forEach(c => { const s = planScenarios && planScenarios[c.id]; scenAvail[c.id] = !!(s && s.allAgg && s.allAgg.invest > 0); });
-  const hasScen = scenAvail.bp || scenAvail.conserv || scenAvail.rolling;
-  const activeScen = (hasScen && scenAvail[scen]) ? scen : 'bp';
+  const hasScen = visCenarios.some(c => scenAvail[c.id]);   // só conta cenário permitido E com plano na janela
+  const firstScen = (visCenarios.find(c => scenAvail[c.id]) || visCenarios[0] || CENARIOS[0]).id;   // default respeita o acesso
+  const activeScen = (scenAllowed(scen) && scenAvail[scen]) ? scen : firstScen;   // cenário persistido só vale se permitido
   const scenOn = hasScen && !!(planScenarios && planScenarios[activeScen]);
   const ov = scenOn ? applyScenarioBp_(src.MM, src.f, planScenarios[activeScen], chFilter) : { M: src.MM, farol: src.f };
   const groups = buildFarolGroups_(ov.M, ov.farol, range, useYtd);
@@ -3414,7 +3421,7 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
           {hasScen && (
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <span style={{ fontSize: 11, color: 'var(--text-muted, #888)', marginRight: 2 }}>cenário</span>
-              {CENARIOS.map(c => (
+              {visCenarios.map(c => (
                 <button
                   key={c.id}
                   className={`preset-btn ${activeScen === c.id ? 'active' : ''}`}
@@ -4683,6 +4690,7 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
   const usersRef = React.useRef(null);
   React.useEffect(() => { usersRef.current = users; }, [users]);
   const saveTimers = React.useRef({});
+  const scenTimers = React.useRef({});   // debounce dos saves de cenário por usuário (separado das abas)
   const load = React.useCallback(() => {
     setErr(null);
     apiPost_({ action: 'listUsers', session }).then(j => {
@@ -4720,10 +4728,19 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
       .then(j => { if (!(j && j.ok)) setErr((j && j.error) || 'Falha ao salvar abas'); })
       .catch(() => setErr('Erro de conexão'));
   }, [session]);
+  // Mesmo padrão p/ a allowlist de CENÁRIOS do Farol (setUserScen).
+  const flushScen = React.useCallback((email) => {
+    const u = (usersRef.current || []).find(x => x.email === email);
+    const scen = (u && Array.isArray(u.scen)) ? u.scen : [];   // null (todos) → [] no wire
+    apiPost_({ action: 'setUserScen', session, email, scen })
+      .then(j => { if (!(j && j.ok)) setErr((j && j.error) || 'Falha ao salvar cenários'); })
+      .catch(() => setErr('Erro de conexão'));
+  }, [session]);
   // Dispara saves pendentes ao sair da aba (navegar antes do debounce).
   React.useEffect(() => () => {
     Object.keys(saveTimers.current).forEach(email => { clearTimeout(saveTimers.current[email]); flushTabs(email); });
-  }, [flushTabs]);
+    Object.keys(scenTimers.current).forEach(email => { clearTimeout(scenTimers.current[email]); flushScen(email); });
+  }, [flushTabs, flushScen]);
   const toggleUserTab = (email, tabId) => {
     setErr(null);
     setUsers(prev => (prev || []).map(x => {
@@ -4736,6 +4753,21 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
     }));
     if (saveTimers.current[email]) clearTimeout(saveTimers.current[email]);
     saveTimers.current[email] = setTimeout(() => { delete saveTimers.current[email]; flushTabs(email); }, 600);
+  };
+  // Allowlist de CENÁRIOS do Farol por usuário (mesmo padrão otimista+coalescido das abas). scenIds = bp/conserv/rolling.
+  const scenIds = CENARIOS.map(c => c.id);
+  const toggleUserScen = (email, scenId) => {
+    setErr(null);
+    setUsers(prev => (prev || []).map(x => {
+      if (x.email !== email) return x;
+      const restricted = Array.isArray(x.scen) && x.scen.length;
+      const cur = restricted ? x.scen.slice() : scenIds.slice();   // "todos" (null) → expande p/ desmarcar a partir de tudo
+      const raw = cur.indexOf(scenId) >= 0 ? cur.filter(y => y !== scenId) : cur.concat([scenId]);
+      const nextScen = raw.length >= scenIds.length ? null : raw;   // tudo marcado → null (sem restrição)
+      return { ...x, scen: nextScen };
+    }));
+    if (scenTimers.current[email]) clearTimeout(scenTimers.current[email]);
+    scenTimers.current[email] = setTimeout(() => { delete scenTimers.current[email]; flushScen(email); }, 600);
   };
   const inp = { background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)', padding: '8px 10px', borderRadius: '6px', fontSize: '13px', fontFamily: 'inherit' };
   return (
@@ -4863,6 +4895,39 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
           );
         })}
         {users && (users || []).filter(u => !u.admin).length === 0 && <div style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Nenhum usuário não-admin. (Admins sempre veem todas as abas.)</div>}
+      </div>
+
+      <div className="support" style={{ marginTop: '16px' }}>
+        <div className="support-title">Acesso por cenário do Farol · por usuário</div>
+        <div className="ch-note" style={{ marginTop: 0, marginBottom: '12px' }}>
+          Marque os cenários do <strong>Farol</strong> (BP / Conservador / Rolling) que <strong>cada pessoa</strong> pode ver no switcher. <strong>Todos marcados = sem restrição</strong>; desmarque p/ limitar. Admins veem todos sempre. Aplica no <strong>próximo login/refresh</strong> da pessoa. É um filtro do <em>switcher de cenário</em> — não é uma barreira de dados no backend.
+        </div>
+        {(users || []).filter(u => !u.admin).map((u, i) => {
+          const restricted = Array.isArray(u.scen) && u.scen.length;
+          return (
+            <div key={i} style={{ marginBottom: '14px', paddingBottom: '12px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ fontSize: '13px', marginBottom: '7px' }}>
+                <strong>{u.name}</strong> <span style={{ color: 'var(--text-dim)' }}>{u.email}</span>
+                {' · '}<span style={{ color: restricted ? 'var(--accent-yellow)' : 'var(--text-muted)', fontSize: '12px' }}>
+                  {restricted ? `só ${u.scen.length} cenário${u.scen.length > 1 ? 's' : ''}` : 'todos os cenários'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {CENARIOS.map(c => {
+                  const on = restricted ? (u.scen.indexOf(c.id) >= 0) : true;   // sem restrição = tudo marcado
+                  return (
+                    <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 9px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', background: 'var(--surface)', opacity: on ? 1 : 0.5 }}>
+                      <input type="checkbox" checked={on} onChange={() => toggleUserScen(u.email, c.id)} />
+                      <span style={{ width: 8, height: 8, borderRadius: 2, background: c.color, display: 'inline-block' }} />
+                      {c.label}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+        {users && (users || []).filter(u => !u.admin).length === 0 && <div style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Nenhum usuário não-admin. (Admins sempre veem todos os cenários.)</div>}
       </div>
     </React.Fragment>
   );

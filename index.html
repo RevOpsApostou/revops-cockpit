@@ -6679,7 +6679,8 @@ function TabFarol({
   ytd,
   ftdByRegister,
   chFilter,
-  planScenarios
+  planScenarios,
+  user
 }) {
   // YTD é preset GLOBAL de data: a janela (appliedRange) já é abril→ontem, então usa o M/farol normais.
   // Só muda a comparação: SÓ vs BP — tira M-1 (mesma janela 1 mês atrás) e a projeção de fechamento, que
@@ -6695,13 +6696,20 @@ function TabFarol({
   };
   // Cenário do plano (BP/Conservador/Rolling): re-anchora o BP dos cards de aquisição + Dep M0 (payload.planScenarios).
   const [scen, setScen] = usePersistedState('rvops:farolScen', 'bp');
+  // Cenários que ESTE usuário pode ver (allowlist "por acesso" — igual às abas). Admin vê todos; null/vazio = todos.
+  // É gate de UI (esconde o cenário do switcher); o payload ainda traz os 3, mas o usuário não os seleciona.
+  const isAdminU = !!(user && user.admin);
+  const allowedScen = isAdminU ? null : user && Array.isArray(user.scen) && user.scen.length ? user.scen : null;
+  const scenAllowed = id => !allowedScen || allowedScen.indexOf(id) >= 0;
+  const visCenarios = CENARIOS.filter(c => scenAllowed(c.id)); // só os cenários permitidos p/ este usuário
   const scenAvail = {};
   CENARIOS.forEach(c => {
     const s = planScenarios && planScenarios[c.id];
     scenAvail[c.id] = !!(s && s.allAgg && s.allAgg.invest > 0);
   });
-  const hasScen = scenAvail.bp || scenAvail.conserv || scenAvail.rolling;
-  const activeScen = hasScen && scenAvail[scen] ? scen : 'bp';
+  const hasScen = visCenarios.some(c => scenAvail[c.id]); // só conta cenário permitido E com plano na janela
+  const firstScen = (visCenarios.find(c => scenAvail[c.id]) || visCenarios[0] || CENARIOS[0]).id; // default respeita o acesso
+  const activeScen = scenAllowed(scen) && scenAvail[scen] ? scen : firstScen; // cenário persistido só vale se permitido
   const scenOn = hasScen && !!(planScenarios && planScenarios[activeScen]);
   const ov = scenOn ? applyScenarioBp_(src.MM, src.f, planScenarios[activeScen], chFilter) : {
     M: src.MM,
@@ -6747,7 +6755,7 @@ function TabFarol({
       color: 'var(--text-muted, #888)',
       marginRight: 2
     }
-  }, "cen\xE1rio"), CENARIOS.map(c => /*#__PURE__*/React.createElement("button", {
+  }, "cen\xE1rio"), visCenarios.map(c => /*#__PURE__*/React.createElement("button", {
     key: c.id,
     className: `preset-btn ${activeScen === c.id ? 'active' : ''}`,
     onClick: () => setScen(c.id),
@@ -8942,6 +8950,7 @@ function SegurancaTab({
     usersRef.current = users;
   }, [users]);
   const saveTimers = React.useRef({});
+  const scenTimers = React.useRef({}); // debounce dos saves de cenário por usuário (separado das abas)
   const load = React.useCallback(() => {
     setErr(null);
     apiPost_({
@@ -9030,13 +9039,30 @@ function SegurancaTab({
       if (!(j && j.ok)) setErr(j && j.error || 'Falha ao salvar abas');
     }).catch(() => setErr('Erro de conexão'));
   }, [session]);
+  // Mesmo padrão p/ a allowlist de CENÁRIOS do Farol (setUserScen).
+  const flushScen = React.useCallback(email => {
+    const u = (usersRef.current || []).find(x => x.email === email);
+    const scen = u && Array.isArray(u.scen) ? u.scen : []; // null (todos) → [] no wire
+    apiPost_({
+      action: 'setUserScen',
+      session,
+      email,
+      scen
+    }).then(j => {
+      if (!(j && j.ok)) setErr(j && j.error || 'Falha ao salvar cenários');
+    }).catch(() => setErr('Erro de conexão'));
+  }, [session]);
   // Dispara saves pendentes ao sair da aba (navegar antes do debounce).
   React.useEffect(() => () => {
     Object.keys(saveTimers.current).forEach(email => {
       clearTimeout(saveTimers.current[email]);
       flushTabs(email);
     });
-  }, [flushTabs]);
+    Object.keys(scenTimers.current).forEach(email => {
+      clearTimeout(scenTimers.current[email]);
+      flushScen(email);
+    });
+  }, [flushTabs, flushScen]);
   const toggleUserTab = (email, tabId) => {
     setErr(null);
     setUsers(prev => (prev || []).map(x => {
@@ -9054,6 +9080,27 @@ function SegurancaTab({
     saveTimers.current[email] = setTimeout(() => {
       delete saveTimers.current[email];
       flushTabs(email);
+    }, 600);
+  };
+  // Allowlist de CENÁRIOS do Farol por usuário (mesmo padrão otimista+coalescido das abas). scenIds = bp/conserv/rolling.
+  const scenIds = CENARIOS.map(c => c.id);
+  const toggleUserScen = (email, scenId) => {
+    setErr(null);
+    setUsers(prev => (prev || []).map(x => {
+      if (x.email !== email) return x;
+      const restricted = Array.isArray(x.scen) && x.scen.length;
+      const cur = restricted ? x.scen.slice() : scenIds.slice(); // "todos" (null) → expande p/ desmarcar a partir de tudo
+      const raw = cur.indexOf(scenId) >= 0 ? cur.filter(y => y !== scenId) : cur.concat([scenId]);
+      const nextScen = raw.length >= scenIds.length ? null : raw; // tudo marcado → null (sem restrição)
+      return {
+        ...x,
+        scen: nextScen
+      };
+    }));
+    if (scenTimers.current[email]) clearTimeout(scenTimers.current[email]);
+    scenTimers.current[email] = setTimeout(() => {
+      delete scenTimers.current[email];
+      flushScen(email);
     }, 600);
   };
   const inp = {
@@ -9351,7 +9398,84 @@ function SegurancaTab({
       color: 'var(--text-muted)',
       fontSize: '13px'
     }
-  }, "Nenhum usu\xE1rio n\xE3o-admin. (Admins sempre veem todas as abas.)")));
+  }, "Nenhum usu\xE1rio n\xE3o-admin. (Admins sempre veem todas as abas.)")), /*#__PURE__*/React.createElement("div", {
+    className: "support",
+    style: {
+      marginTop: '16px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "support-title"
+  }, "Acesso por cen\xE1rio do Farol \xB7 por usu\xE1rio"), /*#__PURE__*/React.createElement("div", {
+    className: "ch-note",
+    style: {
+      marginTop: 0,
+      marginBottom: '12px'
+    }
+  }, "Marque os cen\xE1rios do ", /*#__PURE__*/React.createElement("strong", null, "Farol"), " (BP / Conservador / Rolling) que ", /*#__PURE__*/React.createElement("strong", null, "cada pessoa"), " pode ver no switcher. ", /*#__PURE__*/React.createElement("strong", null, "Todos marcados = sem restri\xE7\xE3o"), "; desmarque p/ limitar. Admins veem todos sempre. Aplica no ", /*#__PURE__*/React.createElement("strong", null, "pr\xF3ximo login/refresh"), " da pessoa. \xC9 um filtro do ", /*#__PURE__*/React.createElement("em", null, "switcher de cen\xE1rio"), " \u2014 n\xE3o \xE9 uma barreira de dados no backend."), (users || []).filter(u => !u.admin).map((u, i) => {
+    const restricted = Array.isArray(u.scen) && u.scen.length;
+    return /*#__PURE__*/React.createElement("div", {
+      key: i,
+      style: {
+        marginBottom: '14px',
+        paddingBottom: '12px',
+        borderBottom: '1px solid var(--border)'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: '13px',
+        marginBottom: '7px'
+      }
+    }, /*#__PURE__*/React.createElement("strong", null, u.name), " ", /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: 'var(--text-dim)'
+      }
+    }, u.email), ' · ', /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: restricted ? 'var(--accent-yellow)' : 'var(--text-muted)',
+        fontSize: '12px'
+      }
+    }, restricted ? `só ${u.scen.length} cenário${u.scen.length > 1 ? 's' : ''}` : 'todos os cenários')), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '6px'
+      }
+    }, CENARIOS.map(c => {
+      const on = restricted ? u.scen.indexOf(c.id) >= 0 : true; // sem restrição = tudo marcado
+      return /*#__PURE__*/React.createElement("label", {
+        key: c.id,
+        style: {
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          padding: '5px 9px',
+          border: '1px solid var(--border)',
+          borderRadius: '6px',
+          fontSize: '12px',
+          cursor: 'pointer',
+          background: 'var(--surface)',
+          opacity: on ? 1 : 0.5
+        }
+      }, /*#__PURE__*/React.createElement("input", {
+        type: "checkbox",
+        checked: on,
+        onChange: () => toggleUserScen(u.email, c.id)
+      }), /*#__PURE__*/React.createElement("span", {
+        style: {
+          width: 8,
+          height: 8,
+          borderRadius: 2,
+          background: c.color,
+          display: 'inline-block'
+        }
+      }), c.label);
+    })));
+  }), users && (users || []).filter(u => !u.admin).length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: 'var(--text-muted)',
+      fontSize: '13px'
+    }
+  }, "Nenhum usu\xE1rio n\xE3o-admin. (Admins sempre veem todos os cen\xE1rios.)")));
 }
 
 // Filtra [{channel,...}] pelo escopo do chFilter (seleção explícita > growth > todos). Espelha o
