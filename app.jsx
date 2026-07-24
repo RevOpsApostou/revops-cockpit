@@ -4019,19 +4019,40 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
   const [win, setWinRaw] = usePersistedState('rvops:ativWin', 0);
   const winN = ATIV_WINS_F.indexOf(win) >= 0 ? win : 0;
   const setWin = (v) => setWinRaw(ATIV_WINS_F.indexOf(v) >= 0 ? v : 0);
-  // Fetch único do only=ativacao: agg (somas por canal), med (medianas/quartis por escopo) e online — TODOS
-  // com as 5 janelas. Re-busca só quando faixa/grupo mudam (server-side); a janela não re-busca.
+  // EIXO da tabela ("Ver por"): o que cada LINHA representa. Semana e Canal saem do MESMO payload week×canal
+  // (client-side, sem re-fetch). Mês/Dia/Grupo/Faixa exigem reagrupar no servidor (a mediana não compõe) →
+  // re-buscam com &axis=. (≠ da Janela D0..D30, que é sempre client-side.)
+  const AXES = [
+    { k: 'mes',    label: 'Mês' },
+    { k: 'semana', label: 'Semana' },
+    { k: 'dia',    label: 'Dia' },
+    { k: 'canal',  label: 'Canal' },
+    { k: 'grupo',  label: 'Grupo' },
+    { k: 'faixa',  label: 'Faixa' },
+  ];
+  const AXIS_KEYS = AXES.map(a => a.k);
+  const [axis, setAxisRaw] = usePersistedState('rvops:ativAxis', 'semana');
+  const axisK = AXIS_KEYS.indexOf(axis) >= 0 ? axis : 'semana';
+  const setAxis = (v) => setAxisRaw(AXIS_KEYS.indexOf(v) >= 0 ? v : 'semana');
+  const axisNeedsFetch = (axisK === 'mes' || axisK === 'dia' || axisK === 'grupo' || axisK === 'faixa');   // grão que o backend reagrupa
+  const axisQ = axisNeedsFetch ? `&axis=${axisK}` : '';
+  // Fetch do only=ativacao: agg (somas por bucket×canal), med (medianas/quartis por bucket×escopo) e online —
+  // TODOS com as 5 janelas. Re-busca quando faixa/grupo OU o eixo (mes/dia/grupo/faixa) mudam; janela não re-busca.
   const faixaQ = faixaSel.map(f => `&faixa=${encodeURIComponent(f)}`).join('');
   const grupoQ = grupoActive ? grupoSel.map(g => `&grupo=${encodeURIComponent(g)}`).join('') : '';
-  const [med, setMed] = React.useState({ rows: null, online: null, agg: null, loading: false, error: null });
+  const [med, setMed] = React.useState({ rows: null, online: null, agg: null, axisEcho: '', loading: false, error: null });
   React.useEffect(() => {
     if (!winFrom || !winTo || !ENDPOINT_URL) return;
     setMed(s => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${winFrom}&to=${winTo}&only=ativacao${faixaQ}${grupoQ}`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${winFrom}&to=${winTo}&only=ativacao${faixaQ}${grupoQ}${axisQ}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
-      .then(j => { if (j.error) throw new Error(j.error); setMed({ rows: j.ativacaoMed || [], online: j.ativacaoOnline || [], agg: j.ativacaoAgg || [], loading: false, error: null }); })
-      .catch(e => setMed({ rows: null, online: null, agg: null, loading: false, error: String(e.message || e) }));
-  }, [winFrom, winTo, faixaQ, grupoQ]);
+      .then(j => { if (j.error) throw new Error(j.error); setMed({ rows: j.ativacaoMed || [], online: j.ativacaoOnline || [], agg: j.ativacaoAgg || [], axisEcho: (j.meta && j.meta.axis) || '', loading: false, error: null }); })
+      .catch(e => setMed({ rows: null, online: null, agg: null, axisEcho: '', loading: false, error: String(e.message || e) }));
+  }, [winFrom, winTo, faixaQ, grupoQ, axisQ]);
+  // Guarda: só renderiza quando o payload em mãos é do grão certo. Semana e Canal usam o payload DEFAULT
+  // (axisEcho ''); mês/dia/grupo/faixa usam o payload com o mesmo &axis=. Enquanto o fetch do novo eixo não
+  // chega (ou um deploy ainda propaga), a tabela mostra "carregando" em vez de dados no grão errado.
+  const axisReady = axisNeedsFetch ? (med.axisEcho === axisK) : (med.axisEcho === '');
   // src = linhas do ativacaoAgg mapeadas p/ a JANELA selecionada, no formato que a agregação já espera
   // (canal/week + campos da janela). faixa/grupo já vêm filtrados do servidor → sem filtro client-side.
   const src = React.useMemo(() => (med.agg || []).map(r => ({
@@ -4065,31 +4086,44 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
   const hasBonus = React.useMemo(() => (src || []).some(r => r.bonusD0 != null), [src]);
   const { weeks, totals } = React.useMemo(() => {
     const wm = {};
-    const zero = () => ({ qtd: 0, ftd: 0, turnD0: 0, betD0: 0, depD0: 0, bonusD0: 0, bet4d: 0, betDays: 0, actDays: 0, oDays: 0, oFtds: 0 });
+    const zero = () => ({ qtd: 0, turnD0: 0, betD0: 0, depD0: 0, bonusD0: 0, bet4d: 0, betDays: 0, oDays: 0, oFtds: 0 });
     const tot = zero();
+    // Chave da LINHA conforme o eixo: canal→o canal · semana→2ª-feira (re-bucketiza no cliente, idempotente) ·
+    // mês/dia/grupo/faixa→o bucket que o backend já agregou (r.week carrega o valor do bucket do &axis=).
+    const rowKeyOf = (canal, bucket) => axisK === 'canal' ? (canal || '—') : (axisK === 'semana' ? weekStartISO_(String(bucket)) : String(bucket));
+    const addSrc = (o, r) => { o.qtd += r.qtdFtds || 0; o.turnD0 += r.turnD0 || 0; o.betD0 += r.betD0Cnt || 0; o.depD0 += r.depD0 || 0; o.bonusD0 += r.bonusD0 || 0; o.bet4d += r.betCnt4d || 0; o.betDays += r.betDays4d || 0; };
     (src || []).forEach(r => {
-      if (!selCh(r.canal)) return;   // faixa/grupo já filtrados no servidor (só o canal é client-side)
-      const wk = weekStartISO_(String(r.date));
-      const b = wm[wk] || (wm[wk] = zero());
-      const add = (o) => { o.qtd += r.qtdFtds || 0; o.turnD0 += r.turnD0 || 0; o.betD0 += r.betD0Cnt || 0; o.depD0 += r.depD0 || 0; o.bonusD0 += r.bonusD0 || 0; o.bet4d += r.betCnt4d || 0; o.betDays += r.betDays4d || 0; };
-      add(b); add(tot);
+      if (!selCh(r.canal)) return;   // canal é client-side; faixa/grupo já filtrados no servidor
+      const k = rowKeyOf(r.canal, r.week);
+      const b = wm[k] || (wm[k] = zero());
+      addSrc(b, r); addSrc(tot, r);
     });
-    // Dias online (GA4) da JANELA selecionada: soma oDays/oFtds por semana, mesmo recorte de canal.
-    Object.keys(onlineMap).forEach(wk => {
-      Object.keys(onlineMap[wk]).forEach(canal => {
+    // Dias online (GA4): mesmo grão do eixo (o backend bucketiza o online por &axis=); no eixo Canal soma por canal.
+    Object.keys(onlineMap).forEach(bucket => {
+      Object.keys(onlineMap[bucket]).forEach(canal => {
         if (!selCh(canal)) return;
-        const o = onlineMap[wk][canal];
-        const b = wm[wk] || (wm[wk] = zero());
-        b.oDays += o['onlineDays_' + winN] || 0; b.oFtds += o.ftds || 0;
-        tot.oDays += o['onlineDays_' + winN] || 0; tot.oFtds += o.ftds || 0;
+        const o = onlineMap[bucket][canal];
+        const k = rowKeyOf(canal, bucket);
+        const b = wm[k] || (wm[k] = zero());
+        const od = o['onlineDays_' + winN] || 0, of = o.ftds || 0;
+        b.oDays += od; b.oFtds += of; tot.oDays += od; tot.oFtds += of;
       });
     });
     const denom = winN + 4;   // dias-apostou/online usam janela [0, N+3] (regra Luis) → denominador N+4
-    const derive = (b, wk) => {
-      const mrow = (scopeKey && medMap[wk] && medMap[wk][scopeKey]) ? medMap[wk][scopeKey] : null;
-      const wkGa4 = wk === '__all__' ? ga4Full : (wk >= GA4_WEEK_MIN);   // gate por semana (esconde pré-GA4)
+    const isTimeAxis = (axisK === 'semana' || axisK === 'mes' || axisK === 'dia');
+    // GA4: eixos de TEMPO gateiam por data do bucket (esconde pré-jun/26); eixos de DIMENSÃO (canal/grupo/faixa)
+    // não têm data por linha → gateiam pela janela toda (ga4Full: online só se a janela inteira é jun/26+).
+    const gaOk = (key, isTot) => (isTot || !isTimeAxis) ? ga4Full : (String(key) >= GA4_WEEK_MIN);
+    const derive = (b, key, isTot) => {
+      // Mediana: eixo Canal → mediana da janela toda POR canal (medMap['__all__'][canal]); demais eixos → escopo do
+      // slicer no bucket da linha; linha Total → escopo do slicer na janela toda ('__all__').
+      const mrow = isTot
+        ? ((scopeKey && medMap['__all__']) ? medMap['__all__'][scopeKey] : null)
+        : (axisK === 'canal'
+            ? ((medMap['__all__'] || {})[key] || null)
+            : ((scopeKey && medMap[key] && medMap[key][scopeKey]) ? medMap[key][scopeKey] : null));
       return {
-        week: wk, qtd: b.qtd, turnD0: b.turnD0, bonusD0: b.bonusD0,
+        week: key, qtd: b.qtd, turnD0: b.turnD0, bonusD0: b.bonusD0,
         pctBet: b.qtd ? b.betD0 / b.qtd : null,
         meanBet: b.qtd ? b.turnD0 / b.qtd : null,
         medBet: mrow ? mrow['med_' + winN] : null,
@@ -4099,16 +4133,34 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
         vezes: b.qtd ? b.bet4d / b.qtd : null,
         vezesMed: mrow ? mrow['medbet_' + winN] : null,
         betDaysR: b.qtd ? b.betDays / (denom * b.qtd) : null,
-        onlineR: (wkGa4 && b.oFtds) ? b.oDays / (denom * b.oFtds) : null,
+        onlineR: (gaOk(key, isTot) && b.oFtds) ? b.oDays / (denom * b.oFtds) : null,
       };
     };
-    const ks = Object.keys(wm).sort();
-    return { weeks: ks.map(k => derive(wm[k], k)), totals: derive(tot, '__all__') };
-  }, [src, selCh, medMap, onlineMap, scopeKey, ga4Full, hasBonus, winN]);
+    let ks = Object.keys(wm);
+    if (axisK === 'canal') ks.sort((a, b) => (wm[b].qtd || 0) - (wm[a].qtd || 0));   // canal por volume (desc)
+    else ks.sort();   // tempo (ISO) / grupo ('0'..'sem grupo') / faixa ('01.'..'05.') ordenam bem lexicograficamente
+    return { weeks: ks.map(k => derive(wm[k], k, false)), totals: derive(tot, '__all__', true) };
+  }, [src, selCh, medMap, onlineMap, scopeKey, ga4Full, hasBonus, winN, axisK]);
 
   const T = totals;
   const winLbl = winN === 0 ? 'D0' : `D0–D${winN}`;   // rótulo da janela cumulativa
-  const dm = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); return m ? weekLabel_(s) : String(s); };
+  // Rótulo de cada LINHA conforme o eixo (a chave `r.week` carrega o valor do bucket).
+  const rowLabel = (k) => {
+    if (axisK === 'canal') return String(k);
+    if (axisK === 'grupo') return grupoLabel_(k);
+    if (axisK === 'faixa') return fxLabel_(k);
+    if (axisK === 'mes')   return monthLabelPt_(k);   // 'YYYY-MM-01' → 'Julho/2026'
+    if (axisK === 'dia')   return fmtBR_(k);          // 'YYYY-MM-DD' → 'DD/MM/YYYY'
+    return weekLabel_(k);                             // semana → 'DD/MM–DD/MM'
+  };
+  const axisNoun = ({ semana: 'safra', mes: 'mês', dia: 'dia', canal: 'canal', grupo: 'grupo de risco', faixa: 'faixa de FTD' })[axisK] || 'safra';
+  const axisCol  = ({ semana: 'Safra', mes: 'Mês', dia: 'Dia', canal: 'Canal', grupo: 'Grupo', faixa: 'Faixa' })[axisK] || 'Safra';
+  const rowNote  = axisK === 'semana' ? 'Cada linha = uma semana de safra (2ª–dom).'
+    : axisK === 'mes'   ? 'Cada linha = um mês de safra (pela data do FTD).'
+    : axisK === 'dia'   ? 'Cada linha = um dia de safra (data do FTD) — as últimas datas ainda maturam nas janelas maiores.'
+    : axisK === 'canal' ? 'Cada linha = um canal de aquisição (janela toda; ordenado por volume de FTD).'
+    : axisK === 'grupo' ? 'Cada linha = um grupo de risco (janela toda).'
+    :                     'Cada linha = uma faixa de valor do FTD (janela toda).';
   const rng = (key) => { const v = weeks.map(x => x[key]).filter(x => x != null && !isNaN(x)); return v.length ? { min: Math.min(...v), max: Math.max(...v) } : { min: 0, max: 1 }; };
   const rPct = rng('pctBet'), rRoll = rng('rollover'), rRollMed = rng('rollMed');
   const heat = (v, r) => ({ background: heatBg_(v, r.min, r.max) });
@@ -4129,7 +4181,7 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
       <div className="tab-header">
         <div>
           <h1>Ativação D0</h1>
-          <div className="subtitle">Sinais precoces da coorte de FTD (visão semanal, seg–dom) — o que o novo jogador faz na janela após o 1º depósito (D0 → D30, cumulativa e selecionável). Segue o slicer de canal · {chLabel}</div>
+          <div className="subtitle">Sinais precoces da coorte de FTD — o que o novo jogador faz na janela após o 1º depósito (D0 → D30, cumulativa e selecionável). Escolha o eixo em "Ver por" (mês/semana/dia/canal/grupo/faixa). Segue o slicer de canal · {chLabel}</div>
         </div>
       </div>
       <div className="slicer-group slicer-ruler">
@@ -4140,6 +4192,13 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
           ))}
         </div>
         <span className="slicer-divider" style={{ margin: '0 4px' }} />
+        <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Ver por</label>
+        <div className="slicer-presets">
+          {AXES.map(a => (
+            <button key={a.k} className={`preset-btn ${axisK === a.k ? 'active' : ''}`} onClick={() => setAxis(a.k)} title={`Uma linha por ${({ semana: 'semana de safra', mes: 'mês', dia: 'dia', canal: 'canal', grupo: 'grupo de risco', faixa: 'faixa de FTD' })[a.k]}`}>{a.label}</button>
+          ))}
+        </div>
+        <span className="slicer-divider" style={{ margin: '0 4px' }} />
         <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Faixa FTD</label>
         <ChannelMultiSelect options={FAIXA_LIST} selected={faixaSel} onChange={setFaixaSel} labelOf={fxLabel_} allLabel="Todas" countNoun="faixas" />
         <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>Grupo de risco</label>
@@ -4147,16 +4206,16 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
         <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>Canal: use os slicers do topo{srcLoad}</span>
       </div>
       <div className="support">
-        <div className="support-title">Ativação por safra · {filtSuffix}</div>
-        <div className="ch-note" style={{ marginTop: '-4px', marginBottom: '10px' }}>Apostas com saldo real (valor apostado &gt; 0, exclui freespin). D0 = dia do FTD. Cada linha = uma semana de safra (2ª–dom).{srcLoad}</div>
+        <div className="support-title">Ativação por {axisNoun} · {filtSuffix}</div>
+        <div className="ch-note" style={{ marginTop: '-4px', marginBottom: '10px' }}>Apostas com saldo real (valor apostado &gt; 0, exclui freespin). D0 = dia do FTD. {rowNote} Medianas (Aposta Med / Rollover Med) recalculadas no grão do eixo.{srcLoad}</div>
         <div className="table-scroll tall"><table className="ch-table">
             <thead>
               <tr>
-                <th style={{ whiteSpace: 'nowrap' }}>Safra</th>
-                <th title="Qtd de FTDs na semana">Qtd FTD</th>
+                <th style={{ whiteSpace: 'nowrap' }}>{axisCol}</th>
+                <th title="Qtd de FTDs na linha">Qtd FTD</th>
                 <th title="% dos FTDs que apostaram saldo real (valor apostado > 0) na janela selecionada">% Apostou</th>
                 <th title="Valor apostado ÷ Qtd FTD">Aposta Méd.</th>
-                <th title="Mediana do valor apostado na janela por jogador (por escopo)">Aposta Med.</th>
+                <th title="Mediana do valor apostado na janela por jogador (por escopo, no grão do eixo)">Aposta Med.</th>
                 <th title="Valor apostado ÷ Depósito da janela (agregado da casa)">Rollover</th>
                 <th title="Aposta mediana ÷ Depósito mediano — rollover do jogador típico (robusto a whale)">Rollover Med</th>
                 <th title="Dias distintos apostando na janela 0–(N+3) ÷ (N+4), média. Em D0 = 4 dias (0–3) ÷ 4 (métrica de engajamento, sempre olha ≥4 dias).">Dias Apostou %</th>
@@ -4164,10 +4223,12 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
               </tr>
             </thead>
             <tbody>
-              {weeks.map((r, i) => (<tr key={i}><td className="ch-name">{dm(r.week)}</td>{cells(r)}</tr>))}
+              {axisReady
+                ? weeks.map((r, i) => (<tr key={i}><td className="ch-name">{rowLabel(r.week)}</td>{cells(r)}</tr>))
+                : (<tr><td className="ch-name" colSpan={9} style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '18px' }}>{med.error ? 'Erro ao carregar.' : 'Carregando eixo…'}</td></tr>)}
             </tbody>
             <tfoot>
-              <tr><td>Total</td>{cells(T)}</tr>
+              {axisReady && <tr><td>Total</td>{cells(T)}</tr>}
             </tfoot>
           </table></div>
       </div>
