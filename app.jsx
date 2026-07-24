@@ -3367,6 +3367,14 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
         rollover:  setBp(newM.rollover,  td ? turn / td : null),
       };
     }
+    // Dep M0 do TOTAL DA CASA vem do M0 tt da aba DB Plan_RevOps (house.m0tt), NÃO do allAgg do Plan_Growth Mkt
+    // (que é growth-only e subconta). ROAS Dep M0 = m0tt ÷ Investimento (o mesmo invest do card → card consistente).
+    // No escopo Growth/canal o bloco de aquisição acima já usa o M0 do Plan_Growth (growthAgg/byChannel) = correto.
+    const m0 = house.m0tt || 0;
+    if (m0 > 0) {
+      newM = { ...newM, depM0Total: setBp(newM.depM0Total, m0) };
+      newFarol = { ...newFarol, roasDepM0: setBp(newFarol.roasDepM0, inv ? m0 / inv : null) };
+    }
   }
   return { M: newM, farol: newFarol };
 }
