@@ -3334,12 +3334,8 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
   } else if (chFilter && chFilter.scope === 'growth') {
     agg = scenData.growthAgg || {};
   } else {
-    // Total da Casa: o plano vem da aba DB Plan_RevOps (house) — invest/FTD/M0 são os números da CASA. NÃO usa o
-    // allAgg do Plan_Growth Mkt (growth-only → SUBCONTA o investimento e INFLA ROAS Dep M0/FTD; ex.: M0 30,3M ÷
-    // invest 11,9M=2,55x errado vs ÷ 15,97M da casa=1,9x). Espelha o applyBpToM_. depD0 não existe no house → allAgg.
-    const h = scenData.house || {}, aA = scenData.allAgg || {};
-    agg = { invest: h.invest || 0, ftd: h.ftdTt || 0, ftdAmount: h.ftdAmountTt || 0, depD0: aA.depD0 || 0, depM0: h.m0tt || 0 };
-  }
+    agg = scenData.allAgg || {};   // Total da Casa: AQUISIÇÃO segue no Plan_Growth Mkt (não muda). Só o Dep M0 (grupo
+  }                                // "Depósito M0") é sobrescrito abaixo p/ o Plan_RevOps (house) — ver bloco isTotal.
   const inv = agg.invest || 0, ftd = agg.ftd || 0, ftdAmt = agg.ftdAmount || 0, depD0 = agg.depD0 || 0, depM0 = agg.depM0 || 0;
   if (inv > 0) {   // cenário sem plano de aquisição nesse escopo → mantém o BP atual desses cards
     newM = { ...newM,
@@ -3370,6 +3366,14 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
         hold:      setBp(newM.hold,      turn ? ggr / turn : null),
         rollover:  setBp(newM.rollover,  td ? turn / td : null),
       };
+    }
+    // Grupo "Depósito M0" (SÓ Total da Casa): Dep M0 Total = M0 tt do Plan_RevOps (house.m0tt) e ROAS Dep M0 =
+    // m0tt ÷ Investimento do Plan_RevOps (house.invest) = ~1,9x. O allAgg do Plan_Growth subconta o invest e
+    // inflava esse ROAS (2,55x). ⚠️ NÃO mexe na AQUISIÇÃO (Investimento/ROAS FTD/CAC/Tkt/Dep D0 seguem no allAgg).
+    const m0 = house.m0tt || 0, hInv = house.invest || 0;
+    if (m0 > 0) {
+      newM = { ...newM, depM0Total: setBp(newM.depM0Total, m0) };
+      newFarol = { ...newFarol, roasDepM0: setBp(newFarol.roasDepM0, hInv ? m0 / hInv : null) };
     }
   }
   return { M: newM, farol: newFarol };
