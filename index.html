@@ -8288,7 +8288,7 @@ function TabAtivacao({
         tot.oFtds += o.ftds || 0;
       });
     });
-    const denom = winN + 1; // tamanho da janela (0..N inclusivo)
+    const denom = winN + 4; // dias-apostou/online usam janela [0, N+3] (regra Luis) → denominador N+4
     const derive = (b, wk) => {
       const mrow = scopeKey && medMap[wk] && medMap[wk][scopeKey] ? medMap[wk][scopeKey] : null;
       const wkGa4 = wk === '__all__' ? ga4Full : wk >= GA4_WEEK_MIN; // gate por semana (esconde pré-GA4)
@@ -8359,7 +8359,7 @@ function TabAtivacao({
       });
     });
     const mAll = medMap['__all__'] || {};
-    const denom = winN + 1;
+    const denom = winN + 4; // online: janela [0, N+3] → denominador N+4
     const rows = Object.keys(cm).map(c => {
       const b = cm[c],
         md = mAll[c] || null;
@@ -8410,7 +8410,7 @@ function TabAtivacao({
   const [compMetric, setCompMetric] = React.useState('pctBet');
   const cmKey = ATIV_METRICS[compMetric] ? compMetric : 'pctBet';
   const mAllTot = (medMap['__all__'] || {})['__total__'] || null;
-  const houseFor = k => k === 'pctBet' ? houseRaw.qtd ? houseRaw.betD0 / houseRaw.qtd : null : k === 'rollover' ? houseRaw.depD0 ? houseRaw.turnD0 / houseRaw.depD0 : null : k === 'medBet' ? mAllTot ? mAllTot['med_' + winN] : null : k === 'bonusDep' ? hasBonus && houseRaw.depD0 ? houseRaw.bonusD0 / houseRaw.depD0 : null : houseRaw.oFtds ? houseRaw.oDays / ((winN + 1) * houseRaw.oFtds) : null;
+  const houseFor = k => k === 'pctBet' ? houseRaw.qtd ? houseRaw.betD0 / houseRaw.qtd : null : k === 'rollover' ? houseRaw.depD0 ? houseRaw.turnD0 / houseRaw.depD0 : null : k === 'medBet' ? mAllTot ? mAllTot['med_' + winN] : null : k === 'bonusDep' ? hasBonus && houseRaw.depD0 ? houseRaw.bonusD0 / houseRaw.depD0 : null : houseRaw.oFtds ? houseRaw.oDays / ((winN + 4) * houseRaw.oFtds) : null;
   // Funil da JANELA: FTD → apostou (em 0..N) → apostou 2+ dias distintos (0..N). Contagens do backend (mesma
   // coorte/janela). No D0 (janela de 1 dia) o passo "2+ dias" não existe → funil de 2 passos.
   const scopeMrow = scopeKey && medMap['__all__'] && medMap['__all__'][scopeKey] ? medMap['__all__'][scopeKey] : null;
@@ -8432,7 +8432,7 @@ function TabAtivacao({
     title
   });
   const winLbl = winN === 0 ? 'D0' : `D0–D${winN}`; // rótulo da janela cumulativa
-  const winDen = winN + 1; // tamanho da janela (dias 0..N)
+  const winDen = winN + 4; // dias-apostou/online: janela [0, N+3] → divide por N+4 (D0 = 4 dias 0–3)
   const d0Heroes = [H(`% apostou · ${winLbl}`, T.pctBet, 'pct'), H(`Aposta média · ${winLbl}`, T.meanBet, 'brl'), H(`Aposta mediana · ${winLbl}`, T.medBet, 'brl'), H(`Rollover · ${winLbl}`, T.rollover, 'multiple')];
   const w4Heroes = [H('Vezes que apostou (média)', T.vezes, 'qty'), H('Vezes que apostou (mediana)', T.vezesMed, 'qty'), H(`Dias que apostou ÷ ${winDen}`, T.betDaysR, 'pct'), H(`Dias online ÷ ${winDen} · GA4`, ga4Full ? T.onlineR : null, 'pct')];
   const dm = s => {
@@ -8611,7 +8611,7 @@ function TabAtivacao({
     metric: m
   }))), /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
-  }, /*#__PURE__*/React.createElement("strong", null, "Vezes que apostou"), " = n\xBA de apostas na janela ", winLbl, " por jogador (a m\xE9dia \xE9 inflada por slots/whales \u2192 veja a mediana).", /*#__PURE__*/React.createElement("strong", null, " Dias que apostou \xF7 ", winDen), " = dias distintos em que apostou (0\u2013", winN, ") \xF7 ", winDen, ", m\xE9dia da coorte.", /*#__PURE__*/React.createElement("strong", null, " Dias online \xF7 ", winDen), " = dias distintos com ", /*#__PURE__*/React.createElement("strong", null, "login/sess\xE3o no GA4"), " (presen\xE7a real \u2014 abriu o app/site) na janela \xF7 ", winDen, ". Cobre ~99% das contas FTD e \xE9 ", /*#__PURE__*/React.createElement("strong", null, "confi\xE1vel de jun/26 pra frente"), " (o GA4 come\xE7ou ~mai/26 \u2192 janelas anteriores ficam sem online). Costuma ser maior que \"Dias apostou\" (abre mais dias do que aposta).", ga4Full ? '' : ' ⚠️ A janela do slicer é anterior a jun/26 (ou parcial) — o hero de online fica "—"; as semanas de jun+ ainda mostram.')), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("strong", null, "Vezes que apostou"), " = n\xBA de apostas na janela ", winLbl, " por jogador (a m\xE9dia \xE9 inflada por slots/whales \u2192 veja a mediana).", /*#__PURE__*/React.createElement("strong", null, " Dias que apostou \xF7 ", winDen), " = dias distintos em que apostou na janela ", /*#__PURE__*/React.createElement("strong", null, "0\u2013", winN + 3), " \xF7 ", winDen, ", m\xE9dia da coorte. ", /*#__PURE__*/React.createElement("em", null, "M\xE9trica de engajamento sempre olha ", winDen, " dias"), " (janela = sobre-janela + 3), pra n\xE3o degenerar em D0 (sen\xE3o viraria s\xF3 o \"% apostou D0\").", /*#__PURE__*/React.createElement("strong", null, " Dias online \xF7 ", winDen), " = dias distintos com ", /*#__PURE__*/React.createElement("strong", null, "login/sess\xE3o no GA4"), " (presen\xE7a real \u2014 abriu o app/site) na janela ", /*#__PURE__*/React.createElement("strong", null, "0\u2013", winN + 3), " \xF7 ", winDen, ", m\xE9dia da coorte. \xC9 ", /*#__PURE__*/React.createElement("strong", null, "% de dias online"), ", n\xE3o % de jogadores que logaram. Cobre ~99% das contas FTD e \xE9 ", /*#__PURE__*/React.createElement("strong", null, "confi\xE1vel de jun/26 pra frente"), " (o GA4 come\xE7ou ~mai/26 \u2192 janelas anteriores ficam sem online). Costuma ser maior que \"Dias apostou\" (abre mais dias do que aposta).", ga4Full ? '' : ' ⚠️ A janela do slicer é anterior a jun/26 (ou parcial) — o hero de online fica "—"; as semanas de jun+ ainda mostram.')), /*#__PURE__*/React.createElement("div", {
     className: "support"
   }, /*#__PURE__*/React.createElement("div", {
     className: "support-title"
@@ -8662,9 +8662,9 @@ function TabAtivacao({
   }, "Vezes (m\xE9d)"), /*#__PURE__*/React.createElement("th", {
     title: "Mediana do n\xBA de apostas na janela"
   }, "Vezes (med)"), /*#__PURE__*/React.createElement("th", {
-    title: "Dias distintos apostando \xF7 tamanho da janela, m\xE9dia"
+    title: "Dias distintos apostando na janela 0\u2013(N+3) \xF7 (N+4), m\xE9dia. Em D0 = 4 dias (0\u20133) \xF7 4 (m\xE9trica de engajamento, sempre olha \u22654 dias)."
   }, "Dias Apostou %"), /*#__PURE__*/React.createElement("th", {
-    title: "Dias distintos ONLINE (login/sess\xE3o no GA4) na janela \xF7 tamanho da janela, m\xE9dia. Cobre ~99% das contas FTD; confi\xE1vel de jun/26."
+    title: "% de dias distintos ONLINE (login/sess\xE3o no GA4) na janela 0\u2013(N+3) \xF7 (N+4), m\xE9dia \u2014 N\xC3O \xE9 % de jogadores que logaram. Em D0 = 4 dias (0\u20133) \xF7 4. Cobre ~99% das contas FTD; confi\xE1vel de jun/26."
   }, "Dias Online %"))), /*#__PURE__*/React.createElement("tbody", null, weeks.map((r, i) => /*#__PURE__*/React.createElement("tr", {
     key: i
   }, /*#__PURE__*/React.createElement("td", {

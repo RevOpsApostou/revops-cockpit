@@ -4208,7 +4208,7 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
         tot.oDays += o['onlineDays_' + winN] || 0; tot.oFtds += o.ftds || 0;
       });
     });
-    const denom = winN + 1;   // tamanho da janela (0..N inclusivo)
+    const denom = winN + 4;   // dias-apostou/online usam janela [0, N+3] (regra Luis) → denominador N+4
     const derive = (b, wk) => {
       const mrow = (scopeKey && medMap[wk] && medMap[wk][scopeKey]) ? medMap[wk][scopeKey] : null;
       const wkGa4 = wk === '__all__' ? ga4Full : (wk >= GA4_WEEK_MIN);   // gate por semana (esconde pré-GA4)
@@ -4249,7 +4249,7 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
       Object.keys(onlineMap[wk]).forEach(c => { const o = onlineMap[wk][c]; const b = cm[c] || (cm[c] = zero()); b.oDays += o['onlineDays_' + winN] || 0; b.oFtds += o.ftds || 0; hr.oDays += o['onlineDays_' + winN] || 0; hr.oFtds += o.ftds || 0; });
     });
     const mAll = medMap['__all__'] || {};
-    const denom = winN + 1;
+    const denom = winN + 4;   // online: janela [0, N+3] → denominador N+4
     const rows = Object.keys(cm).map(c => {
       const b = cm[c], md = mAll[c] || null;
       return {
@@ -4278,7 +4278,7 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
     : k === 'rollover' ? (houseRaw.depD0 ? houseRaw.turnD0 / houseRaw.depD0 : null)
     : k === 'medBet' ? (mAllTot ? mAllTot['med_' + winN] : null)
     : k === 'bonusDep' ? ((hasBonus && houseRaw.depD0) ? houseRaw.bonusD0 / houseRaw.depD0 : null)
-    : (houseRaw.oFtds ? houseRaw.oDays / ((winN + 1) * houseRaw.oFtds) : null);
+    : (houseRaw.oFtds ? houseRaw.oDays / ((winN + 4) * houseRaw.oFtds) : null);
   // Funil da JANELA: FTD → apostou (em 0..N) → apostou 2+ dias distintos (0..N). Contagens do backend (mesma
   // coorte/janela). No D0 (janela de 1 dia) o passo "2+ dias" não existe → funil de 2 passos.
   const scopeMrow = (scopeKey && medMap['__all__'] && medMap['__all__'][scopeKey]) ? medMap['__all__'][scopeKey] : null;
@@ -4287,7 +4287,7 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
     : { base: T.qtd, betD0: Math.round((T.qtd || 0) * (T.pctBet || 0)), bet2d: null };
   const H = (label, act, fmt, title) => ({ label, act, fmt, bp: null, m1: null, title });
   const winLbl = winN === 0 ? 'D0' : `D0–D${winN}`;   // rótulo da janela cumulativa
-  const winDen = winN + 1;                             // tamanho da janela (dias 0..N)
+  const winDen = winN + 4;                             // dias-apostou/online: janela [0, N+3] → divide por N+4 (D0 = 4 dias 0–3)
   const d0Heroes = [
     H(`% apostou · ${winLbl}`, T.pctBet, 'pct'),
     H(`Aposta média · ${winLbl}`, T.meanBet, 'brl'),
@@ -4381,8 +4381,8 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
         <div className="hero-grid">{w4Heroes.map((m, i) => <Hero key={i} metric={m} />)}</div>
         <div className="ch-note">
           <strong>Vezes que apostou</strong> = nº de apostas na janela {winLbl} por jogador (a média é inflada por slots/whales → veja a mediana).
-          <strong> Dias que apostou ÷ {winDen}</strong> = dias distintos em que apostou (0–{winN}) ÷ {winDen}, média da coorte.
-          <strong> Dias online ÷ {winDen}</strong> = dias distintos com <strong>login/sessão no GA4</strong> (presença real — abriu o app/site) na janela ÷ {winDen}. Cobre ~99% das contas FTD e é <strong>confiável de jun/26 pra frente</strong> (o GA4 começou ~mai/26 → janelas anteriores ficam sem online). Costuma ser maior que "Dias apostou" (abre mais dias do que aposta).{ga4Full ? '' : ' ⚠️ A janela do slicer é anterior a jun/26 (ou parcial) — o hero de online fica "—"; as semanas de jun+ ainda mostram.'}
+          <strong> Dias que apostou ÷ {winDen}</strong> = dias distintos em que apostou na janela <strong>0–{winN + 3}</strong> ÷ {winDen}, média da coorte. <em>Métrica de engajamento sempre olha {winDen} dias</em> (janela = sobre-janela + 3), pra não degenerar em D0 (senão viraria só o "% apostou D0").
+          <strong> Dias online ÷ {winDen}</strong> = dias distintos com <strong>login/sessão no GA4</strong> (presença real — abriu o app/site) na janela <strong>0–{winN + 3}</strong> ÷ {winDen}, média da coorte. É <strong>% de dias online</strong>, não % de jogadores que logaram. Cobre ~99% das contas FTD e é <strong>confiável de jun/26 pra frente</strong> (o GA4 começou ~mai/26 → janelas anteriores ficam sem online). Costuma ser maior que "Dias apostou" (abre mais dias do que aposta).{ga4Full ? '' : ' ⚠️ A janela do slicer é anterior a jun/26 (ou parcial) — o hero de online fica "—"; as semanas de jun+ ainda mostram.'}
         </div>
       </div>
       <div className="support">
@@ -4405,8 +4405,8 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
                 <th title="Bônus cash (saldo real) na janela ÷ Depósito — dependência de bônus (menor = melhor)">Dep. bônus</th>
                 <th title="Nº médio de apostas por jogador na janela">Vezes (méd)</th>
                 <th title="Mediana do nº de apostas na janela">Vezes (med)</th>
-                <th title="Dias distintos apostando ÷ tamanho da janela, média">Dias Apostou %</th>
-                <th title="Dias distintos ONLINE (login/sessão no GA4) na janela ÷ tamanho da janela, média. Cobre ~99% das contas FTD; confiável de jun/26.">Dias Online %</th>
+                <th title="Dias distintos apostando na janela 0–(N+3) ÷ (N+4), média. Em D0 = 4 dias (0–3) ÷ 4 (métrica de engajamento, sempre olha ≥4 dias).">Dias Apostou %</th>
+                <th title="% de dias distintos ONLINE (login/sessão no GA4) na janela 0–(N+3) ÷ (N+4), média — NÃO é % de jogadores que logaram. Em D0 = 4 dias (0–3) ÷ 4. Cobre ~99% das contas FTD; confiável de jun/26.">Dias Online %</th>
               </tr>
             </thead>
             <tbody>
