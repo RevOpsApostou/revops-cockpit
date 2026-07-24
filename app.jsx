@@ -3274,11 +3274,14 @@ function buildFarolGroups_(MM, f, range, useYtd) {
   const roasFtdCard = dressPlain(MM.roasFtd ? { ...MM.roasFtd, m1: roasFtdM1 != null ? roasFtdM1 : (MM.roasFtd.m1 != null ? MM.roasFtd.m1 : null) } : null);
   const roasM0M1 = div_(MM.depM0Total && MM.depM0Total.m1, MM.invest && MM.invest.m1);
   const roasDepM0Card = dressPlain(f.roasDepM0 ? { ...f.roasDepM0, m1: roasM0M1 != null ? roasM0M1 : (f.roasDepM0.m1 != null ? f.roasDepM0.m1 : null) } : null);
+  // Retenção agora rotula a BASE (Depósito) em cada card — deixa espaço p/ os cards de GGR virem depois na mesma
+  // seção. Relabel SÓ no Farol (não toca o label global do metric → a aba Retenções segue "Retenção M0→M1").
+  const relabelRet = (m, label) => (m ? { ...m, label } : m);
   return [
     { title: 'Aquisição', cards: [dress(MM.invest), dress(MM.ftdAmount), roasFtdCard, dressPlain(f.roasDepD0), dressPlain(f.cac), dressPlain(f.ticketFtd)] },
     { title: 'Depósito M0', cards: [dress(MM.depM0Total), roasDepM0Card] },
-    { title: 'Retenção', cards: [dressPlain(MM.retM0M1), dressPlain(MM.retM1M2), dressPlain(MM.retM3plus)] },
     { title: 'Volume & GGR', cards: [dress(MM.depTotal), dress(turnoverCard), dress(MM.ggr), dressPlain(MM.ggrPerDep), dressPlain(holdCard), rolloverCard, dressPlain(f.freespinDep), dressPlain(f.bonusDep)] },
+    { title: 'Retenção', cards: [dressPlain(relabelRet(MM.retM0M1, 'Depósito M0→M1')), dressPlain(relabelRet(MM.retM1M2, 'Depósito M1→M2')), dressPlain(relabelRet(MM.retM3plus, 'Depósito M3+'))] },
   ];
 }
 
@@ -3557,12 +3560,12 @@ function buildFarolExportGroups_(MM, f, monthlyClose, channels, chFilter, range,
       relabel(G['Depósito M0']['DEP M0 Total'], 'DEP M0 — Total'),
       G['Depósito M0']['ROAS Dep M0'],
     ] },
-    { title: 'Retenção', cards: [
-      G['Retenção']['Retenção M0→M1'], coh('↳ Retido M+1 (R$)', mca.m1, mcb.m1),
-      G['Retenção']['Retenção M1→M2'], coh('↳ Retido M+2 (R$)', mca.m2, mcb.m2),
-      G['Retenção']['Retenção M3+'],   coh('↳ Retido M3+ (R$)', mca.m3plus, mcb.m3plus),
-    ] },
     { title: 'Volume & GGR', cards: (groups.find(g => g.title === 'Volume & GGR') || {}).cards || [] },
+    { title: 'Retenção', cards: [
+      G['Retenção']['Depósito M0→M1'], coh('↳ Retido M+1 (R$)', mca.m1, mcb.m1),
+      G['Retenção']['Depósito M1→M2'], coh('↳ Retido M+2 (R$)', mca.m2, mcb.m2),
+      G['Retenção']['Depósito M3+'],   coh('↳ Retido M3+ (R$)', mca.m3plus, mcb.m3plus),
+    ] },
   ];
 }
 
