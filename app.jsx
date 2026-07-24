@@ -4315,9 +4315,6 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
     <td key="am">{fmtBRL(r.meanBet)}</td>,
     <td key="md">{fmtBRL(r.medBet)}</td>,
     <td key="ro" style={heat(r.rollover, rRoll)}>{fmtMultiple(r.rollover)}</td>,
-    <td key="bo">{fmtPct(r.bonusDep, 1)}</td>,
-    <td key="vz">{fmtQty(r.vezes)}</td>,
-    <td key="vm">{fmtQty(r.vezesMed)}</td>,
     <td key="bd">{fmtPct(r.betDaysR, 1)}</td>,
     <td key="on">{fmtPct(r.onlineR, 1)}</td>,
   ];
@@ -4402,9 +4399,6 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
                 <th title="Valor apostado ÷ Qtd FTD">Aposta Méd.</th>
                 <th title="Mediana do valor apostado na janela por jogador (por escopo)">Aposta Med.</th>
                 <th title="Valor apostado ÷ Depósito da janela">Rollover</th>
-                <th title="Bônus cash (saldo real) na janela ÷ Depósito — dependência de bônus (menor = melhor)">Dep. bônus</th>
-                <th title="Nº médio de apostas por jogador na janela">Vezes (méd)</th>
-                <th title="Mediana do nº de apostas na janela">Vezes (med)</th>
                 <th title="Dias distintos apostando na janela 0–(N+3) ÷ (N+4), média. Em D0 = 4 dias (0–3) ÷ 4 (métrica de engajamento, sempre olha ≥4 dias).">Dias Apostou %</th>
                 <th title="% de dias distintos ONLINE (login/sessão no GA4) na janela 0–(N+3) ÷ (N+4), média — NÃO é % de jogadores que logaram. Em D0 = 4 dias (0–3) ÷ 4. Cobre ~99% das contas FTD; confiável de jun/26.">Dias Online %</th>
               </tr>
