@@ -1480,12 +1480,17 @@ function Hero({
   metric,
   variant
 }) {
-  // Atingimento vs BP: maior=melhor → ACT/BP; custo (menor=melhor, ex. FreeSpins/Bonif) → BP/ACT.
+  // Duas leituras SEPARADAS do "vs BP":
+  //  • pct EXIBIDO = razão CRUA ACT/BP (o que o usuário lê: "82/91 = 90% do orçado") — NÃO inverte p/ custo.
+  //  • atingimento (só p/ a COR) = maior=melhor → ACT/BP; custo (menor=melhor: CAC/FreeSpins/Bonif) → BP/ACT.
+  //    Assim o número diz onde você está vs orçado (>100% = estourou) e a cor diz se isso é bom (custo abaixo do orçado = verde).
   const lb = !!metric.lowerBetter;
+  const ratioBp = v => v == null || metric.bp == null || metric.bp === 0 ? null : v / metric.bp;
   const attain = v => v == null || metric.bp == null || metric.bp === 0 || lb && v === 0 ? null : lb ? metric.bp / v : v / metric.bp;
   // Farol off enquanto BP pausado; ACT negativo (dado corrompido) também esconde.
-  const pct = !BP_FAROL_ON || metric.act != null && metric.act < 0 ? null : attain(metric.act);
-  const farol = farolFromPct(pct);
+  const gated = !BP_FAROL_ON || metric.act != null && metric.act < 0;
+  const pct = gated ? null : ratioBp(metric.act); // razão crua exibida (ACT/BP)
+  const farol = farolFromPct(gated ? null : attain(metric.act)); // cor pela qualidade (custo inverte)
   // Variante FAROL: valor à esquerda · BP/Trend/M-1 à direita · sparkline das 4 semanas na base (só cards de fluxo).
   if (variant === 'farol') {
     return /*#__PURE__*/React.createElement("div", {
