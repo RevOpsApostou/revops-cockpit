@@ -3306,7 +3306,50 @@ function applyFtdByRegister_(MM, f, ftdByRegister, chFilter) {
   };
 }
 
-function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter }) {
+// Re-anchora o BP dos cards de AQUISIÇÃO + DEP M0 do Farol para o cenário escolhido (BP/Conservador/Rolling),
+// vindo do plano por canal (payload.planScenarios). Reescopa por chFilter igual ao resto (canais selecionados →
+// soma; scope 'growth' → growthAgg; senão allAgg). Só mexe no .bp desses cards — o Hero recolore o farol e o %
+// sozinho a partir do novo bp. Retenção/GGR/Volume ficam intactos (a aba do plano não tem meta pra eles).
+const CENARIOS = [
+  { id: 'bp',      label: 'BP / meta',    color: '#378ADD' },
+  { id: 'conserv', label: 'Conservador',  color: '#F0997B' },
+  { id: 'rolling', label: 'Rolling',      color: '#9AA0A6' },
+];
+function applyScenarioBp_(M, farol, scenData, chFilter) {
+  if (!scenData) return { M, farol };
+  const KEYS = ['invest', 'ftd', 'ftdAmount', 'depD0', 'depM0'];
+  const byCh = scenData.byChannel || {};
+  const sel = chList_(chFilter);
+  let agg;
+  if (sel && sel.length) {
+    agg = {};
+    sel.forEach(ch => { const b = byCh[ch]; if (b) KEYS.forEach(k => { agg[k] = (agg[k] || 0) + (b[k] || 0); }); });
+  } else if (chFilter && chFilter.scope === 'growth') {
+    agg = scenData.growthAgg || {};
+  } else {
+    agg = scenData.allAgg || {};
+  }
+  const inv = agg.invest || 0, ftd = agg.ftd || 0, ftdAmt = agg.ftdAmount || 0, depD0 = agg.depD0 || 0, depM0 = agg.depM0 || 0;
+  if (!(inv > 0)) return { M, farol };   // cenário sem plano nesse escopo → mantém o BP atual (farol não muda)
+  const pos = (v) => (v != null && isFinite(v) && v !== 0) ? v : null;
+  const setBp = (m, v) => m ? { ...m, bp: pos(v) } : m;
+  const newM = { ...M,
+    invest:     setBp(M.invest,     inv),
+    ftdAmount:  setBp(M.ftdAmount,  ftdAmt),
+    ftdQty:     setBp(M.ftdQty,     ftd),
+    roasFtd:    setBp(M.roasFtd,    inv ? ftdAmt / inv : null),
+    depM0Total: setBp(M.depM0Total, depM0),
+  };
+  const newFarol = { ...farol,
+    cac:        setBp(farol.cac,        ftd ? inv / ftd : null),
+    ticketFtd:  setBp(farol.ticketFtd,  ftd ? ftdAmt / ftd : null),
+    roasDepD0:  setBp(farol.roasDepD0,  inv ? depD0 / inv : null),
+    roasDepM0:  setBp(farol.roasDepM0,  inv ? depM0 / inv : null),
+  };
+  return { M: newM, farol: newFarol };
+}
+
+function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios }) {
   // YTD é preset GLOBAL de data: a janela (appliedRange) já é abril→ontem, então usa o M/farol normais.
   // Só muda a comparação: SÓ vs BP — tira M-1 (mesma janela 1 mês atrás) e a projeção de fechamento, que
   // não fazem sentido num acumulado de vários meses.
@@ -3316,7 +3359,16 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter }) {
   const hasReg = !!(ftdByRegister && ftdByRegister.length);
   const active = byReg && hasReg;
   const src = active ? applyFtdByRegister_(M || {}, farol || {}, ftdByRegister, chFilter) : { MM: M || {}, f: farol || {} };
-  const groups = buildFarolGroups_(src.MM, src.f, range, useYtd);
+  // Cenário do plano (BP/Conservador/Rolling): re-anchora o BP dos cards de aquisição + Dep M0 (payload.planScenarios).
+  const [scen, setScen] = usePersistedState('rvops:farolScen', 'bp');
+  const scenAvail = {};
+  CENARIOS.forEach(c => { const s = planScenarios && planScenarios[c.id]; scenAvail[c.id] = !!(s && s.allAgg && s.allAgg.invest > 0); });
+  const hasScen = scenAvail.bp || scenAvail.conserv || scenAvail.rolling;
+  const activeScen = (hasScen && scenAvail[scen]) ? scen : 'bp';
+  const scenOn = hasScen && !!(planScenarios && planScenarios[activeScen]);
+  const ov = scenOn ? applyScenarioBp_(src.MM, src.f, planScenarios[activeScen], chFilter) : { M: src.MM, farol: src.f };
+  const groups = buildFarolGroups_(ov.M, ov.farol, range, useYtd);
+  const scenMeta = CENARIOS.find(c => c.id === activeScen) || CENARIOS[0];
   const rangeLbl = (range && range.from) ? `${fmtBR_(range.from)} → ${fmtBR_(range.to)}` : '';
   return (
     <React.Fragment>
@@ -3328,22 +3380,49 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter }) {
               ? <>YTD · acumulado desde abril · {rangeLbl} · variação vs BP</>
               : <>Visão consolidada — todos os indicadores em cards, variação vs M-1 e vs BP</>}
           </div>
+          {scenOn && activeScen !== 'bp' && (
+            <div className="subtitle" style={{ color: 'var(--accent-orange)', marginTop: 6, maxWidth: 720 }}>
+              Aquisição + Depósito M0 comparados vs plano <strong>{scenMeta.label}</strong> — as luzes e os deltas mudam pra esse cenário. Retenção, GGR e Volume seguem no BP (o plano por cenário não cobre esses).
+            </div>
+          )}
           {active && (
             <div className="subtitle" style={{ color: 'var(--accent-yellow)', marginTop: 6, maxWidth: 720 }}>
               Aquisição normalizada por <strong>data de cadastro</strong>: FTD Amount, ROAS FTD, CAC e Ticket contam FTDs de quem <em>registrou</em> na janela (não de quem deu FTD). ⚠️ o mês corrente é uma coorte <strong>maturando</strong> — quem registrou e ainda não deu FTD não conta, então o CAC começa alto e cai conforme matura (~30–45d).
             </div>
           )}
         </div>
-        <button
-          className={`preset-btn ${active ? 'active' : ''}`}
-          onClick={() => setByReg(v => !v)}
-          disabled={!hasReg}
-          title={hasReg
-            ? 'Aquisição: alterna FTD por data de FTD ↔ por data de cadastro (registro). Afeta FTD Amount, ROAS FTD, CAC e Ticket.'
-            : 'Requer o backend v34 (deploy pendente do clasp) — ainda não há dado de FTD por cadastro.'}
-        >
-          FTD por cadastro{!hasReg ? ' (pendente)' : ''}
-        </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
+          {hasScen && (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <span style={{ fontSize: 11, color: 'var(--text-muted, #888)', marginRight: 2 }}>cenário</span>
+              {CENARIOS.map(c => (
+                <button
+                  key={c.id}
+                  className={`preset-btn ${activeScen === c.id ? 'active' : ''}`}
+                  onClick={() => setScen(c.id)}
+                  disabled={!scenAvail[c.id]}
+                  title={scenAvail[c.id]
+                    ? `Compara aquisição + Dep M0 vs plano ${c.label}`
+                    : `Sem plano ${c.label} nesta janela`}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: c.color, display: 'inline-block' }} />
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            className={`preset-btn ${active ? 'active' : ''}`}
+            onClick={() => setByReg(v => !v)}
+            disabled={!hasReg}
+            title={hasReg
+              ? 'Aquisição: alterna FTD por data de FTD ↔ por data de cadastro (registro). Afeta FTD Amount, ROAS FTD, CAC e Ticket.'
+              : 'Requer o backend v34 (deploy pendente do clasp) — ainda não há dado de FTD por cadastro.'}
+          >
+            FTD por cadastro{!hasReg ? ' (pendente)' : ''}
+          </button>
+        </div>
       </div>
       {groups.map((g, i) => (
         <div className="support" key={i}>
@@ -5036,6 +5115,7 @@ function App({ user, onLogout, config }) {
     depM0Channels: MOCK_DEPM0_CHANNELS,
     rolloverMatrix: MOCK_ROLLOVER_MATRIX,
     bp: MOCK_BP,
+    planScenarios: null,       // plano de aquisição 3 cenários {bp,conserv,rolling} (aba DB Plan_Growth Mkt) — switch do Farol (só live/backend v42+)
     isLive: false,
     benchmark: null,           // benchmark.json (3 casas, Excel estático)
     benchmarkSameday: null,    // benchmark_sameday.json (só Lottu, coorte same-day)
@@ -5080,6 +5160,7 @@ function App({ user, onLogout, config }) {
           depM0Channels: payload.depM0Channels,
           rolloverMatrix: payload.rolloverMatrix,
           bp: payload.bp || null,
+          planScenarios: payload.planScenarios || null,
           isLive: true,
         }));
       })
@@ -5224,6 +5305,7 @@ function App({ user, onLogout, config }) {
     isLive: state.isLive,
     monthlyClose: state.monthlyClose,   // aba Monthly Close (house-level, segue scope do backend)
     ftdByRegister: state.ftdByRegister,  // FTDs por canal por data de cadastro — toggle no Farol (Aquisição)
+    planScenarios: state.planScenarios,  // plano 3 cenários (BP/Conservador/Rolling) — switch de cenário do Farol
     ytd,   // YTD ativo (preset global): Farol/Monthly Close suprimem M-1/trend e relabelam (a janela já é abril→ontem via appliedRange)
     allTabs: TABS, hiddenTabs, onSetTabHidden: setTabHidden,   // controle de visibilidade (Segurança)
   };
