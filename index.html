@@ -283,6 +283,26 @@
   .trend-line .trend-pct.amarelo { color: var(--warning); }
   .trend-line .trend-pct.vermelho { color: var(--negative); }
   .trend-line .trend-pct.cinza { color: var(--text-dim); }
+  /* Farol — variante do hero card: valor à esquerda, BP/Trend/M-1 à direita, sparkline das 4 semanas na base */
+  .hero-farol .hf-body { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .hero-farol .value { font-size: 34px; margin-bottom: 0; }
+  .hero-farol .hf-stats { text-align: right; font-size: 11px; color: var(--text-muted); display: flex; flex-direction: column; gap: 5px; padding-top: 3px; white-space: nowrap; }
+  .hero-farol .hf-stats .bp-label { color: var(--text-dim); }
+  .hero-farol .hf-stats .bp-val { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .hero-farol .hf-stats .pct { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .hero-farol .hf-stats .pct.verde { color: var(--positive); }
+  .hero-farol .hf-stats .pct.amarelo { color: var(--warning); }
+  .hero-farol .hf-stats .pct.vermelho { color: var(--negative); }
+  .hero-farol .hf-stats .pct.cinza { color: var(--text-dim); }
+  .hero-farol .hf-trend .trend-tag { color: var(--text-dim); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
+  .hero-farol .hf-trend .trend-val { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .hero-farol .hf-m1 .m1-val { color: var(--text-dim); font-weight: 600; }
+  /* Sparkline — linha neutra (branca) das 4 semanas fechadas + 1 ponto por semana + seta de direção branca na base */
+  .spark { position: relative; margin-top: 14px; padding-top: 12px; padding-bottom: 6px; border-top: 1px dashed var(--border); }
+  .spark-svg { width: 100%; height: 46px; display: block; }
+  .spark-line { stroke: #e8e8e8; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+  .spark-dot { fill: #f5f5f5; }
+  .spark-arrow { position: absolute; right: 0; bottom: -8px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 15px; color: var(--text); font-weight: 500; line-height: 1; letter-spacing: -2px; }
   /* Channel table */
   .table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
   /* Tabelas diárias longas (Safras, Ret.Faixa): scroll vertical próprio + cabeçalho/rodapé fixos.
@@ -1369,8 +1389,96 @@ const fmtVal = (n, fmt) => {
 
 // Farol LIGADO — o backend (Code.gs) manda payload.bp embutido (BP_DATA). ACT negativo ainda esconde.
 const BP_FAROL_ON = true;
+
+// Direção da série (4 semanas) via regressão linear: variação modelada ponta-a-ponta ÷ nível médio.
+// Banda de 3% pra "flat" não amplificar ruído. Nulls (semana sem dado) são ignorados (usa índice original).
+function sparkDir_(vals) {
+  const pts = [];
+  (vals || []).forEach((x, i) => {
+    if (x != null && isFinite(x)) pts.push([i, x]);
+  });
+  if (pts.length < 2) return 'flat';
+  const n = pts.length;
+  let sx = 0,
+    sy = 0,
+    sxx = 0,
+    sxy = 0;
+  pts.forEach(([x, y]) => {
+    sx += x;
+    sy += y;
+    sxx += x * x;
+    sxy += x * y;
+  });
+  const denom = n * sxx - sx * sx;
+  const slope = denom ? (n * sxy - sx * sy) / denom : 0;
+  const mean = sy / n;
+  const span = pts[pts.length - 1][0] - pts[0][0] || 1;
+  const rel = mean ? slope * span / Math.abs(mean) : 0; // variação relativa da reta no intervalo
+  if (rel > 0.03) return 'up';
+  if (rel < -0.03) return 'down';
+  return 'flat';
+}
+
+// Sparkline dos hero cards do Farol: linha NEUTRA (branca) das últimas 4 semanas fechadas, um ponto por
+// semana, + seta ↑↑/→→/↓↓ (direção) branca na base. Cor de status fica SÓ na bolinha do farol (de propósito).
+// Escala com amplitude mínima (~6% da média) pra série flat parecer flat, não amplificar ruído.
+function Sparkline({
+  values
+}) {
+  const raw = values || [];
+  const idx = [];
+  raw.forEach((v, i) => {
+    if (v != null && isFinite(v)) idx.push(i);
+  });
+  if (idx.length < 2) return null;
+  const n = raw.length,
+    W = 300,
+    H = 46,
+    padX = 5,
+    padTop = 8,
+    padBot = 8;
+  const xs = i => padX + (n > 1 ? i * ((W - 2 * padX) / (n - 1)) : W / 2);
+  const vals = idx.map(i => raw[i]);
+  const mn = Math.min.apply(null, vals),
+    mx = Math.max.apply(null, vals);
+  const mean = vals.reduce((a, b) => a + b, 0) / vals.length || 1;
+  const center = (mn + mx) / 2;
+  let half = Math.max((mx - mn) / 2, Math.abs(mean) * 0.06);
+  if (half <= 0) half = 1;
+  const lo = center - half,
+    hi = center + half;
+  const ys = v => H - padBot - (v - lo) / (hi - lo) * (H - padTop - padBot);
+  const pts = idx.map(i => [xs(i), ys(raw[i])]);
+  const d = pts.map((p, k) => (k ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+  const dir = sparkDir_(raw);
+  const arrow = dir === 'up' ? '↑↑' : dir === 'down' ? '↓↓' : '→→';
+  const dirLbl = dir === 'up' ? 'subindo' : dir === 'down' ? 'caindo' : 'estável';
+  return /*#__PURE__*/React.createElement("div", {
+    className: "spark",
+    title: `Últimas 4 semanas fechadas · ${dirLbl}`
+  }, /*#__PURE__*/React.createElement("svg", {
+    className: "spark-svg",
+    viewBox: `0 0 ${W} ${H}`,
+    preserveAspectRatio: "none"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: d,
+    className: "spark-line",
+    fill: "none",
+    vectorEffect: "non-scaling-stroke"
+  }), pts.map((p, k) => /*#__PURE__*/React.createElement("circle", {
+    key: k,
+    cx: p[0],
+    cy: p[1],
+    r: "3",
+    className: "spark-dot"
+  }))), /*#__PURE__*/React.createElement("span", {
+    className: "spark-arrow",
+    "aria-hidden": "true"
+  }, arrow));
+}
 function Hero({
-  metric
+  metric,
+  variant
 }) {
   // Atingimento vs BP: maior=melhor → ACT/BP; custo (menor=melhor, ex. FreeSpins/Bonif) → BP/ACT.
   const lb = !!metric.lowerBetter;
@@ -1378,6 +1486,46 @@ function Hero({
   // Farol off enquanto BP pausado; ACT negativo (dado corrompido) também esconde.
   const pct = !BP_FAROL_ON || metric.act != null && metric.act < 0 ? null : attain(metric.act);
   const farol = farolFromPct(pct);
+  // Variante FAROL: valor à esquerda · BP/Trend/M-1 à direita · sparkline das 4 semanas na base (só cards de fluxo).
+  if (variant === 'farol') {
+    return /*#__PURE__*/React.createElement("div", {
+      className: "hero hero-farol"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "head"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "label"
+    }, metric.label), /*#__PURE__*/React.createElement("span", {
+      className: `farol-dot ${farol}`,
+      title: `${fmtPct(pct)} do BP`
+    })), /*#__PURE__*/React.createElement("div", {
+      className: "hf-body"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "value"
+    }, fmtVal(metric.act, metric.fmt)), /*#__PURE__*/React.createElement("div", {
+      className: "hf-stats"
+    }, pct != null && /*#__PURE__*/React.createElement("div", {
+      className: "hf-bp"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "bp-label"
+    }, "BP"), " ", /*#__PURE__*/React.createElement("span", {
+      className: "bp-val"
+    }, fmtVal(metric.bp, metric.fmt)), ' ', /*#__PURE__*/React.createElement("span", {
+      className: `pct ${farol}`
+    }, fmtPct(pct, 0))), metric.trend != null && /*#__PURE__*/React.createElement("div", {
+      className: "hf-trend",
+      title: "Proje\xE7\xE3o de fechamento do m\xEAs = MTD \xD7 (dias do m\xEAs \xF7 dias decorridos)"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "trend-tag"
+    }, "\u2197 Trend"), " ", /*#__PURE__*/React.createElement("span", {
+      className: "trend-val"
+    }, fmtVal(metric.trend, metric.fmt))), metric.m1 != null && metric.act != null && /*#__PURE__*/React.createElement("div", {
+      className: "hf-m1"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "m1-val"
+    }, fmtVal(metric.m1, metric.fmt)), ' ', "m\xEAs anterior"))), metric.spark ? /*#__PURE__*/React.createElement(Sparkline, {
+      values: metric.spark
+    }) : null);
+  }
   return /*#__PURE__*/React.createElement("div", {
     className: "hero"
   }, /*#__PURE__*/React.createElement("div", {
@@ -6463,7 +6611,78 @@ function monthCloseMult_(range) {
 // Multiplicador = ggrTrend/ggr do backend (mesma base do card "Close Trend GGR"), com fallback pra janela.
 // Monta os 4 grupos de cards do Farol — cada card já com trend (projeção de fechamento) e M-1 ajustado.
 // FONTE ÚNICA: a aba Farol E o export de Excel consomem daqui, pra os números nunca divergirem.
-function buildFarolGroups_(MM, f, range, useYtd) {
+// Agrega o payload.farolSpark (semana × canal, 2 fontes) no escopo do chFilter e deriva a SÉRIE das 4 semanas
+// por KPI (mesmas fórmulas dos cards). Só métricas de FLUXO — Dep M0/ROAS Dep M0/Retenção não entram (maturação).
+// Retorna { __weeks:[...], invest:[4], roasFtd:[4], depTotal:[4], ... } com nulls onde a semana não tem dado.
+function buildFarolSpark_(spark, chFilter) {
+  if (!spark || !spark.weeks || !spark.weeks.length) return null;
+  const sel = chList_(chFilter);
+  const inSel = sel.length ? ch => sel.indexOf(ch) >= 0 : chFilter && chFilter.scope === 'growth' ? ch => isGrowthCh_(ch) : () => true;
+  const weeks = spark.weeks,
+    wIdx = {};
+  weeks.forEach((w, i) => {
+    wIdx[w] = i;
+  });
+  const P = weeks.map(() => ({
+    spend: 0,
+    ftdQty: 0,
+    ftdAmount: 0,
+    depD0: 0,
+    n: 0
+  }));
+  const H = weeks.map(() => ({
+    dep: 0,
+    qtdDep: 0,
+    ngr: 0,
+    turnover: 0,
+    bonus: 0,
+    freespin: 0,
+    n: 0
+  }));
+  (spark.perf || []).forEach(r => {
+    const i = wIdx[r.week];
+    if (i == null || !inSel(r.channel)) return;
+    const a = P[i];
+    a.spend += r.spend || 0;
+    a.ftdQty += r.ftdQty || 0;
+    a.ftdAmount += r.ftdAmount || 0;
+    a.depD0 += r.depD0 || 0;
+    a.n++;
+  });
+  (spark.house || []).forEach(r => {
+    const i = wIdx[r.week];
+    if (i == null || !inSel(r.channel)) return;
+    const a = H[i];
+    a.dep += r.dep || 0;
+    a.qtdDep += r.qtdDep || 0;
+    a.ngr += r.ngr || 0;
+    a.turnover += r.turnover || 0;
+    a.bonus += r.bonus || 0;
+    a.freespin += r.freespin || 0;
+    a.n++;
+  });
+  const arr = fn => weeks.map((_, i) => fn(P[i], H[i]));
+  return {
+    __weeks: weeks,
+    invest: arr(p => p.n ? p.spend : null),
+    ftdAmount: arr(p => p.n ? p.ftdAmount : null),
+    ftdQty: arr(p => p.n ? p.ftdQty : null),
+    roasFtd: arr(p => p.spend ? p.ftdAmount / p.spend : null),
+    cac: arr(p => p.ftdQty ? p.spend / p.ftdQty : null),
+    ticketFtd: arr(p => p.ftdQty ? p.ftdAmount / p.ftdQty : null),
+    roasDepD0: arr(p => p.spend ? p.depD0 / p.spend : null),
+    depTotal: arr((p, h) => h.n ? h.dep : null),
+    qtdDep: arr((p, h) => h.n ? h.qtdDep : null),
+    ggr: arr((p, h) => h.n ? h.ngr : null),
+    turnover: arr((p, h) => h.n ? h.turnover : null),
+    ggrPerDep: arr((p, h) => h.dep ? h.ngr / h.dep : null),
+    hold: arr((p, h) => h.turnover ? h.ngr / h.turnover : null),
+    rollover: arr((p, h) => h.dep ? h.turnover / h.dep : null),
+    freespinDep: arr((p, h) => h.dep ? h.freespin / h.dep : null),
+    bonusDep: arr((p, h) => h.dep ? h.bonus / h.dep : null)
+  };
+}
+function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
   const mult = useYtd ? null : monthCloseMult_(range);
   const tf = mult == null ? null : MM.ggr && MM.ggr.act && MM.ggrTrend && MM.ggrTrend.act != null && MM.ggr.act !== 0 ? MM.ggrTrend.act / MM.ggr.act : mult;
   const proj = m => m && tf != null && m.act != null ? m.act * tf : null; // valor projetado de fechamento
@@ -6525,15 +6744,26 @@ function buildFarolGroups_(MM, f, range, useYtd) {
     ...m,
     label
   } : m;
+  // Pendura a série das 4 semanas (.spark) no card, quando há dado — só cards de FLUXO recebem chave em sparkByKey.
+  // Dep M0/ROAS Dep M0/Retenção NÃO têm chave (maturação de coorte) → seguem sem linha, com o header novo.
+  const SP = sparkByKey || {};
+  const ws = (m, key) => {
+    if (!m) return m;
+    const s = SP[key];
+    return s && s.some(v => v != null && isFinite(v)) ? {
+      ...m,
+      spark: s
+    } : m;
+  };
   return [{
     title: 'Aquisição',
-    cards: [dress(MM.invest), dress(MM.ftdAmount), roasFtdCard, dressPlain(f.roasDepD0), dressPlain(f.cac), dressPlain(f.ticketFtd)]
+    cards: [ws(dress(MM.invest), 'invest'), ws(dress(MM.ftdAmount), 'ftdAmount'), ws(roasFtdCard, 'roasFtd'), ws(dressPlain(f.roasDepD0), 'roasDepD0'), ws(dressPlain(f.cac), 'cac'), ws(dressPlain(f.ticketFtd), 'ticketFtd')]
   }, {
     title: 'Depósito M0',
     cards: [dress(MM.depM0Total), roasDepM0Card]
   }, {
     title: 'Volume & GGR',
-    cards: [dress(MM.depTotal), dress(turnoverCard), dress(MM.ggr), dressPlain(MM.ggrPerDep), dressPlain(holdCard), rolloverCard, dressPlain(f.freespinDep), dressPlain(f.bonusDep)]
+    cards: [ws(dress(MM.depTotal), 'depTotal'), ws(dress(turnoverCard), 'turnover'), ws(dress(MM.ggr), 'ggr'), ws(dressPlain(MM.ggrPerDep), 'ggrPerDep'), ws(dressPlain(holdCard), 'hold'), ws(rolloverCard, 'rollover'), ws(dressPlain(f.freespinDep), 'freespinDep'), ws(dressPlain(f.bonusDep), 'bonusDep')]
   }, {
     title: 'Retenção',
     cards: [dressPlain(relabelRet(MM.retM0M1, 'Depósito M0→M1')), dressPlain(relabelRet(MM.retM1M2, 'Depósito M1→M2')), dressPlain(relabelRet(MM.retM3plus, 'Depósito M3+'))]
@@ -6701,6 +6931,7 @@ function TabFarol({
   ftdByRegister,
   chFilter,
   planScenarios,
+  farolSpark,
   user
 }) {
   // YTD é preset GLOBAL de data: a janela (appliedRange) já é abril→ontem, então usa o M/farol normais.
@@ -6739,7 +6970,9 @@ function TabFarol({
     M: src.MM,
     farol: src.f
   };
-  const groups = buildFarolGroups_(ov.M, ov.farol, range, useYtd);
+  // Série das 4 semanas fechadas por KPI (ACT — independe de cenário/BP), reescopada no chFilter. Nulls onde não há dado.
+  const sparkByKey = React.useMemo(() => buildFarolSpark_(farolSpark, chFilter), [farolSpark, chFilter]);
+  const groups = buildFarolGroups_(ov.M, ov.farol, range, useYtd, sparkByKey);
   const scenMeta = CENARIOS.find(c => c.id === activeScen) || CENARIOS[0];
   const rangeLbl = range && range.from ? `${fmtBR_(range.from)} → ${fmtBR_(range.to)}` : '';
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
@@ -6812,7 +7045,8 @@ function TabFarol({
     className: "hero-grid"
   }, g.cards.map((m, j) => m ? /*#__PURE__*/React.createElement(Hero, {
     key: j,
-    metric: m
+    metric: m,
+    variant: "farol"
   }) : null)))));
 }
 
@@ -9614,6 +9848,8 @@ function App({
     bp: MOCK_BP,
     planScenarios: null,
     // plano de aquisição 3 cenários {bp,conserv,rolling} (aba DB Plan_Growth Mkt) — switch do Farol (só live/backend v42+)
+    farolSpark: null,
+    // últimas 4 semanas fechadas por KPI (semana × canal) — linha de tendência nos hero cards do Farol (só live/backend v50+)
     isLive: false,
     benchmark: null,
     // benchmark.json (3 casas, Excel estático)
@@ -9667,6 +9903,7 @@ function App({
         rolloverMatrix: payload.rolloverMatrix,
         bp: payload.bp || null,
         planScenarios: payload.planScenarios || null,
+        farolSpark: payload.farolSpark || null,
         isLive: true
       }));
     }).catch(err => {
@@ -9866,6 +10103,8 @@ function App({
     // FTDs por canal por data de cadastro — toggle no Farol (Aquisição)
     planScenarios: state.planScenarios,
     // plano 3 cenários (BP/Conservador/Rolling) — switch de cenário do Farol
+    farolSpark: state.farolSpark,
+    // últimas 4 semanas fechadas por KPI — linha de tendência nos hero cards do Farol
     ytd,
     // YTD ativo (preset global): Farol/Monthly Close suprimem M-1/trend e relabelam (a janela já é abril→ontem via appliedRange)
     allTabs: TABS,

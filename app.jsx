@@ -285,7 +285,57 @@ const fmtVal = (n, fmt) => {
 // Farol LIGADO — o backend (Code.gs) manda payload.bp embutido (BP_DATA). ACT negativo ainda esconde.
 const BP_FAROL_ON = true;
 
-function Hero({ metric }) {
+// Direção da série (4 semanas) via regressão linear: variação modelada ponta-a-ponta ÷ nível médio.
+// Banda de 3% pra "flat" não amplificar ruído. Nulls (semana sem dado) são ignorados (usa índice original).
+function sparkDir_(vals) {
+  const pts = [];
+  (vals || []).forEach((x, i) => { if (x != null && isFinite(x)) pts.push([i, x]); });
+  if (pts.length < 2) return 'flat';
+  const n = pts.length; let sx = 0, sy = 0, sxx = 0, sxy = 0;
+  pts.forEach(([x, y]) => { sx += x; sy += y; sxx += x * x; sxy += x * y; });
+  const denom = n * sxx - sx * sx;
+  const slope = denom ? (n * sxy - sx * sy) / denom : 0;
+  const mean = sy / n;
+  const span = (pts[pts.length - 1][0] - pts[0][0]) || 1;
+  const rel = mean ? (slope * span) / Math.abs(mean) : 0;   // variação relativa da reta no intervalo
+  if (rel > 0.03) return 'up';
+  if (rel < -0.03) return 'down';
+  return 'flat';
+}
+
+// Sparkline dos hero cards do Farol: linha NEUTRA (branca) das últimas 4 semanas fechadas, um ponto por
+// semana, + seta ↑↑/→→/↓↓ (direção) branca na base. Cor de status fica SÓ na bolinha do farol (de propósito).
+// Escala com amplitude mínima (~6% da média) pra série flat parecer flat, não amplificar ruído.
+function Sparkline({ values }) {
+  const raw = values || [];
+  const idx = []; raw.forEach((v, i) => { if (v != null && isFinite(v)) idx.push(i); });
+  if (idx.length < 2) return null;
+  const n = raw.length, W = 300, H = 46, padX = 5, padTop = 8, padBot = 8;
+  const xs = (i) => padX + (n > 1 ? i * ((W - 2 * padX) / (n - 1)) : (W / 2));
+  const vals = idx.map(i => raw[i]);
+  const mn = Math.min.apply(null, vals), mx = Math.max.apply(null, vals);
+  const mean = vals.reduce((a, b) => a + b, 0) / vals.length || 1;
+  const center = (mn + mx) / 2;
+  let half = Math.max((mx - mn) / 2, Math.abs(mean) * 0.06); if (half <= 0) half = 1;
+  const lo = center - half, hi = center + half;
+  const ys = (v) => (H - padBot) - ((v - lo) / (hi - lo)) * (H - padTop - padBot);
+  const pts = idx.map(i => [xs(i), ys(raw[i])]);
+  const d = pts.map((p, k) => (k ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+  const dir = sparkDir_(raw);
+  const arrow = dir === 'up' ? '↑↑' : dir === 'down' ? '↓↓' : '→→';
+  const dirLbl = dir === 'up' ? 'subindo' : dir === 'down' ? 'caindo' : 'estável';
+  return (
+    <div className="spark" title={`Últimas 4 semanas fechadas · ${dirLbl}`}>
+      <svg className="spark-svg" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+        <path d={d} className="spark-line" fill="none" vectorEffect="non-scaling-stroke" />
+        {pts.map((p, k) => <circle key={k} cx={p[0]} cy={p[1]} r="3" className="spark-dot" />)}
+      </svg>
+      <span className="spark-arrow" aria-hidden="true">{arrow}</span>
+    </div>
+  );
+}
+
+function Hero({ metric, variant }) {
   // Atingimento vs BP: maior=melhor → ACT/BP; custo (menor=melhor, ex. FreeSpins/Bonif) → BP/ACT.
   const lb = !!metric.lowerBetter;
   const attain = (v) => (v == null || metric.bp == null || metric.bp === 0 || (lb && v === 0)) ? null
@@ -293,6 +343,37 @@ function Hero({ metric }) {
   // Farol off enquanto BP pausado; ACT negativo (dado corrompido) também esconde.
   const pct = (!BP_FAROL_ON || (metric.act != null && metric.act < 0)) ? null : attain(metric.act);
   const farol = farolFromPct(pct);
+  // Variante FAROL: valor à esquerda · BP/Trend/M-1 à direita · sparkline das 4 semanas na base (só cards de fluxo).
+  if (variant === 'farol') {
+    return (
+      <div className="hero hero-farol">
+        <div className="head">
+          <div className="label">{metric.label}</div>
+          <span className={`farol-dot ${farol}`} title={`${fmtPct(pct)} do BP`} />
+        </div>
+        <div className="hf-body">
+          <div className="value">{fmtVal(metric.act, metric.fmt)}</div>
+          <div className="hf-stats">
+            {pct != null && (
+              <div className="hf-bp">
+                <span className="bp-label">BP</span> <span className="bp-val">{fmtVal(metric.bp, metric.fmt)}</span>{' '}
+                <span className={`pct ${farol}`}>{fmtPct(pct, 0)}</span>
+              </div>
+            )}
+            {metric.trend != null && (
+              <div className="hf-trend" title="Projeção de fechamento do mês = MTD × (dias do mês ÷ dias decorridos)">
+                <span className="trend-tag">↗ Trend</span> <span className="trend-val">{fmtVal(metric.trend, metric.fmt)}</span>
+              </div>
+            )}
+            {metric.m1 != null && metric.act != null && (
+              <div className="hf-m1"><span className="m1-val">{fmtVal(metric.m1, metric.fmt)}</span>{' '}mês anterior</div>
+            )}
+          </div>
+        </div>
+        {metric.spark ? <Sparkline values={metric.spark} /> : null}
+      </div>
+    );
+  }
   return (
     <div className="hero">
       <div className="head">
@@ -3250,7 +3331,45 @@ function monthCloseMult_(range) {
 // Multiplicador = ggrTrend/ggr do backend (mesma base do card "Close Trend GGR"), com fallback pra janela.
 // Monta os 4 grupos de cards do Farol — cada card já com trend (projeção de fechamento) e M-1 ajustado.
 // FONTE ÚNICA: a aba Farol E o export de Excel consomem daqui, pra os números nunca divergirem.
-function buildFarolGroups_(MM, f, range, useYtd) {
+// Agrega o payload.farolSpark (semana × canal, 2 fontes) no escopo do chFilter e deriva a SÉRIE das 4 semanas
+// por KPI (mesmas fórmulas dos cards). Só métricas de FLUXO — Dep M0/ROAS Dep M0/Retenção não entram (maturação).
+// Retorna { __weeks:[...], invest:[4], roasFtd:[4], depTotal:[4], ... } com nulls onde a semana não tem dado.
+function buildFarolSpark_(spark, chFilter) {
+  if (!spark || !spark.weeks || !spark.weeks.length) return null;
+  const sel = chList_(chFilter);
+  const inSel = sel.length ? (ch) => sel.indexOf(ch) >= 0
+    : (chFilter && chFilter.scope === 'growth') ? (ch) => isGrowthCh_(ch) : () => true;
+  const weeks = spark.weeks, wIdx = {};
+  weeks.forEach((w, i) => { wIdx[w] = i; });
+  const P = weeks.map(() => ({ spend: 0, ftdQty: 0, ftdAmount: 0, depD0: 0, n: 0 }));
+  const H = weeks.map(() => ({ dep: 0, qtdDep: 0, ngr: 0, turnover: 0, bonus: 0, freespin: 0, n: 0 }));
+  (spark.perf || []).forEach(r => { const i = wIdx[r.week]; if (i == null || !inSel(r.channel)) return; const a = P[i];
+    a.spend += r.spend || 0; a.ftdQty += r.ftdQty || 0; a.ftdAmount += r.ftdAmount || 0; a.depD0 += r.depD0 || 0; a.n++; });
+  (spark.house || []).forEach(r => { const i = wIdx[r.week]; if (i == null || !inSel(r.channel)) return; const a = H[i];
+    a.dep += r.dep || 0; a.qtdDep += r.qtdDep || 0; a.ngr += r.ngr || 0; a.turnover += r.turnover || 0; a.bonus += r.bonus || 0; a.freespin += r.freespin || 0; a.n++; });
+  const arr = (fn) => weeks.map((_, i) => fn(P[i], H[i]));
+  return {
+    __weeks: weeks,
+    invest:      arr((p) => p.n ? p.spend : null),
+    ftdAmount:   arr((p) => p.n ? p.ftdAmount : null),
+    ftdQty:      arr((p) => p.n ? p.ftdQty : null),
+    roasFtd:     arr((p) => p.spend ? p.ftdAmount / p.spend : null),
+    cac:         arr((p) => p.ftdQty ? p.spend / p.ftdQty : null),
+    ticketFtd:   arr((p) => p.ftdQty ? p.ftdAmount / p.ftdQty : null),
+    roasDepD0:   arr((p) => p.spend ? p.depD0 / p.spend : null),
+    depTotal:    arr((p, h) => h.n ? h.dep : null),
+    qtdDep:      arr((p, h) => h.n ? h.qtdDep : null),
+    ggr:         arr((p, h) => h.n ? h.ngr : null),
+    turnover:    arr((p, h) => h.n ? h.turnover : null),
+    ggrPerDep:   arr((p, h) => h.dep ? h.ngr / h.dep : null),
+    hold:        arr((p, h) => h.turnover ? h.ngr / h.turnover : null),
+    rollover:    arr((p, h) => h.dep ? h.turnover / h.dep : null),
+    freespinDep: arr((p, h) => h.dep ? h.freespin / h.dep : null),
+    bonusDep:    arr((p, h) => h.dep ? h.bonus / h.dep : null),
+  };
+}
+
+function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
   const mult = useYtd ? null : monthCloseMult_(range);
   const tf = mult == null ? null
     : (MM.ggr && MM.ggr.act && MM.ggrTrend && MM.ggrTrend.act != null && MM.ggr.act !== 0)
@@ -3277,10 +3396,14 @@ function buildFarolGroups_(MM, f, range, useYtd) {
   // Retenção agora rotula a BASE (Depósito) em cada card — deixa espaço p/ os cards de GGR virem depois na mesma
   // seção. Relabel SÓ no Farol (não toca o label global do metric → a aba Retenções segue "Retenção M0→M1").
   const relabelRet = (m, label) => (m ? { ...m, label } : m);
+  // Pendura a série das 4 semanas (.spark) no card, quando há dado — só cards de FLUXO recebem chave em sparkByKey.
+  // Dep M0/ROAS Dep M0/Retenção NÃO têm chave (maturação de coorte) → seguem sem linha, com o header novo.
+  const SP = sparkByKey || {};
+  const ws = (m, key) => { if (!m) return m; const s = SP[key]; return (s && s.some(v => v != null && isFinite(v))) ? { ...m, spark: s } : m; };
   return [
-    { title: 'Aquisição', cards: [dress(MM.invest), dress(MM.ftdAmount), roasFtdCard, dressPlain(f.roasDepD0), dressPlain(f.cac), dressPlain(f.ticketFtd)] },
+    { title: 'Aquisição', cards: [ws(dress(MM.invest), 'invest'), ws(dress(MM.ftdAmount), 'ftdAmount'), ws(roasFtdCard, 'roasFtd'), ws(dressPlain(f.roasDepD0), 'roasDepD0'), ws(dressPlain(f.cac), 'cac'), ws(dressPlain(f.ticketFtd), 'ticketFtd')] },
     { title: 'Depósito M0', cards: [dress(MM.depM0Total), roasDepM0Card] },
-    { title: 'Volume & GGR', cards: [dress(MM.depTotal), dress(turnoverCard), dress(MM.ggr), dressPlain(MM.ggrPerDep), dressPlain(holdCard), rolloverCard, dressPlain(f.freespinDep), dressPlain(f.bonusDep)] },
+    { title: 'Volume & GGR', cards: [ws(dress(MM.depTotal), 'depTotal'), ws(dress(turnoverCard), 'turnover'), ws(dress(MM.ggr), 'ggr'), ws(dressPlain(MM.ggrPerDep), 'ggrPerDep'), ws(dressPlain(holdCard), 'hold'), ws(rolloverCard, 'rollover'), ws(dressPlain(f.freespinDep), 'freespinDep'), ws(dressPlain(f.bonusDep), 'bonusDep')] },
     { title: 'Retenção', cards: [dressPlain(relabelRet(MM.retM0M1, 'Depósito M0→M1')), dressPlain(relabelRet(MM.retM1M2, 'Depósito M1→M2')), dressPlain(relabelRet(MM.retM3plus, 'Depósito M3+'))] },
   ];
 }
@@ -3379,7 +3502,7 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
   return { M: newM, farol: newFarol };
 }
 
-function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios, user }) {
+function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios, farolSpark, user }) {
   // YTD é preset GLOBAL de data: a janela (appliedRange) já é abril→ontem, então usa o M/farol normais.
   // Só muda a comparação: SÓ vs BP — tira M-1 (mesma janela 1 mês atrás) e a projeção de fechamento, que
   // não fazem sentido num acumulado de vários meses.
@@ -3407,7 +3530,9 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
   const activeScen = (scenAllowed(scen) && scenAvail[scen]) ? scen : firstScen;   // cenário persistido só vale se permitido
   const scenOn = hasScen && !!(planScenarios && planScenarios[activeScen]);
   const ov = scenOn ? applyScenarioBp_(src.MM, src.f, planScenarios[activeScen], chFilter) : { M: src.MM, farol: src.f };
-  const groups = buildFarolGroups_(ov.M, ov.farol, range, useYtd);
+  // Série das 4 semanas fechadas por KPI (ACT — independe de cenário/BP), reescopada no chFilter. Nulls onde não há dado.
+  const sparkByKey = React.useMemo(() => buildFarolSpark_(farolSpark, chFilter), [farolSpark, chFilter]);
+  const groups = buildFarolGroups_(ov.M, ov.farol, range, useYtd, sparkByKey);
   const scenMeta = CENARIOS.find(c => c.id === activeScen) || CENARIOS[0];
   const rangeLbl = (range && range.from) ? `${fmtBR_(range.from)} → ${fmtBR_(range.to)}` : '';
   return (
@@ -3468,7 +3593,7 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
         <div className="support" key={i}>
           <div className="support-title">{g.title}</div>
           <div className="hero-grid">
-            {g.cards.map((m, j) => (m ? <Hero key={j} metric={m} /> : null))}
+            {g.cards.map((m, j) => (m ? <Hero key={j} metric={m} variant="farol" /> : null))}
           </div>
         </div>
       ))}
@@ -5023,6 +5148,7 @@ function App({ user, onLogout, config }) {
     rolloverMatrix: MOCK_ROLLOVER_MATRIX,
     bp: MOCK_BP,
     planScenarios: null,       // plano de aquisição 3 cenários {bp,conserv,rolling} (aba DB Plan_Growth Mkt) — switch do Farol (só live/backend v42+)
+    farolSpark: null,          // últimas 4 semanas fechadas por KPI (semana × canal) — linha de tendência nos hero cards do Farol (só live/backend v50+)
     isLive: false,
     benchmark: null,           // benchmark.json (3 casas, Excel estático)
     benchmarkSameday: null,    // benchmark_sameday.json (só Lottu, coorte same-day)
@@ -5068,6 +5194,7 @@ function App({ user, onLogout, config }) {
           rolloverMatrix: payload.rolloverMatrix,
           bp: payload.bp || null,
           planScenarios: payload.planScenarios || null,
+          farolSpark: payload.farolSpark || null,
           isLive: true,
         }));
       })
@@ -5213,6 +5340,7 @@ function App({ user, onLogout, config }) {
     monthlyClose: state.monthlyClose,   // aba Monthly Close (house-level, segue scope do backend)
     ftdByRegister: state.ftdByRegister,  // FTDs por canal por data de cadastro — toggle no Farol (Aquisição)
     planScenarios: state.planScenarios,  // plano 3 cenários (BP/Conservador/Rolling) — switch de cenário do Farol
+    farolSpark: state.farolSpark,  // últimas 4 semanas fechadas por KPI — linha de tendência nos hero cards do Farol
     ytd,   // YTD ativo (preset global): Farol/Monthly Close suprimem M-1/trend e relabelam (a janela já é abril→ontem via appliedRange)
     allTabs: TABS, hiddenTabs, onSetTabHidden: setTabHidden,   // controle de visibilidade (Segurança)
   };
