@@ -8300,6 +8300,8 @@ function TabAtivacao({
         pctBet: b.qtd ? b.betD0 / b.qtd : null,
         meanBet: b.qtd ? b.turnD0 / b.qtd : null,
         medBet: mrow ? mrow['med_' + winN] : null,
+        rollMed: mrow && mrow['medDep_' + winN] ? mrow['med_' + winN] / mrow['medDep_' + winN] : null,
+        // rollover mediano = aposta mediana ÷ depósito mediano
         rollover: b.depD0 ? b.turnD0 / b.depD0 : null,
         bonusDep: hasBonus && b.depD0 ? b.bonusD0 / b.depD0 : null,
         vezes: b.qtd ? b.bet4d / b.qtd : null,
@@ -8450,7 +8452,8 @@ function TabAtivacao({
     };
   };
   const rPct = rng('pctBet'),
-    rRoll = rng('rollover');
+    rRoll = rng('rollover'),
+    rRollMed = rng('rollMed');
   const heat = (v, r) => ({
     background: heatBg_(v, r.min, r.max)
   });
@@ -8470,6 +8473,9 @@ function TabAtivacao({
     key: "ro",
     style: heat(r.rollover, rRoll)
   }, fmtMultiple(r.rollover)), /*#__PURE__*/React.createElement("td", {
+    key: "rm",
+    style: heat(r.rollMed, rRollMed)
+  }, fmtMultiple(r.rollMed)), /*#__PURE__*/React.createElement("td", {
     key: "bd"
   }, fmtPct(r.betDaysR, 1)), /*#__PURE__*/React.createElement("td", {
     key: "on"
@@ -8648,8 +8654,10 @@ function TabAtivacao({
   }, "Aposta M\xE9d."), /*#__PURE__*/React.createElement("th", {
     title: "Mediana do valor apostado na janela por jogador (por escopo)"
   }, "Aposta Med."), /*#__PURE__*/React.createElement("th", {
-    title: "Valor apostado \xF7 Dep\xF3sito da janela"
+    title: "Valor apostado \xF7 Dep\xF3sito da janela (agregado da casa)"
   }, "Rollover"), /*#__PURE__*/React.createElement("th", {
+    title: "Aposta mediana \xF7 Dep\xF3sito mediano \u2014 rollover do jogador t\xEDpico (robusto a whale)"
+  }, "Rollover Med"), /*#__PURE__*/React.createElement("th", {
     title: "Dias distintos apostando na janela 0\u2013(N+3) \xF7 (N+4), m\xE9dia. Em D0 = 4 dias (0\u20133) \xF7 4 (m\xE9trica de engajamento, sempre olha \u22654 dias)."
   }, "Dias Apostou %"), /*#__PURE__*/React.createElement("th", {
     title: "% de dias distintos ONLINE (login/sess\xE3o no GA4) na janela 0\u2013(N+3) \xF7 (N+4), m\xE9dia \u2014 N\xC3O \xE9 % de jogadores que logaram. Em D0 = 4 dias (0\u20133) \xF7 4. Cobre ~99% das contas FTD; confi\xE1vel de jun/26."

@@ -4217,6 +4217,7 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
         pctBet: b.qtd ? b.betD0 / b.qtd : null,
         meanBet: b.qtd ? b.turnD0 / b.qtd : null,
         medBet: mrow ? mrow['med_' + winN] : null,
+        rollMed: (mrow && mrow['medDep_' + winN]) ? mrow['med_' + winN] / mrow['medDep_' + winN] : null,   // rollover mediano = aposta mediana ÷ depósito mediano
         rollover: b.depD0 ? b.turnD0 / b.depD0 : null,
         bonusDep: (hasBonus && b.depD0) ? b.bonusD0 / b.depD0 : null,
         vezes: b.qtd ? b.bet4d / b.qtd : null,
@@ -4302,7 +4303,7 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
   ];
   const dm = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); return m ? weekLabel_(s) : String(s); };
   const rng = (key) => { const v = weeks.map(x => x[key]).filter(x => x != null && !isNaN(x)); return v.length ? { min: Math.min(...v), max: Math.max(...v) } : { min: 0, max: 1 }; };
-  const rPct = rng('pctBet'), rRoll = rng('rollover');
+  const rPct = rng('pctBet'), rRoll = rng('rollover'), rRollMed = rng('rollMed');
   const heat = (v, r) => ({ background: heatBg_(v, r.min, r.max) });
   const medNote = scopeKey == null
     ? ' Mediana/quartis indisponíveis para combinação de 2+ canais (só Total, Growth ou 1 canal) — mostra "—".'
@@ -4315,6 +4316,7 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
     <td key="am">{fmtBRL(r.meanBet)}</td>,
     <td key="md">{fmtBRL(r.medBet)}</td>,
     <td key="ro" style={heat(r.rollover, rRoll)}>{fmtMultiple(r.rollover)}</td>,
+    <td key="rm" style={heat(r.rollMed, rRollMed)}>{fmtMultiple(r.rollMed)}</td>,
     <td key="bd">{fmtPct(r.betDaysR, 1)}</td>,
     <td key="on">{fmtPct(r.onlineR, 1)}</td>,
   ];
@@ -4398,7 +4400,8 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
                 <th title="% dos FTDs que apostaram saldo real (valor apostado > 0) na janela selecionada">% Apostou</th>
                 <th title="Valor apostado ÷ Qtd FTD">Aposta Méd.</th>
                 <th title="Mediana do valor apostado na janela por jogador (por escopo)">Aposta Med.</th>
-                <th title="Valor apostado ÷ Depósito da janela">Rollover</th>
+                <th title="Valor apostado ÷ Depósito da janela (agregado da casa)">Rollover</th>
+                <th title="Aposta mediana ÷ Depósito mediano — rollover do jogador típico (robusto a whale)">Rollover Med</th>
                 <th title="Dias distintos apostando na janela 0–(N+3) ÷ (N+4), média. Em D0 = 4 dias (0–3) ÷ 4 (métrica de engajamento, sempre olha ≥4 dias).">Dias Apostou %</th>
                 <th title="% de dias distintos ONLINE (login/sessão no GA4) na janela 0–(N+3) ÷ (N+4), média — NÃO é % de jogadores que logaram. Em D0 = 4 dias (0–3) ÷ 4. Cobre ~99% das contas FTD; confiável de jun/26.">Dias Online %</th>
               </tr>
