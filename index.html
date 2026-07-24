@@ -8433,7 +8433,7 @@ function TabAtivacao({
   });
   const winLbl = winN === 0 ? 'D0' : `D0–D${winN}`; // rótulo da janela cumulativa
   const winDen = winN + 1; // tamanho da janela (dias 0..N)
-  const d0Heroes = [H(`% apostou · ${winLbl}`, T.pctBet, 'pct'), H(`Turnover · ${winLbl} (Σ)`, T.turnD0, 'brl'), H(`Aposta média · ${winLbl}`, T.meanBet, 'brl'), H(`Aposta mediana · ${winLbl}`, T.medBet, 'brl'), H(`Rollover · ${winLbl}`, T.rollover, 'multiple'), H(`Dep. de bônus · ${winLbl}`, hasBonus ? T.bonusDep : null, 'pct')];
+  const d0Heroes = [H(`% apostou · ${winLbl}`, T.pctBet, 'pct'), H(`Aposta média · ${winLbl}`, T.meanBet, 'brl'), H(`Aposta mediana · ${winLbl}`, T.medBet, 'brl'), H(`Rollover · ${winLbl}`, T.rollover, 'multiple')];
   const w4Heroes = [H('Vezes que apostou (média)', T.vezes, 'qty'), H('Vezes que apostou (mediana)', T.vezesMed, 'qty'), H(`Dias que apostou ÷ ${winDen}`, T.betDaysR, 'pct'), H(`Dias online ÷ ${winDen} · GA4`, ga4Full ? T.onlineR : null, 'pct')];
   const dm = s => {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s));
@@ -8547,7 +8547,7 @@ function TabAtivacao({
     metric: m
   }))), /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
-  }, "M\xE9tricas na ", /*#__PURE__*/React.createElement("strong", null, "janela ", winLbl), " (dias 0 a ", winN, " acumulados desde o FTD). ", /*#__PURE__*/React.createElement("strong", null, "% apostou"), " = FTDs com turnover > 0 na janela \xF7 Qtd FTD. ", /*#__PURE__*/React.createElement("strong", null, "Turnover"), " = \u03A3 valor apostado (casino+esporte+loteria) na janela.", /*#__PURE__*/React.createElement("strong", null, " Aposta m\xE9dia"), " = Turnover \xF7 Qtd FTD; ", /*#__PURE__*/React.createElement("strong", null, "mediana"), " = valor t\xEDpico por jogador (robusta a whale \u2014 a m\xE9dia \xE9 muito puxada por poucos grandes apostadores).", /*#__PURE__*/React.createElement("strong", null, " Rollover"), " = Turnover \xF7 Dep\xF3sito da janela (quantas vezes o dep\xF3sito foi apostado).", /*#__PURE__*/React.createElement("strong", null, " Dep. de b\xF4nus"), " = b\xF4nus cash em ", /*#__PURE__*/React.createElement("strong", null, "saldo real"), " (a mesma bonifica\xE7\xE3o do NGR real) concedido na janela \xF7 Dep\xF3sito \u2014 ", /*#__PURE__*/React.createElement("strong", null, "quanto de b\xF4nus a casa deu pra cada real depositado ativar"), " (menor = melhor). \"Apostou\" usa o turnover total \u2014 n\xE3o h\xE1 split real\xD7b\xF4nus na aposta em si (o b\xF4nus \xE9 fatia pequena do turnover).", medNote)), /*#__PURE__*/React.createElement("div", {
+  }, "M\xE9tricas na ", /*#__PURE__*/React.createElement("strong", null, "janela ", winLbl), " (dias 0 a ", winN, " acumulados desde o FTD). ", /*#__PURE__*/React.createElement("strong", null, "% apostou"), " = FTDs com turnover > 0 na janela \xF7 Qtd FTD. ", /*#__PURE__*/React.createElement("strong", null, "Turnover"), " = \u03A3 valor apostado (casino+esporte+loteria) na janela.", /*#__PURE__*/React.createElement("strong", null, " Aposta m\xE9dia"), " = Turnover \xF7 Qtd FTD; ", /*#__PURE__*/React.createElement("strong", null, "mediana"), " = valor t\xEDpico por jogador (robusta a whale \u2014 a m\xE9dia \xE9 muito puxada por poucos grandes apostadores).", /*#__PURE__*/React.createElement("strong", null, " Rollover"), " = Turnover \xF7 Dep\xF3sito da janela (quantas vezes o dep\xF3sito foi apostado).", medNote)), /*#__PURE__*/React.createElement("div", {
     className: "ativ-two-col"
   }, /*#__PURE__*/React.createElement("div", {
     className: "support"

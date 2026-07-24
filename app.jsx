@@ -4290,11 +4290,9 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
   const winDen = winN + 1;                             // tamanho da janela (dias 0..N)
   const d0Heroes = [
     H(`% apostou · ${winLbl}`, T.pctBet, 'pct'),
-    H(`Turnover · ${winLbl} (Σ)`, T.turnD0, 'brl'),
     H(`Aposta média · ${winLbl}`, T.meanBet, 'brl'),
     H(`Aposta mediana · ${winLbl}`, T.medBet, 'brl'),
     H(`Rollover · ${winLbl}`, T.rollover, 'multiple'),
-    H(`Dep. de bônus · ${winLbl}`, hasBonus ? T.bonusDep : null, 'pct'),
   ];
   const w4Heroes = [
     H('Vezes que apostou (média)', T.vezes, 'qty'),
@@ -4352,8 +4350,7 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
         <div className="ch-note">
           Métricas na <strong>janela {winLbl}</strong> (dias 0 a {winN} acumulados desde o FTD). <strong>% apostou</strong> = FTDs com turnover &gt; 0 na janela ÷ Qtd FTD. <strong>Turnover</strong> = Σ valor apostado (casino+esporte+loteria) na janela.
           <strong> Aposta média</strong> = Turnover ÷ Qtd FTD; <strong>mediana</strong> = valor típico por jogador (robusta a whale — a média é muito puxada por poucos grandes apostadores).
-          <strong> Rollover</strong> = Turnover ÷ Depósito da janela (quantas vezes o depósito foi apostado).
-          <strong> Dep. de bônus</strong> = bônus cash em <strong>saldo real</strong> (a mesma bonificação do NGR real) concedido na janela ÷ Depósito — <strong>quanto de bônus a casa deu pra cada real depositado ativar</strong> (menor = melhor). "Apostou" usa o turnover total — não há split real×bônus na aposta em si (o bônus é fatia pequena do turnover).{medNote}
+          <strong> Rollover</strong> = Turnover ÷ Depósito da janela (quantas vezes o depósito foi apostado).{medNote}
         </div>
       </div>
       <div className="ativ-two-col">
