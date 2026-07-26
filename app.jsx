@@ -375,8 +375,8 @@ function Hero({ metric, variant }) {
             )}
             {/* Peso da safra no GGR do período — diz quanto a métrica deste card importa no resultado. */}
             {metric.share != null && (
-              <div className="hf-share" title={`Participação desta safra no GGR do período: Σ GGR da safra ÷ Σ GGR de todas as safras, no escopo de canal atual (as 4 safras somam 100%).${metric.shareM1 != null ? ` Mesma janela do mês anterior: ${fmtPct(metric.shareM1, 0)}.` : ''}`}>
-                <span className="share-val">{fmtPct(metric.share, 0)}</span>{' '}do GGR
+              <div className="hf-share" title={`Participação desta safra no ${metric.shareUnit || 'GGR'} do período: Σ ${metric.shareUnit || 'GGR'} da safra ÷ Σ ${metric.shareUnit || 'GGR'} de todas as safras, no escopo de canal atual (as 4 safras somam 100%). Segue o NUMERADOR da métrica deste card.${metric.shareM1 != null ? ` Mesma janela do mês anterior: ${fmtPct(metric.shareM1, 0)}.` : ''}`}>
+                <span className="share-val">{fmtPct(metric.share, 0)}</span>{' '}do {metric.shareUnit || 'GGR'}
               </div>
             )}
           </div>
@@ -4631,13 +4631,18 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
   // (o ggrSafra só cobre contas com FTD e trava o bucket em 3, então diverge ~3% do GGR total).
   // Vai nos DOIS cards da safra de propósito: o share é o PESO do número que você está lendo —
   // um hold de 3,8% numa safra que é 2% do GGR não vale o mesmo que numa que é 40%.
+  // REGRA: a participação segue o NUMERADOR da métrica do card. GGR/Dep e Hold têm GGR em cima →
+  // composição do GGR. Rollover tem turnover em cima → composição do TURNOVER. Assim o share sempre
+  // responde "quanto deste numerador vem desta safra", em vez de misturar duas grandezas no mesmo card.
   const SAFRA_BK = [['m0', 'M0'], ['m1', 'M1'], ['m2', 'M2'], ['m3plus', 'M3+']];
-  const bkArr = {}; let ggrAll = 0, ggrAllL = 0;
+  const bkArr = {}; let ggrAll = 0, ggrAllL = 0, turnAll = 0, turnAllL = 0;
   SAFRA_BK.forEach(([bk]) => {
     const arr = filterChannelList_((ggrSafra && ggrSafra[bk]) || [], filter);
     bkArr[bk] = arr;
-    ggrAll  += arr.reduce((a, c) => a + (c.ggr || 0), 0);
-    ggrAllL += arr.reduce((a, c) => a + (c.ggrM1 || 0), 0);
+    ggrAll   += arr.reduce((a, c) => a + (c.ggr || 0), 0);
+    ggrAllL  += arr.reduce((a, c) => a + (c.ggrM1 || 0), 0);
+    turnAll  += arr.reduce((a, c) => a + (c.turnover || 0), 0);
+    turnAllL += arr.reduce((a, c) => a + (c.turnoverM1 || 0), 0);
   });
   const safraMargem = {};
   SAFRA_BK.forEach(([bk, lbl]) => {
@@ -4646,13 +4651,16 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
     const on = arr.length > 0;
     const ggr = S('ggr'), dep = S('dep'), turn = S('turnover');
     const ggrL = S('ggrM1'), depL = S('depM1'), turnL = S('turnoverM1');
-    const share  = (on && ggrAll  > 0) ? ggr / ggrAll   : null;
-    const shareL = (on && ggrAllL > 0) ? ggrL / ggrAllL : null;
-    const withShare = (m) => (share == null ? m : { ...m, share, shareM1: shareL });
-    safraMargem['ggrDep_' + bk] = withShare(mk(`GGR/Dep ${lbl}`, 'pct', on ? div(ggr, dep) : null, null, on ? div(ggrL, depL) : null));
-    safraMargem['hold_' + bk]   = withShare(mk(`Hold ${lbl}`,    'pct', on ? div(ggr, turn) : null, null, on ? div(ggrL, turnL) : null));
+    const shareG  = (on && ggrAll   > 0) ? ggr / ggrAll    : null;
+    const shareGL = (on && ggrAllL  > 0) ? ggrL / ggrAllL  : null;
+    const shareT  = (on && turnAll  > 0) ? turn / turnAll  : null;
+    const shareTL = (on && turnAllL > 0) ? turnL / turnAllL : null;
+    const wShare = (m, sh, shL, unit) => (sh == null ? m : { ...m, share: sh, shareM1: shL, shareUnit: unit });
+    safraMargem['ggrDep_' + bk] = wShare(mk(`GGR/Dep ${lbl}`, 'pct', on ? div(ggr, dep) : null, null, on ? div(ggrL, depL) : null), shareG, shareGL, 'GGR');
+    safraMargem['hold_' + bk]   = wShare(mk(`Hold ${lbl}`,    'pct', on ? div(ggr, turn) : null, null, on ? div(ggrL, turnL) : null), shareG, shareGL, 'GGR');
     // Rollover da safra = turnover ÷ depósito (mesma definição do card da casa, recortada por idade).
-    safraMargem['roll_' + bk]   = withShare(mk(`Rollover ${lbl}`, 'multiple', on ? div(turn, dep) : null, null, on ? div(turnL, depL) : null));
+    // Share = composição do TURNOVER (o numerador daqui), não do GGR.
+    safraMargem['roll_' + bk]   = wShare(mk(`Rollover ${lbl}`, 'multiple', on ? div(turn, dep) : null, null, on ? div(turnL, depL) : null), shareT, shareTL, 'turnover');
   });
 
   const bpM = (bp && bp.month) || null;
