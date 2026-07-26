@@ -3975,7 +3975,10 @@ function RetMultChart({
   let xLabels = [],
     series = [],
     isoKeys = [];
-  const ftdOf = r => (r.qtd || 0) * (r.ftdMedio || 0); // peso (Σ valor de FTD do período) p/ a média móvel ponderada
+  // Peso da média móvel = DENOMINADOR do multiplicador ativo (Σ FTD$ na base FTD · Σ D0$ na base D0).
+  // Tem que ser o mesmo denominador da razão: só assim a MA da janela = razão pooled Σacc ÷ Σbase.
+  // Com peso de FTD$ numa razão /D0 a MA vira média ponderada com peso errado (viés silencioso).
+  const ftdOf = r => (r.qtd || 0) * ((base === 'd0' ? r.d0Medio : r.ftdMedio) || 0);
   if (seriesBy === 'mult') {
     const agg = aggRetFaixaBench_(matRows, chFilter, faixaSel, mode, effGran, null, dataMax, null, grupoSel); // dim = período
     xLabels = agg.rows.map(r => dmLabel(r.date));
@@ -4031,11 +4034,12 @@ function RetMultChart({
   // [d−N+1, d] = Σ(mult×ftd) ÷ Σftd — NÃO é média das razões diárias (que distorce em dia de baixo volume).
   // A MA é sempre calculada em DIAS (effGran='day'); o EIXO X segue o toggle: se Semanal, colapsa depois em
   // semanas (cada semana = valor da MA no ÚLTIMO dia dela). Aplica ANTES do recorte (usa o histórico de N+30 dias).
-  if (maDays > 0 && !cohort) {
+  const maEff = maDays > 0 && !cohort ? maDays : 0; // Coorte 30d NÃO suaviza (janela já é fechada)
+  if (maEff > 0) {
     series = series.map(s => {
       const nv = isoKeys.map((k, i) => {
         if (k == null) return null;
-        const lo = isoAddDays_(k, -(maDays - 1));
+        const lo = isoAddDays_(k, -(maEff - 1));
         let num = 0,
           den = 0,
           any = false;
@@ -4280,7 +4284,7 @@ function RetMultChart({
     });
     return d.trim();
   };
-  const yTitle = `${maDays > 0 ? `Mult ${effMetric}/${bLbl} · MM ${maDays}d` : `Mult ${effMetric}/${bLbl}`}${isLog ? ' · log' : ''}`;
+  const yTitle = `${maEff > 0 ? `Mult ${effMetric}/${bLbl} · MM ${maEff}d` : `Mult ${effMetric}/${bLbl}`}${isLog ? ' · log' : ''}`;
   // Tooltip custom (hover): linha 1 = O QUE é (multiplicador OU canal/faixa+multiplicador); linha 2 = PERÍODO · valor.
   const tipHead = s => seriesBy === 'mult' ? `${s.name}/${bLbl}` : `${s.name} · Mult ${effMetric}/${bLbl}`;
   const tipSub = (i, v) => `${gran === 'week' ? 'Semana de ' : ''}${xLabels[i]} · ${fmtMultiple(v)}`;
@@ -4435,11 +4439,15 @@ function RetMultChart({
     }, l2));
   })())), /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
-  }, /*#__PURE__*/React.createElement("strong", null, cohort ? `Coorte de ${cohortDays} dias — mesma base/janela da tabela (só coortes fechadas)` : `Janela: ${gran === 'week' ? 'últimas 8 semanas' : '30 dias corridos'} terminando na ÚLTIMA safra MADURA${matCutId ? ` do ${matCutId}` : ''}${matCutISO ? ` (até ${dmLabel(matCutISO)})` : ''} — coortes ainda imaturas são cortadas${gran === 'week' ? ' (a semana mais recente entra com suas coortes já maduras)' : ''}`), ". Eixo X = ", /*#__PURE__*/React.createElement("strong", null, gran === 'week' ? 'semana' : 'dia', " de FTD"), "; ", seriesBy === 'mult' ? /*#__PURE__*/React.createElement(React.Fragment, null, "evolu\xE7\xE3o do ", /*#__PURE__*/React.createElement("strong", null, "multiplicador ", effMetric, "/", bLbl)) : /*#__PURE__*/React.createElement(React.Fragment, null, "uma linha por ", /*#__PURE__*/React.createElement("strong", null, seriesBy === 'canal' ? 'canal' : 'faixa de FTD'), " (multiplicador ", effMetric, "/", bLbl, ")"), ". Cada ponto = m\xE9dia ponderada (\u03A3/\u03A3) do KPI no per\xEDodo. Segue canal/faixa/modo/same-day/M0.", busy ? ' · carregando…' : '', err ? ' · erro' : '', maDays > 0 && !cohort && /*#__PURE__*/React.createElement(React.Fragment, null, ' ', /*#__PURE__*/React.createElement("em", {
+  }, /*#__PURE__*/React.createElement("strong", null, cohort ? `Coorte de ${cohortDays} dias — mesma base/janela da tabela (só coortes fechadas)` : `Janela: ${gran === 'week' ? 'últimas 8 semanas' : '30 dias corridos'} terminando na ÚLTIMA safra MADURA${matCutId ? ` do ${matCutId}` : ''}${matCutISO ? ` (até ${dmLabel(matCutISO)})` : ''} — coortes ainda imaturas são cortadas${gran === 'week' ? ' (a semana mais recente entra com suas coortes já maduras)' : ''}`), ". Eixo X = ", /*#__PURE__*/React.createElement("strong", null, gran === 'week' ? 'semana' : 'dia', " de FTD"), "; ", seriesBy === 'mult' ? /*#__PURE__*/React.createElement(React.Fragment, null, "evolu\xE7\xE3o do ", /*#__PURE__*/React.createElement("strong", null, "multiplicador ", effMetric, "/", bLbl)) : /*#__PURE__*/React.createElement(React.Fragment, null, "uma linha por ", /*#__PURE__*/React.createElement("strong", null, seriesBy === 'canal' ? 'canal' : 'faixa de FTD'), " (multiplicador ", effMetric, "/", bLbl, ")"), ". Cada ponto = m\xE9dia ponderada (\u03A3/\u03A3) do KPI no per\xEDodo. Segue canal/faixa/modo/same-day/M0.", busy ? ' · carregando…' : '', err ? ' · erro' : '', maEff > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, ' ', /*#__PURE__*/React.createElement("em", {
     style: {
       color: 'var(--text-dim)'
     }
-  }, "M\xE9dia m\xF3vel de ", maDays, " dias: janela deslizante ponderada (\u03A3 mult\xD7FTD \xF7 \u03A3 FTD) dos \xFAltimos ", maDays, " dias, calculada em dias e ", gran === 'week' ? 'amostrada por semana (valor no último dia da semana)' : 'plotada por dia', " \u2014 segue o toggle Di\xE1rio/Semanal e suaviza o ru\xEDdo.")), !cohort && /*#__PURE__*/React.createElement(React.Fragment, null, ' ', /*#__PURE__*/React.createElement("em", null, "Maturidade: o multiplicador s\xF3 entra depois de a coorte ter os dias p/ fechar a janela (D0=0 \xB7 D1=1 \xB7 D7=7 \xB7 D14=14 \xB7 D30=30 dias ap\xF3s o FTD)."))));
+  }, "M\xE9dia m\xF3vel de ", maEff, " dias: janela deslizante ponderada pelo DENOMINADOR ativo (\u03A3 mult\xD7", bLbl, "$ \xF7 \u03A3 ", bLbl, "$ = a pr\xF3pria raz\xE3o pooled da janela) dos \xFAltimos ", maEff, " dias, calculada em dias e ", gran === 'week' ? 'amostrada por semana (valor no último dia da semana)' : 'plotada por dia', " \u2014 segue o toggle Di\xE1rio/Semanal e suaviza o ru\xEDdo. \xC9 uma janela TRAILING (s\xF3 passado): uma virada real aparece com ~", Math.ceil(maEff / 2), " dias de atraso, somados ao corte de maturidade acima.", maEff > 7 && gran === 'week' ? ' Com MM > 7d no Semanal, semanas vizinhas dividem parte da janela — a linha fica mais "tendenciosa" do que o dado.' : '')), maDays > 0 && cohort && /*#__PURE__*/React.createElement(React.Fragment, null, ' ', /*#__PURE__*/React.createElement("em", {
+    style: {
+      color: 'var(--accent-yellow)'
+    }
+  }, "M\xE9dia m\xF3vel n\xE3o se aplica na Coorte ", cohortDays, "d (a janela de cada safra j\xE1 \xE9 fechada) \u2014 o seletor fica inerte aqui.")), !cohort && /*#__PURE__*/React.createElement(React.Fragment, null, ' ', /*#__PURE__*/React.createElement("em", null, "Maturidade: o multiplicador s\xF3 entra depois de a coorte ter os dias p/ fechar a janela (D0=0 \xB7 D1=1 \xB7 D7=7 \xB7 D14=14 \xB7 D30=30 dias ap\xF3s o FTD)."))));
 }
 function TabRetencaoFaixa({
   retencaoFaixa,
