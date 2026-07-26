@@ -1751,7 +1751,7 @@ function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, d
   const grpArr = Array.isArray(grupoSel) ? grupoSel : [];   // [] = todos os grupos (filtro de grupo de risco)
   const selGr = (g) => grpArr.length === 0 || grpArr.indexOf(g || 'sem grupo') >= 0;
   const keys = ['qtd','ftd','d0','cd1','vd1','vd4','cw1','vw1','cw2','vw2','vd30','cm0','vm0','ggrM0'];
-  const zero = () => { const o = {}; keys.forEach(k => o[k] = 0); o._esp = 0; o._espFtd = 0; o._rwMin = null; o._rwMax = null; return o; };
+  const zero = () => { const o = {}; keys.forEach(k => o[k] = 0); o._esp = 0; o._espFtd = 0; o._espD0 = 0; o._rwMin = null; o._rwMax = null; return o; };
   const weekly = gran === 'week';
   // Chave de agrupamento da tabela: período (dia/semana · default) OU por canal OU por faixa — toggle
   // "Ver por" na aba, p/ comparação rápida. Métricas re-agregadas das mesmas bases aditivas (não é média das %).
@@ -1775,13 +1775,15 @@ function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, d
         const e = (cv[age] > 0) ? realized * cv[rw] / cv[age] : realized;
         by[b]._esp += e; tot._esp += e;
         by[b]._espFtd += (r.ftd || 0); tot._espFtd += (r.ftd || 0);   // FTD$ só das linhas COM curva (denominador do esperado)
+        by[b]._espD0 += (r.d0 || 0); tot._espD0 += (r.d0 || 0);       // idem em D0$ — denominador do esperado no toggle "sobre D0"
         [by[b], tot].forEach(o => { o._rwMin = o._rwMin == null ? rw : Math.min(o._rwMin, rw); o._rwMax = o._rwMax == null ? rw : Math.max(o._rwMax, rw); });
       }
     }
   });
   const fin = (b, label, key) => Object.assign(
     { date: label, _key: key || null, ggrM0: b.ggrM0, m0PerPlayer: b.qtd ? (b.d0 + b.vm0) / b.qtd : null,
-      m0Esp: (b._espFtd > 0) ? b._esp / b._espFtd : null, m0EspAmt: (b._espFtd > 0) ? b._esp : null, rwMin: b._rwMin, rwMax: b._rwMax },
+      m0Esp: (b._espFtd > 0) ? b._esp / b._espFtd : null, m0EspD0: (b._espD0 > 0) ? b._esp / b._espD0 : null,
+      m0EspAmt: (b._espFtd > 0) ? b._esp : null, rwMin: b._rwMin, rwMax: b._rwMax },
     benchMetrics_(b, mode));
   // período/faixa: chave ISO/prefixo ordinal ordenam sozinhos · canal: maior FTD$ primeiro (comparação)
   const ks = Object.keys(by).sort((dim === 'canal' || dim === 'campanha') ? (a, b) => (by[b].ftd || 0) - (by[a].ftd || 0) : undefined);
@@ -1789,9 +1791,17 @@ function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, d
 }
 
 // Colunas de multiplicador da Ret. Faixa. base 'ftd' (padrão) = acúmulo (incl. D0) ÷ FTD, começando no D0.
-// base 'd1' (toggle) = acúmulo ÷ NÍVEL D1 (D0 + dep do dia 1): D0 sai, D1 vira a base (=1,00x). mL = label do M0.
+// base 'd0' (toggle da aba) = acúmulo ÷ DEPÓSITO D0: o D0 é a âncora (=1,00x, omitido), então a 1ª coluna é D1/D0.
+// base 'd1' = acúmulo ÷ NÍVEL D1 (D0 + dep do dia 1): D0 sai, D1 vira a base (=1,00x). mL = label do M0.
 function retMultCols_(base, mL) {
   const M = mL || 'M0';
+  if (base === 'd0') return [
+    { key: 'd1', label: 'Mult D1/D0', get: r => r.multD1D0, tip: '(D0 + dia 1) ÷ depósito do D0. O D0/D0 (=1,00x) é omitido por ser constante.' },
+    { key: 'd4', label: 'Mult D4/D0', get: r => r.multD4D0, tip: '(D0 + dias 1–4) ÷ depósito do D0.' },
+    { key: 'w1', label: 'Mult W1/D0', get: r => r.multW1D0, tip: '(D0 + dias 1–7) ÷ depósito do D0.' },
+    { key: 'w2', label: 'Mult W2/D0', get: r => r.multW2D0, tip: '(D0 + dias 1–14) ÷ depósito do D0.' },
+    { key: 'm0', label: `Mult ${M}/D0`, get: r => r.multM0D0, tip: `(D0 + ${M}) ÷ depósito do D0.` },
+  ];
   if (base === 'd1') return [
     { key: 'd1', label: 'Mult D1/D1', get: r => r.multD1D1, tip: 'Nível D1 (D0 + dep do dia 1) ÷ ele mesmo = 1,00x (âncora da base D1).' },
     { key: 'd4', label: 'Mult D4/D1', get: r => r.multD4D1, tip: '(D0 + dias 1–4) ÷ nível D1.' },
@@ -1816,11 +1826,15 @@ function RetFaixaTable({ data, dateLabel, m0Label, base }) {
   // Coluna "M0 Esp." = M0/FTD ESPERADO no fechamento do mês = Σ FTD$ × G(runway) ÷ FTD$ (vem pronto do
   // aggregador em r.m0Esp). G = curva histórica de desenvolvimento por escopo; runway = dias até o fim do
   // mês. null (—) na Coorte 30d ou em canal sem curva robusta (ex. Kwai). Escopo, same-day e por canal: OK.
+  // Segue a base do toggle: sobre FTD divide o esperado por Σ FTD$; sobre D0, por Σ D0$ (mesmo numerador).
+  const espBase = base === 'd0' ? 'D0' : 'FTD';   // 'd1' não tem esperado próprio → cai no denominador FTD$
+  const espOf = (r) => base === 'd0' ? r.m0EspD0 : r.m0Esp;
   const espCell = (r) => {
-    if (r.m0Esp == null) return <td key="esp" style={{ color: 'var(--text-muted)' }}>—</td>;
+    const v = espOf(r);
+    if (v == null) return <td key="esp" style={{ color: 'var(--text-muted)' }}>—</td>;
     const rw = (r.rwMin != null && r.rwMax != null) ? (r.rwMin === r.rwMax ? `${r.rwMax}` : `${r.rwMax}→${r.rwMin}`) : '—';
-    const tip = `M0/FTD esperado no fechamento, ancorado no realizado: realizado × G(runway) ÷ G(idade), somado e dividido pelo FTD$. Runway (dias até o fim do mês) desta linha: ${rw}.`;
-    return <td key="esp" style={{ color: 'var(--accent-yellow)', fontWeight: 500 }} title={tip}>{fmtMultiple(r.m0Esp)}</td>;
+    const tip = `M0/${espBase} esperado no fechamento, ancorado no realizado: realizado × G(runway) ÷ G(idade), somado e dividido pelo ${espBase === 'FTD' ? 'FTD$' : 'depósito do D0'}. Runway (dias até o fim do mês) desta linha: ${rw}.`;
+    return <td key="esp" style={{ color: 'var(--accent-yellow)', fontWeight: 500 }} title={tip}>{fmtMultiple(v)}</td>;
   };
   const dm = (s) => { if (!s || s === 'Total') return s || '—'; const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); return m ? `${m[3]}/${m[2]}` : String(s); };
   // Heatmap por coluna (vermelho→amarelo→verde, min/max das linhas) nas retenções —
@@ -1850,7 +1864,7 @@ function RetFaixaTable({ data, dateLabel, m0Label, base }) {
   // sortKey null = ordem que veio do agregador. O Total fica sempre no rodapé (tfoot, fora da ordenação).
   const [sortKey, setSortKey] = React.useState(null);
   const [sortDir, setSortDir] = React.useState('desc');
-  const accessors = { date: r => r.date, qtd: r => r.qtd, ftdMedio: r => r.ftdMedio, d0Medio: r => r.d0Medio, m0Esp: r => r.m0Esp, retD1: r => r.retD1, retW1: r => r.retW1, retW2: r => r.retW2, retM0: r => r.retM0 };
+  const accessors = { date: r => r.date, qtd: r => r.qtd, ftdMedio: r => r.ftdMedio, d0Medio: r => r.d0Medio, m0Esp: espOf, retD1: r => r.retD1, retW1: r => r.retW1, retW2: r => r.retW2, retM0: r => r.retM0 };
   multCols.forEach(c => { accessors[c.key] = c.get; });
   const onSort = (key) => { if (sortKey === key) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortKey(key); setSortDir('desc'); } };
   const arrow = (key) => sortKey === key ? (sortDir === 'desc' ? ' ▾' : ' ▴') : '';
@@ -1868,7 +1882,7 @@ function RetFaixaTable({ data, dateLabel, m0Label, base }) {
         <tr>
           {Th('date', dateLabel || 'Data FTD')}{Th('qtd', 'Qtd FTD')}{Th('ftdMedio', 'FTD $$')}{Th('d0Medio', 'Dep D0 Med')}
           {multCols.map(c => Th(c.key, c.label, null, c.tip))}
-          {Th('m0Esp', 'M0 Esp.', null, 'M0/FTD esperado no fechamento, ancorado no realizado: realizado × G(runway) ÷ G(idade). G = curva histórica de desenvolvimento (maio), por escopo (Total/Growth) e por canal. Canal sem curva robusta (ex. Kwai, amostra pequena) fica —.')}
+          {Th('m0Esp', 'M0 Esp.', null, `M0/${espBase} esperado no fechamento, ancorado no realizado: realizado × G(runway) ÷ G(idade). G = curva histórica de desenvolvimento (maio), por escopo (Total/Growth) e por canal. Canal sem curva robusta (ex. Kwai, amostra pequena) fica —.`)}
           {Th('retD1', 'D1 Ret %', retThL)}{Th('retW1', 'W1 Ret %', retTh)}{Th('retW2', 'W2 Ret %', retTh)}{Th('retM0', mL + ' Ret %', retTh)}
         </tr>
       </thead>
@@ -1932,8 +1946,18 @@ const RET_MULT_METRICS = [
   { id: 'D14', key: 'multW2F',  desc: '(D0 + dias 1–14) ÷ FTD' },
   { id: 'D30', key: 'multD30F', desc: '(D0 + dias 1–30) ÷ FTD' },
 ];
+// Mesmas séries na base D0 (toggle da aba). D0 sai da lista: D0/D0 = 1,00x constante, não é série.
+const RET_MULT_METRICS_D0 = [
+  { id: 'D1',  key: 'multD1D0',  desc: '(D0 + dia 1) ÷ dep D0' },
+  { id: 'D7',  key: 'multW1D0',  desc: '(D0 + dias 1–7) ÷ dep D0' },
+  { id: 'D14', key: 'multW2D0',  desc: '(D0 + dias 1–14) ÷ dep D0' },
+  { id: 'D30', key: 'multD30D0', desc: '(D0 + dias 1–30) ÷ dep D0' },
+];
+const retChartMetrics_ = (base) => base === 'd0' ? RET_MULT_METRICS_D0 : RET_MULT_METRICS;
 const RET_SERIES_COLORS = ['#FF8C00', '#60a5fa', '#4ade80', '#facc15', '#c084fc', '#22d3ee', '#fb7185', '#a3e635'];
-function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, sameday, dataMax, fallbackRows, cohort, cohortDays, srcRF, srcLoading, srcError }) {
+function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, sameday, dataMax, fallbackRows, cohort, cohortDays, srcRF, srcLoading, srcError, base }) {
+  const MET = retChartMetrics_(base);            // lista de séries conforme a base do toggle (FTD | D0)
+  const bLbl = base === 'd0' ? 'D0' : 'FTD';     // sufixo dos rótulos: Mult D7/FTD vs Mult D7/D0
   const [seriesBy, setSeriesBy] = usePersistedState('rvops:retChartSeries', 'mult'); // 'mult' | 'canal' | 'faixa' | 'grupo' (grupo de risco, pede &byGrupo=1)
   const [metric, setMetric] = usePersistedState('rvops:retChartMetric3', 'D1');   // D0 | D1 | D7 | D14 | D30 — UM multiplicador por vez (sem "Todos")
   const [hover, setHover] = React.useState(null);   // { si, i } do ponto sob o mouse → tooltip custom (SVG nativo era instável)
@@ -1965,8 +1989,8 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
   const err = (cohort && !grpMode) ? srcError : f30.error;
   const dmLabel = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); return m ? `${m[3]}/${m[2]}` : String(s); };
   // UM multiplicador por vez (D0…D30). Coage valor inválido/legado (ex. "Todos" salvo antes) p/ D1.
-  const effMetric = RET_MULT_METRICS.some(m => m.id === metric) ? metric : 'D1';
-  const mDef = RET_MULT_METRICS.find(m => m.id === effMetric) || RET_MULT_METRICS[1];
+  const effMetric = MET.some(m => m.id === metric) ? metric : 'D1';
+  const mDef = MET.find(m => m.id === effMetric) || MET[0];
   const effGran = maDays > 0 ? 'day' : gran;   // média móvel opera em resolução DIÁRIA (janela deslizante em dias)
 
   // MATURIDADE no NÍVEL DA COORTE (dia do FTD), não da semana: mantém só FTDs que já fecharam a janela do
@@ -1986,7 +2010,7 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
     const agg = aggRetFaixaBench_(matRows, chFilter, faixaSel, mode, effGran, null, dataMax, null, grupoSel); // dim = período
     xLabels = agg.rows.map(r => dmLabel(r.date));
     isoKeys = agg.rows.map(r => r._key);
-    series = [{ name: 'Mult ' + mDef.id, mid: mDef.id, color: RET_SERIES_COLORS[RET_MULT_METRICS.indexOf(mDef) % RET_SERIES_COLORS.length], values: agg.rows.map(r => r[mDef.key]), ftd: agg.rows.map(ftdOf) }];
+    series = [{ name: 'Mult ' + mDef.id, mid: mDef.id, color: RET_SERIES_COLORS[MET.indexOf(mDef) % RET_SERIES_COLORS.length], values: agg.rows.map(r => r[mDef.key]), ftd: agg.rows.map(ftdOf) }];
   } else {
     // grupos (canais ou faixas) presentes no recorte, cada um agregado por período p/ o multiplicador escolhido
     const groupAgg = aggRetFaixaBench_(matRows, chFilter, faixaSel, mode, 'day', null, dataMax, seriesBy, grupoSel);
@@ -2063,8 +2087,8 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
         <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Multiplicador</label>
         <span className="slicer-presets">
-          {RET_MULT_METRICS.map(m => (
-            <button key={m.id} className={`preset-btn ${effMetric === m.id ? 'active' : ''}`} onClick={() => setMetric(m.id)} title={`Multiplicador ${m.id}/FTD = ${m.desc}`}>{m.id}</button>
+          {MET.map(m => (
+            <button key={m.id} className={`preset-btn ${effMetric === m.id ? 'active' : ''}`} onClick={() => setMetric(m.id)} title={`Multiplicador ${m.id}/${bLbl} = ${m.desc}`}>{m.id}</button>
           ))}
         </span>
       </span>
@@ -2146,9 +2170,9 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
   const showLabelAt = (i) => (i % labelStride === 0);
   // path com quebras nos nulos (M no início de cada trecho contínuo)
   const linePath = (vals) => { let d = '', pen = false; vals.forEach((v, i) => { if (v == null || isNaN(v)) { pen = false; return; } d += (pen ? ' L' : ' M') + xOf(i).toFixed(1) + ',' + yOf(v).toFixed(1); pen = true; }); return d.trim(); };
-  const yTitle = `${maDays > 0 ? `Mult ${effMetric}/FTD · MM ${maDays}d` : `Mult ${effMetric}/FTD`}${isLog ? ' · log' : ''}`;
+  const yTitle = `${maDays > 0 ? `Mult ${effMetric}/${bLbl} · MM ${maDays}d` : `Mult ${effMetric}/${bLbl}`}${isLog ? ' · log' : ''}`;
   // Tooltip custom (hover): linha 1 = O QUE é (multiplicador OU canal/faixa+multiplicador); linha 2 = PERÍODO · valor.
-  const tipHead = (s) => (seriesBy === 'mult') ? `${s.name}/FTD` : `${s.name} · Mult ${effMetric}/FTD`;
+  const tipHead = (s) => (seriesBy === 'mult') ? `${s.name}/${bLbl}` : `${s.name} · Mult ${effMetric}/${bLbl}`;
   const tipSub  = (i, v) => `${gran === 'week' ? 'Semana de ' : ''}${xLabels[i]} · ${fmtMultiple(v)}`;
   return (
     <React.Fragment>
@@ -2203,65 +2227,11 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
         </svg>
       </div>
       <div className="ch-note">
-        <strong>{cohort ? `Coorte de ${cohortDays} dias — mesma base/janela da tabela (só coortes fechadas)` : `Janela: ${gran === 'week' ? 'últimas 8 semanas' : '30 dias corridos'} terminando na ÚLTIMA safra MADURA${matCutId ? ` do ${matCutId}` : ''}${matCutISO ? ` (até ${dmLabel(matCutISO)})` : ''} — coortes ainda imaturas são cortadas${gran === 'week' ? ' (a semana mais recente entra com suas coortes já maduras)' : ''}`}</strong>. Eixo X = <strong>{gran === 'week' ? 'semana' : 'dia'} de FTD</strong>; {seriesBy === 'mult' ? <>evolução do <strong>multiplicador {effMetric}/FTD</strong></> : <>uma linha por <strong>{seriesBy === 'canal' ? 'canal' : 'faixa de FTD'}</strong> (multiplicador {effMetric}/FTD)</>}. Cada ponto = média ponderada (Σ/Σ) do KPI no período. Segue canal/faixa/modo/same-day/M0.{busy ? ' · carregando…' : ''}{err ? ' · erro' : ''}
+        <strong>{cohort ? `Coorte de ${cohortDays} dias — mesma base/janela da tabela (só coortes fechadas)` : `Janela: ${gran === 'week' ? 'últimas 8 semanas' : '30 dias corridos'} terminando na ÚLTIMA safra MADURA${matCutId ? ` do ${matCutId}` : ''}${matCutISO ? ` (até ${dmLabel(matCutISO)})` : ''} — coortes ainda imaturas são cortadas${gran === 'week' ? ' (a semana mais recente entra com suas coortes já maduras)' : ''}`}</strong>. Eixo X = <strong>{gran === 'week' ? 'semana' : 'dia'} de FTD</strong>; {seriesBy === 'mult' ? <>evolução do <strong>multiplicador {effMetric}/{bLbl}</strong></> : <>uma linha por <strong>{seriesBy === 'canal' ? 'canal' : 'faixa de FTD'}</strong> (multiplicador {effMetric}/{bLbl})</>}. Cada ponto = média ponderada (Σ/Σ) do KPI no período. Segue canal/faixa/modo/same-day/M0.{busy ? ' · carregando…' : ''}{err ? ' · erro' : ''}
         {maDays > 0 && !cohort && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Média móvel de {maDays} dias: janela deslizante ponderada (Σ mult×FTD ÷ Σ FTD) dos últimos {maDays} dias, calculada em dias e {gran === 'week' ? 'amostrada por semana (valor no último dia da semana)' : 'plotada por dia'} — segue o toggle Diário/Semanal e suaviza o ruído.</em></React.Fragment>}
         {!cohort && <React.Fragment>{' '}<em>Maturidade: o multiplicador só entra depois de a coorte ter os dias p/ fechar a janela (D0=0 · D1=1 · D7=7 · D14=14 · D30=30 dias após o FTD).</em></React.Fragment>}
       </div>
     </React.Fragment>
-  );
-}
-
-// Seletor MULTI (buscável) de CAMPANHA (utm_ftd_campaign) da aba Retenções.
-// selected = array ([] = todas). options já vêm escopadas pelo canal selecionado.
-function CampaignSelect({ options, selected, onChange, loading, error }) {
-  const [open, setOpen] = React.useState(false);
-  const [q, setQ] = React.useState('');
-  const ref = React.useRef(null);
-  React.useEffect(() => {
-    if (!open) return;
-    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
-  }, [open]);
-  const opts = options || [];
-  const sel = selected || [];
-  const selSet = {}; sel.forEach(c => selSet[c] = 1);
-  const ql = q.trim().toLowerCase();
-  const filtered = ql ? opts.filter(o => o.campaign.indexOf(ql) >= 0 || (o.canal || '').toLowerCase().indexOf(ql) >= 0) : opts;
-  const shown = filtered.slice(0, 200);
-  const label = sel.length === 0 ? (loading ? 'carregando…' : 'Todas') : (sel.length === 1 ? sel[0] : sel.length + ' campanhas');
-  const toggle = (c) => onChange(selSet[c] ? sel.filter(x => x !== c) : sel.concat([c]));
-  const optBtn = (on) => ({ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', textAlign: 'left', background: on ? 'rgba(250,204,21,.12)' : 'transparent', border: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: '12px', padding: '7px 10px', borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap' });
-  const chk = (on) => ({ width: '14px', height: '14px', borderRadius: '3px', border: '1px solid ' + (on ? 'var(--accent-yellow)' : 'var(--border)'), background: on ? 'var(--accent-yellow)' : 'transparent', color: '#000', fontSize: '10px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 });
-  return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <button type="button" onClick={() => setOpen(o => !o)} title="Filtra a coorte de FTD por uma ou mais campanhas (utm_ftd_campaign)" style={{ background: 'var(--surface)', border: '1px solid rgba(250,204,21,.45)', color: 'var(--text)', fontFamily: 'inherit', fontSize: '12px', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', maxWidth: '240px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
-        <span style={{ fontSize: '9px', opacity: .7 }}>▼</span>
-      </button>
-      {open && (
-        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 50, minWidth: '280px', maxHeight: '360px', overflowY: 'auto', background: 'var(--surface)', border: '1px solid rgba(250,204,21,.45)', borderRadius: '8px', padding: '6px', boxShadow: '0 8px 24px rgba(0,0,0,.5)' }}>
-          <input autoFocus type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="buscar campanha…" style={{ width: '100%', boxSizing: 'border-box', background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text)', fontFamily: 'inherit', fontSize: '12px', padding: '6px 8px', borderRadius: '6px', marginBottom: '4px', outline: 'none' }} />
-          <button type="button" onClick={() => onChange([])} style={optBtn(sel.length === 0)}>
-            <span style={{ width: '14px', flexShrink: 0, color: 'var(--accent-yellow)', textAlign: 'center' }}>{sel.length === 0 ? '✓' : ''}</span>
-            <span>Todas as campanhas{sel.length > 0 ? ' (limpar ' + sel.length + ')' : ''}</span>
-          </button>
-          {error && <div style={{ padding: '7px 10px', fontSize: '11px', color: '#f0555c' }}>erro ao carregar campanhas</div>}
-          {!error && !loading && opts.length === 0 && <div style={{ padding: '7px 10px', fontSize: '11px', color: 'var(--text-muted)' }}>nenhuma campanha no período</div>}
-          {shown.map((o, i) => {
-            const on = !!selSet[o.campaign];
-            return (
-              <button key={i} type="button" onClick={() => toggle(o.campaign)} style={optBtn(on)}>
-                <span style={chk(on)}>{on ? '✓' : ''}</span>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}>{o.campaign}</span>
-                <span style={{ fontSize: '10px', opacity: .6, flexShrink: 0 }}>{o.canal} · {o.ftds}</span>
-              </button>
-            );
-          })}
-          {filtered.length > shown.length && <div style={{ padding: '7px 10px', fontSize: '10px', color: 'var(--text-muted)' }}>+{filtered.length - shown.length} — refine a busca</div>}
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -2273,10 +2243,13 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   const [gran, setGran] = React.useState('week');       // default Semanal · 'day' | 'week' (colapsa em médias semanais)
   const [tableDim, setTableDim] = React.useState('periodo'); // tabela de baixo: 'periodo' (por dia/semana) | 'canal' | 'faixa'
   const [cohortDays, setCohortDays] = React.useState(0); // 0 = calendário (M0 = fim do mês) | 30|60|90 = janela fixa de N dias corridos (só coortes fechadas)
-  const [multBase, setMultBase] = React.useState('ftd'); // base dos multiplicadores da tabela: 'ftd' (padrão) | 'd1' (todos ÷ nível D1, sem D0)
-  const [campaignSel, setCampaignSel] = React.useState([]);   // utm_ftd_campaign multi-select; [] = todas
-  const campActive = campaignSel.length > 0;
-  const campQ = campaignSel.map(c => `&campaign=${encodeURIComponent(c)}`).join('');
+  // Base dos multiplicadores da ABA (toggle "Multiplicador"): 'ftd' (padrão, ÷ FTD$) | 'd0' (÷ depósito do D0).
+  // Vale p/ tabela, linha do mês anterior, cards do topo e gráfico por dimensão. A Ponte de variância NÃO
+  // segue: ela compara BP → Realizado e o plano só tem meta sobre FTD$ (depM0 ÷ ftdAmount).
+  // ('d1' existe em retMultCols_/benchMetrics_ desde antes, sem UI — segue sem UI.)
+  const [multBase, setMultBase] = React.useState('ftd');
+  const d0Base = multBase === 'd0';
+  const baseLbl = d0Base ? 'D0' : 'FTD';
   const cohort = cohortDays > 0;
   const faixaAll = faixaSel.length === 0;
   const faixaLabelTxt = faixaAll ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
@@ -2285,44 +2258,14 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   // Same-day puxado sob demanda (only=retfaixa&sameday=1) p/ a MESMA janela global; sem custo extra quando off.
   const [sdFetch, setSdFetch] = React.useState({ rows: null, loading: false, error: null });
   const winFrom = meta && meta.from, winTo = meta && meta.to;
-  // CAMPANHA: assinatura do canal p/ resetar a campanha quando o canal muda (evita tabela vazia
-  // por campanha de outro canal). Lista de campanhas p/ o seletor + escopo por canal selecionado.
-  const chSig = (chList_(chFilter) || []).join('|') + '|' + ((chFilter && chFilter.scope) || '');
-  React.useEffect(() => { setCampaignSel([]); }, [chSig]);
-  const [campList, setCampList] = React.useState({ rows: null, loading: false, error: null });
-  React.useEffect(() => {
-    if (!winFrom || !winTo || !ENDPOINT_URL) return;
-    setCampList(s => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${winFrom}&to=${winTo}&only=campaigns`)
-      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
-      .then(j => { if (j.error) throw new Error(j.error); setCampList({ rows: j.campaigns || [], loading: false, error: null }); })
-      .catch(e => setCampList({ rows: null, loading: false, error: String(e.message || e) }));
-  }, [winFrom, winTo]);
-  const campOptions = React.useMemo(() => {
-    const all = campList.rows || [];
-    const list = chList_(chFilter);
-    if (list && list.length) { const set = {}; list.forEach(c => set[c] = 1); return all.filter(o => set[o.canal]); }
-    return all;
-  }, [campList.rows, chSig]);
-  // Modo default (não same-day / não coorte / não grupo): fetch próprio da tabela filtrado por campanha.
-  // Só dispara quando há campanha selecionada — sem campanha usa o prop `retencaoFaixa` compartilhado (custo zero).
-  const [campFetch, setCampFetch] = React.useState({ rows: null, loading: false, error: null });
-  React.useEffect(() => {
-    if (!campActive || cohort || sameday || grupoActive || !winFrom || !winTo || !ENDPOINT_URL) return;
-    setCampFetch(s => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${winFrom}&to=${winTo}&only=retfaixa${campQ}`)
-      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
-      .then(j => { if (j.error) throw new Error(j.error); setCampFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
-      .catch(e => setCampFetch({ rows: null, loading: false, error: String(e.message || e) }));
-  }, [campQ, cohort, sameday, grupoActive, winFrom, winTo]);
   React.useEffect(() => {
     if (cohort || !sameday || !winFrom || !winTo || !ENDPOINT_URL) return;
     setSdFetch(s => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${winFrom}&to=${winTo}&only=retfaixa&sameday=1${campQ}`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${winFrom}&to=${winTo}&only=retfaixa&sameday=1`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(j => { if (j.error) throw new Error(j.error); setSdFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
       .catch(e => setSdFetch({ rows: null, loading: false, error: String(e.message || e) }));
-  }, [cohort, sameday, winFrom, winTo, campQ]);
+  }, [cohort, sameday, winFrom, winTo]);
   // Cohort view: puxa o PRÓPRIO último ciclo de N dias FECHADO (independe do slicer global, igual ao Benchmark).
   // Busca [dataMax-(N+30), dataMax]; mostra só coortes com FTD <= dataMax-N (já fecharam os N dias) e troca o
   // M0 da tabela pela janela fixa de N dias (cntD{N}/valD{N}). N = 30|60|90 pelo toggle.
@@ -2333,11 +2276,11 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
     if (!cohort || !dataMax || !ENDPOINT_URL) return;
     const from = isoAddDays_(dataMax, -(cohortDays + 30)), to = dataMax;
     setCoFetch(s => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${from}&to=${to}&only=retfaixa${sameday ? '&sameday=1' : ''}${campQ}`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${from}&to=${to}&only=retfaixa${sameday ? '&sameday=1' : ''}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(j => { if (j.error) throw new Error(j.error); setCoFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
       .catch(e => setCoFetch({ rows: null, loading: false, error: String(e.message || e) }));
-  }, [cohortDays, dataMax, sameday, campQ]);
+  }, [cohortDays, dataMax, sameday]);
   // Linha de referência do MÊS-CALENDÁRIO ANTERIOR ao período selecionado no slicer (jun→mai, mai→abr).
   // Âncora = fim da janela global (winTo). Puxa o próprio período via only=retfaixa; respeita o toggle
   // same-day. M0 sempre calendário. Sem custo quando o backend já cacheou a janela.
@@ -2346,11 +2289,11 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   React.useEffect(() => {
     if (!ENDPOINT_URL || !pm) return;
     setPmFetch(s => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${pm.from}&to=${pm.to}&only=retfaixa${sameday ? '&sameday=1' : ''}${grupoActive ? '&byGrupo=1' : ''}${campQ}`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${pm.from}&to=${pm.to}&only=retfaixa${sameday ? '&sameday=1' : ''}${grupoActive ? '&byGrupo=1' : ''}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(j => { if (j.error) throw new Error(j.error); setPmFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
       .catch(e => setPmFetch({ rows: null, loading: false, error: String(e.message || e) }));
-  }, [pm, sameday, grupoActive, campQ]);
+  }, [pm, sameday, grupoActive]);
   // Dado COM grupo (&byGrupo=1) — usado pela tabela "Ver por = Grupo" E pelo FILTRO de grupo do topo (quando ligado,
   // a aba TODA passa a usar essa base). Fetch próprio no mesmo window/sameday da fonte atual (coorte usa a janela da coorte).
   const grNeed = grupoActive || tableDim === 'grupo';
@@ -2360,24 +2303,24 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   React.useEffect(() => {
     if (!grNeed || !ENDPOINT_URL || !grFrom || !grTo) return;
     setGrFetch(s => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${grFrom}&to=${grTo}&only=retfaixa${sameday ? '&sameday=1' : ''}&byGrupo=1${campQ}`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${grFrom}&to=${grTo}&only=retfaixa${sameday ? '&sameday=1' : ''}&byGrupo=1`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(j => { if (j.error) throw new Error(j.error); setGrFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
       .catch(e => setGrFetch({ rows: null, loading: false, error: String(e.message || e) }));
-  }, [grNeed, grFrom, grTo, sameday, campQ]);
+  }, [grNeed, grFrom, grTo, sameday]);
   // Dado COM campanha (&byCampaign=1) — usado só pela tabela "Ver por = Campanha". Mesma janela/coorte da fonte;
-  // respeita o filtro de campanha (campQ) e same-day. Quando o filtro de GRUPO está ligado, pede TAMBÉM &byGrupo=1
+  // segue o same-day. Quando o filtro de GRUPO está ligado, pede TAMBÉM &byGrupo=1
   // (senão as linhas vêm sem grupo e o filtro de grupo zera a tabela). Payload maior (linha por campanha) → opt-in.
   const campNeed = tableDim === 'campanha';
   const [campDimFetch, setCampDimFetch] = React.useState({ rows: null, loading: false, error: null });
   React.useEffect(() => {
     if (!campNeed || !ENDPOINT_URL || !grFrom || !grTo) return;
     setCampDimFetch(s => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${grFrom}&to=${grTo}&only=retfaixa${sameday ? '&sameday=1' : ''}&byCampaign=1${grupoActive ? '&byGrupo=1' : ''}${campQ}`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${grFrom}&to=${grTo}&only=retfaixa${sameday ? '&sameday=1' : ''}&byCampaign=1${grupoActive ? '&byGrupo=1' : ''}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(j => { if (j.error) throw new Error(j.error); setCampDimFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
       .catch(e => setCampDimFetch({ rows: null, loading: false, error: String(e.message || e) }));
-  }, [campNeed, grFrom, grTo, sameday, grupoActive, campQ]);
+  }, [campNeed, grFrom, grTo, sameday, grupoActive]);
   const campDimSrc = cohort
     ? (campDimFetch.rows || []).filter(r => completeBefore && r.date <= completeBefore).map(r => ({ ...r, cntM0: r['cntD' + cohortDays], valM0: r['valD' + cohortDays] }))
     : (campDimFetch.rows || []);
@@ -2388,7 +2331,7 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
       .filter(r => completeBefore && r.date <= completeBefore)                             // só coortes que já fecharam os N dias
       .map(r => ({ ...r, cntM0: r['cntD' + cohortDays], valM0: r['valD' + cohortDays] })); // M0 da tabela = janela fixa de N dias
   } else {
-    srcRF = sameday ? (sdFetch.rows || []) : (campActive ? (campFetch.rows || []) : retencaoFaixa);
+    srcRF = sameday ? (sdFetch.rows || []) : retencaoFaixa;
   }
   // Fonte COM grupo (byGrupo), no MESMO modo (coorte remapeia M0 como o srcRF).
   const srcRFGrupo = cohort
@@ -2398,7 +2341,7 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   const srcE = grupoActive ? srcRFGrupo : srcRF;
   // Coluna "M0 Esperado": curva G do escopo (Total/Growth; canal específico → null). Same-day usa
   // curva própria (m0Curve_ escolhe). OFF só na Coorte 30d (janela fixa de 30d ≠ mês-calendário → runway não se aplica).
-  const gCurve = (!cohort && !campActive) ? m0Curve_(chFilter, sameday) : null;
+  const gCurve = !cohort ? m0Curve_(chFilter, sameday) : null;
   const data = aggRetFaixaBench_(srcE, chFilter, faixaSel, mode, gran, gCurve, dataMax, null, grupoSel);
   const t = data.totals || {};
   // Tabela de baixo: reagrupada por canal/faixa/grupo quando "Ver por" ≠ "período". Grupo sempre usa a base byGrupo.
@@ -2427,22 +2370,26 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
       bpScope = { m0: h.m0tt, ftdAmount: h.ftdAmountTt, ftd: h.ftdTt };
     }
   }
-  const showBp = faixaAll && bpScope && !sameday && !cohort && !campActive;   // sem figura de plano p/ same-day, 30d, faixa OU campanha filtrada → farol off
+  // Sem figura de plano p/ same-day, coorte 30d, faixa filtrada OU base D0 (o plano só tem meta sobre FTD$) → farol off.
+  const showBp = faixaAll && bpScope && !sameday && !cohort && !d0Base;
   const bpMultM0F  = (showBp && bpScope.ftdAmount > 0) ? bpScope.m0 / bpScope.ftdAmount : null;
   const bpFtdMedio = (showBp && bpScope.ftd > 0) ? bpScope.ftdAmount / bpScope.ftd : null;
   const pb = (act, bpv) => (bpv && act != null) ? act / bpv : null;
+  // Cards 1 e 3 seguem o toggle de base (FTD$ ou depósito D0); o do meio (FTD médio) não é multiplicador.
+  // Na base D0 não há meta de plano → bp null (showBp já desliga), e o card mostra só o realizado.
+  const heroM0 = d0Base ? t.multM0D0 : t.multM0F;
+  const heroD1 = d0Base ? t.multD1D0 : t.multD1F;
   const heroes = [
-    { label: cohort ? '30d / FTD' : 'M0 / FTD', act: t.multM0F, m1: null, bp: bpMultM0F, pctBp: pb(t.multM0F, bpMultM0F), fmt: 'multiple' },      // (D0+janela) ÷ FTD
+    { label: `${cohort ? '30d' : 'M0'} / ${baseLbl}`, act: heroM0, m1: null, bp: bpMultM0F, pctBp: pb(heroM0, bpMultM0F), fmt: 'multiple' },      // (D0+janela) ÷ base
     { label: 'FTD médio do período', act: t.ftdMedio, m1: null, bp: bpFtdMedio, pctBp: pb(t.ftdMedio, bpFtdMedio), fmt: 'brl' },
-    // D1 / FTD = multiplicador médio PONDERADO por valor: (Σ D0 + Σ dep dia 1) ÷ Σ FTD. Sem BP (o plano
-    // não tem meta de D1), sem M-1 (igual ao card irmão M0/FTD).
-    { label: 'D1 / FTD', act: t.multD1F, m1: null, bp: null, pctBp: null, fmt: 'multiple' },
+    // D1 / base = multiplicador médio PONDERADO por valor: (Σ D0 + Σ dep dia 1) ÷ Σ base. Sem BP (o plano
+    // não tem meta de D1), sem M-1 (igual ao card irmão M0/base).
+    { label: `D1 / ${baseLbl}`, act: heroD1, m1: null, bp: null, pctBp: null, fmt: 'multiple' },
   ];
   const chLabel = chLabel_(chFilter);
   const coSuffix = cohort ? ` · coorte ${cohortDays}d (FTD até ${completeBefore ? completeBefore.slice(8, 10) + '/' + completeBefore.slice(5, 7) : '—'})` : '';
-  const campDefault = campActive && !cohort && !sameday && !grupoActive;   // campanha ativa no modo default (usa campFetch)
-  const loadingRF = (cohort && coFetch.loading) || (sameday && sdFetch.loading) || (grNeed && grFetch.loading) || (campDefault && campFetch.loading) || (campNeed && campDimFetch.loading);
-  const errorRF = (cohort && coFetch.error) || (sameday && sdFetch.error) || (grNeed && grFetch.error) || (campDefault && campFetch.error) || (campNeed && campDimFetch.error);
+  const loadingRF = (cohort && coFetch.loading) || (sameday && sdFetch.loading) || (grNeed && grFetch.loading) || (campNeed && campDimFetch.loading);
+  const errorRF = (cohort && coFetch.error) || (sameday && sdFetch.error) || (grNeed && grFetch.error) || (campNeed && campDimFetch.error);
   // Opções do multiselect de grupo: os grupos REAIS do dado byGrupo (quando já carregou), senão o default GRUPO_LIST.
   const grupoOptions = (grFetch.rows && grFetch.rows.length)
     ? Array.from(new Set(grFetch.rows.map(r => r.grupo != null ? String(r.grupo) : 'sem grupo'))).sort()
@@ -2453,7 +2400,7 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
       <div className="tab-header">
         <div>
           <h1>Retenções por faixa de FTD</h1>
-          <div className="subtitle">Safra de FTD por dia (só Apostou) — ticket de FTD, depósito D0, multiplicadores D0–M0/FTD e retenção D1/W1/M0; filtrável por faixa e canal</div>
+          <div className="subtitle">Safra de FTD por dia (só Apostou) — ticket de FTD, depósito D0, multiplicadores {d0Base ? 'D1–M0 sobre o depósito do D0' : 'D0–M0 sobre o FTD$'} e retenção D1/W1/M0; filtrável por faixa e canal</div>
         </div>
       </div>
       <div className="slicer-group slicer-ruler">
@@ -2465,6 +2412,11 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
           <div className="slicer-presets">
             <button className={`preset-btn ${mode === 'val' ? 'active' : ''}`} onClick={() => setMode('val')} title="Retenção por VALOR: $ depositado na janela ÷ depósito do D0 (em %, pode passar de 100%)">Valor</button>
             <button className={`preset-btn ${mode === 'qtd' ? 'active' : ''}`} onClick={() => setMode('qtd')} title="Retenção por QUANTIDADE: % dos FTDs que voltaram a depositar na janela">Qtd</button>
+          </div>
+          <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>Multiplicador</label>
+          <div className="slicer-presets">
+            <button className={`preset-btn ${!d0Base ? 'active' : ''}`} onClick={() => setMultBase('ftd')} title="Multiplicadores sobre o FTD$: depósito acumulado (incl. D0) ÷ valor do primeiro depósito. Começa no D0/FTD e é a base que tem meta de plano (farol ligado).">sobre FTD</button>
+            <button className={`preset-btn ${d0Base ? 'active' : ''}`} onClick={() => setMultBase('d0')} title="Multiplicadores sobre o depósito do D0: acumulado ÷ Σ depósito do dia do FTD. Mede quanto o dinheiro do 1º dia se multiplicou, sem o efeito do ticket de FTD. D0/D0 = 1,00x é omitido; sem meta de plano (farol off).">sobre D0</button>
           </div>
           <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>Coorte</label>
           <div className="slicer-presets">
@@ -2489,27 +2441,25 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
             <button className={`preset-btn ${!cohort ? 'active' : ''}`} onClick={() => setCohortDays(0)} title="M0 = depósito do dia do FTD até o FIM do mês-calendário (visão atual; coortes recentes ficam curtas).">Calendário</button>
             <button className={`preset-btn ${cohortDays === 30 ? 'active' : ''}`} onClick={() => setCohortDays(30)} title="M0 = janela FIXA de 30 dias corridos do FTD; só coortes que já fecharam os 30 dias (a mais recente ~30 dias atrás). Puxa o período sozinho, independe do slicer do topo.">Coorte 30d</button>
           </div>
-          <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>Campanha</label>
-          <CampaignSelect options={campOptions} selected={campaignSel} onChange={setCampaignSel} loading={campList.loading} error={campList.error} />
         </div>
       <div className="hero-grid">
         {heroes.map((m, i) => <Hero key={i} metric={m} />)}
       </div>
       <div className="support">
-        <div className="support-title">Mês anterior · {monthLabelPt_(pm.from)} · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''}{campActive ? ' · ' + (campaignSel.length === 1 ? 'campanha ' + campaignSel[0] : campaignSel.length + ' campanhas') : ''}{pmFetch.loading ? ' · carregando…' : ''}{pmFetch.error ? ' · erro ao carregar' : ''}</div>
+        <div className="support-title">Mês anterior · {monthLabelPt_(pm.from)} · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''} · mult sobre {baseLbl}{pmFetch.loading ? ' · carregando…' : ''}{pmFetch.error ? ' · erro ao carregar' : ''}</div>
         <RetFaixaPrevRow row={pmRow} label={monthLabelPt_(pm.from)} loading={pmFetch.loading} error={pmFetch.error} base={multBase} />
         <div className="ch-note">Mês-calendário <strong>anterior ao período selecionado</strong> no slicer ({monthLabelPt_(pm.from)}), agregado num único registro, no mesmo recorte de canal/faixa/modo. O M0 é sempre mês-calendário (não muda com o toggle Calendário/Coorte).</div>
       </div>
       <div className="support">
-        <div className="support-title">Safra {tableDim === 'periodo' ? 'por ' + (gran === 'week' ? 'Semana' : 'Dia') : 'por ' + (tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : tableDim === 'campanha' ? 'Campanha' : 'Grupo de risco')} · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''}{campActive ? ' · ' + (campaignSel.length === 1 ? 'campanha ' + campaignSel[0] : campaignSel.length + ' campanhas') : ''}{coSuffix}{loadingRF ? ' · carregando…' : ''}{errorRF ? ' · erro ao carregar' : ''}</div>
+        <div className="support-title">Safra {tableDim === 'periodo' ? 'por ' + (gran === 'week' ? 'Semana' : 'Dia') : 'por ' + (tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : tableDim === 'campanha' ? 'Campanha' : 'Grupo de risco')} · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''}{coSuffix} · mult sobre {baseLbl}{loadingRF ? ' · carregando…' : ''}{errorRF ? ' · erro ao carregar' : ''}</div>
         <RetFaixaTable data={tableData} dateLabel={tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : tableDim === 'grupo' ? 'Grupo' : tableDim === 'campanha' ? 'Campanha' : (gran === 'week' ? 'Semana' : 'Data FTD')} m0Label={cohort ? cohortDays + 'd' : 'M0'} base={multBase} />
       </div>
       <div className="support">
-        <div className="support-title">Multiplicador por dimensão · {cohort ? 'coorte ' + cohortDays + 'd' : 'últimos 30 dias corridos'} · {chLabel} · {faixaLabelTxt}{grupoActive ? ' · ' + grupoLabelTxt : ''}{sameday ? ' · same-day' : ''}</div>
-        <RetMultChart chFilter={chFilter} faixaSel={faixaSel} grupoSel={grupoSel} grupoActive={grupoActive} mode={mode} gran={gran} sameday={sameday} dataMax={dataMax} fallbackRows={retencaoFaixa} cohort={cohort} cohortDays={cohortDays} srcRF={srcRF} srcLoading={cohort && coFetch.loading} srcError={cohort ? coFetch.error : null} />
+        <div className="support-title">Multiplicador por dimensão · sobre {baseLbl} · {cohort ? 'coorte ' + cohortDays + 'd' : 'últimos 30 dias corridos'} · {chLabel} · {faixaLabelTxt}{grupoActive ? ' · ' + grupoLabelTxt : ''}{sameday ? ' · same-day' : ''}</div>
+        <RetMultChart chFilter={chFilter} faixaSel={faixaSel} grupoSel={grupoSel} grupoActive={grupoActive} mode={mode} gran={gran} sameday={sameday} dataMax={dataMax} fallbackRows={retencaoFaixa} cohort={cohort} cohortDays={cohortDays} srcRF={srcRF} srcLoading={cohort && coFetch.loading} srcError={cohort ? coFetch.error : null} base={multBase} />
       </div>
       <div className="support">
-        <div className="support-title">Ponte de variância · Multiplicador {cohort ? cohortDays + 'd' : 'M0'}/FTD: BP → Realizado (por Canal ou Faixa){sameday ? ' · same-day' : ''}{faixaAll ? '' : ' · ' + faixaLabelTxt}{grupoActive ? ' · ' + grupoLabelTxt : ''}</div>
+        <div className="support-title">Ponte de variância · Multiplicador {cohort ? cohortDays + 'd' : 'M0'}/FTD{d0Base ? ' (sempre sobre FTD$ — o plano não tem meta sobre D0)' : ''}: BP → Realizado (por Canal ou Faixa){sameday ? ' · same-day' : ''}{faixaAll ? '' : ' · ' + faixaLabelTxt}{grupoActive ? ' · ' + grupoLabelTxt : ''}</div>
         <MultBridge rows={grupoActive ? srcE.filter(r => grupoSel.indexOf(r.grupo != null ? String(r.grupo) : 'sem grupo') >= 0) : srcRF} faixa={faixaSel} sameday={sameday} cohort={cohort} chFilter={chFilter} bp={bp} bpScope={bpScope} />
       </div>
     </React.Fragment>
@@ -2833,6 +2783,7 @@ function benchMetrics_(a, mode) {
   const multF = (acc) => a.ftd ? acc / a.ftd : null;   // depósito acumulado (incl. D0) ÷ valor do FTD
   const d1base = a.d0 + (a.vd1 || 0);                   // nível D1 = D0 + dep do dia 1 (base do toggle "sobre D1")
   const multD1 = (acc) => d1base ? acc / d1base : null; // depósito acumulado ÷ nível D1 (sem D0 na tabela nesse modo)
+  const multD0 = (acc) => a.d0 ? acc / a.d0 : null;     // depósito acumulado ÷ DEPÓSITO D0 (toggle "sobre D0")
   return {
     qtd: a.qtd,
     ftdMedio: a.qtd ? a.ftd / a.qtd : null,   // FTD $$ = ticket médio do 1º depósito
@@ -2850,6 +2801,14 @@ function benchMetrics_(a, mode) {
     multW1D1: multD1(a.d0 + a.vw1),
     multW2D1: multD1(a.d0 + (a.vw2 || 0)),
     multM0D1: multD1(a.d0 + a.vm0),
+    // Mesmos acúmulos ÷ DEPÓSITO D0 (toggle "sobre D0"): D0 vira a base (=1,00x, não vai pra tela).
+    // Quanto o dinheiro do primeiro dia se multiplicou — não depende do ticket de FTD.
+    multD1D0: multD0(a.d0 + (a.vd1 || 0)),
+    multD4D0: multD0(a.d0 + (a.vd4 || 0)),
+    multW1D0: multD0(a.d0 + a.vw1),
+    multW2D0: multD0(a.d0 + (a.vw2 || 0)),
+    multD30D0: multD0(a.d0 + (a.vd30 || 0)),
+    multM0D0: multD0(a.d0 + a.vm0),
     retD1: ret(a.cd1, a.vd1),
     retW1: ret(a.cw1, a.vw1),
     retW2: ret(a.cw2 || 0, a.vw2 || 0),
