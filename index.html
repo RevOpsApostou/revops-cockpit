@@ -294,6 +294,8 @@
   .hero-farol .hf-stats .pct.amarelo { color: var(--warning); }
   .hero-farol .hf-stats .pct.vermelho { color: var(--negative); }
   .hero-farol .hf-stats .pct.cinza { color: var(--text-dim); }
+  .hero-farol .hf-share { color: var(--text-dim); }
+  .hero-farol .hf-share .share-val { color: var(--accent-yellow); font-weight: 700; font-variant-numeric: tabular-nums; }
   .hero-farol .hf-trend .trend-tag { color: var(--text-dim); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
   .hero-farol .hf-trend .trend-val { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
   .hero-farol .hf-m1 .m1-val { color: var(--text-dim); font-weight: 600; }
@@ -1527,7 +1529,12 @@ function Hero({
       className: "hf-m1"
     }, /*#__PURE__*/React.createElement("span", {
       className: "m1-val"
-    }, fmtVal(metric.m1, metric.fmt)), ' ', "m\xEAs anterior"))), metric.spark ? /*#__PURE__*/React.createElement(Sparkline, {
+    }, fmtVal(metric.m1, metric.fmt)), ' ', "m\xEAs anterior"), metric.share != null && /*#__PURE__*/React.createElement("div", {
+      className: "hf-share",
+      title: `Participação desta safra no GGR do período: Σ GGR da safra ÷ Σ GGR de todas as safras, no escopo de canal atual (as 4 safras somam 100%).${metric.shareM1 != null ? ` Mesma janela do mês anterior: ${fmtPct(metric.shareM1, 0)}.` : ''}`
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "share-val"
+    }, fmtPct(metric.share, 0)), ' ', "do GGR"))), metric.spark ? /*#__PURE__*/React.createElement(Sparkline, {
       values: metric.spark
     }) : null);
   }
@@ -6622,12 +6629,16 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, scenLabel) {
     title: 'Retenção',
     cards: [bl(dressPlain(relabelRet(MM.retM0M1, 'Depósito M0→M1')), SCEN_BP_LABEL), bl(dressPlain(relabelRet(MM.retM1M2, 'Depósito M1→M2')), SCEN_BP_LABEL), bl(dressPlain(relabelRet(MM.retM3plus, 'Depósito M3+')), SCEN_BP_LABEL), dressPlain(MM.retGgrM0M1), dressPlain(MM.retGgrM1M2), dressPlain(MM.retGgrM3plus)]
   },
-  // Margem por safra: qualidade de monetização por IDADE DE COORTE (não é retenção) — janela MTD.
+  // Margem por safra em DUAS seções (GGR e Hold separados, pedido do Luis) — qualidade de monetização
+  // por IDADE DE COORTE, não é retenção; janela MTD. Cada card carrega o `share` (peso da safra no GGR).
   // Só entra card com valor: bucket sem safra no período sai da tela em vez de virar um "—" mudo
-  // (e sem ggrSafra nenhum a seção inteira desaparece).
+  // (e sem ggrSafra nenhum as duas seções desaparecem).
   {
-    title: 'Margem por safra',
-    cards: [dressPlain(f.ggrDep_m0), dressPlain(f.ggrDep_m1), dressPlain(f.ggrDep_m2), dressPlain(f.ggrDep_m3plus), dressPlain(f.hold_m0), dressPlain(f.hold_m1), dressPlain(f.hold_m2), dressPlain(f.hold_m3plus)].filter(c => c && c.act != null)
+    title: 'GGR por safra',
+    cards: [dressPlain(f.ggrDep_m0), dressPlain(f.ggrDep_m1), dressPlain(f.ggrDep_m2), dressPlain(f.ggrDep_m3plus)].filter(c => c && c.act != null)
+  }, {
+    title: 'Hold por safra',
+    cards: [dressPlain(f.hold_m0), dressPlain(f.hold_m1), dressPlain(f.hold_m2), dressPlain(f.hold_m3plus)].filter(c => c && c.act != null)
   }].map(g => ({
     ...g,
     cards: (g.cards || []).filter(Boolean)
@@ -7066,7 +7077,7 @@ function buildFarolExportGroups_(MM, f, monthlyClose, channels, chFilter, range,
   });
   // buildFarolGroups_ agora PODE omitir um grupo inteiro (todos os cards null) — garante o bucket
   // pra os lookups G['...']['...'] abaixo não estourarem em backend antigo/mock.
-  ['Aquisição', 'Depósito M0', 'Volume & GGR', 'Retenção', 'Margem por safra'].forEach(t => {
+  ['Aquisição', 'Depósito M0', 'Volume & GGR', 'Retenção', 'GGR por safra', 'Hold por safra'].forEach(t => {
     if (!G[t]) G[t] = {};
   });
   const relabel = (m, label) => m ? {
@@ -7131,10 +7142,13 @@ function buildFarolExportGroups_(MM, f, monthlyClose, channels, chFilter, range,
     title: 'Retenção',
     cards: [G['Retenção']['Depósito M0→M1'], coh('↳ Retido M+1 (R$)', mca.m1, mcb.m1), G['Retenção']['Depósito M1→M2'], coh('↳ Retido M+2 (R$)', mca.m2, mcb.m2), G['Retenção']['Depósito M3+'], coh('↳ Retido M3+ (R$)', mca.m3plus, mcb.m3plus), G['Retenção']['GGR M0→M1'], G['Retenção']['GGR M1→M2'], G['Retenção']['GGR M3+']]
   },
-  // Margem por safra: sai igual à tela (sem splits/coortes absolutas).
+  // GGR/Hold por safra: saem iguais à tela (sem splits/coortes absolutas).
   {
-    title: 'Margem por safra',
-    cards: (groups.find(g => g.title === 'Margem por safra') || {}).cards || []
+    title: 'GGR por safra',
+    cards: (groups.find(g => g.title === 'GGR por safra') || {}).cards || []
+  }, {
+    title: 'Hold por safra',
+    cards: (groups.find(g => g.title === 'Hold por safra') || {}).cards || []
   }].map(g => ({
     ...g,
     cards: (g.cards || []).filter(Boolean)
@@ -8624,9 +8638,24 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
   // da CASA (blend), não por idade de coorte — comparar safra contra a meta do blend seria enganoso.
   // Janela = MTD (igual ao resto do Farol); a seção Retenção ao lado é mês-calendário, por isso é grupo
   // separado. Sem ggrSafra no payload → todos os cards ficam null e o grupo some inteiro.
-  const safraMargem = {};
-  [['m0', 'M0'], ['m1', 'M1'], ['m2', 'M2'], ['m3plus', 'M3+']].forEach(([bk, lbl]) => {
+  // `share` = peso da safra no GGR do período (Σ GGR da safra ÷ Σ GGR de TODAS as safras no escopo).
+  // Denominador = soma dos 4 buckets, não o M.ggr da casa: assim as 4 safras somam exatamente 100%
+  // (o ggrSafra só cobre contas com FTD e trava o bucket em 3, então diverge ~3% do GGR total).
+  // Vai nos DOIS cards da safra de propósito: o share é o PESO do número que você está lendo —
+  // um hold de 3,8% numa safra que é 2% do GGR não vale o mesmo que numa que é 40%.
+  const SAFRA_BK = [['m0', 'M0'], ['m1', 'M1'], ['m2', 'M2'], ['m3plus', 'M3+']];
+  const bkArr = {};
+  let ggrAll = 0,
+    ggrAllL = 0;
+  SAFRA_BK.forEach(([bk]) => {
     const arr = filterChannelList_(ggrSafra && ggrSafra[bk] || [], filter);
+    bkArr[bk] = arr;
+    ggrAll += arr.reduce((a, c) => a + (c.ggr || 0), 0);
+    ggrAllL += arr.reduce((a, c) => a + (c.ggrM1 || 0), 0);
+  });
+  const safraMargem = {};
+  SAFRA_BK.forEach(([bk, lbl]) => {
+    const arr = bkArr[bk];
     const S = k => arr.reduce((a, c) => a + (c[k] || 0), 0);
     const on = arr.length > 0;
     const ggr = S('ggr'),
@@ -8635,8 +8664,15 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
     const ggrL = S('ggrM1'),
       depL = S('depM1'),
       turnL = S('turnoverM1');
-    safraMargem['ggrDep_' + bk] = mk(`GGR/Dep ${lbl}`, 'pct', on ? div(ggr, dep) : null, null, on ? div(ggrL, depL) : null);
-    safraMargem['hold_' + bk] = mk(`Hold ${lbl}`, 'pct', on ? div(ggr, turn) : null, null, on ? div(ggrL, turnL) : null);
+    const share = on && ggrAll > 0 ? ggr / ggrAll : null;
+    const shareL = on && ggrAllL > 0 ? ggrL / ggrAllL : null;
+    const withShare = m => share == null ? m : {
+      ...m,
+      share,
+      shareM1: shareL
+    };
+    safraMargem['ggrDep_' + bk] = withShare(mk(`GGR/Dep ${lbl}`, 'pct', on ? div(ggr, dep) : null, null, on ? div(ggrL, depL) : null));
+    safraMargem['hold_' + bk] = withShare(mk(`Hold ${lbl}`, 'pct', on ? div(ggr, turn) : null, null, on ? div(ggrL, turnL) : null));
   });
   const bpM = bp && bp.month || null;
   let roasDepM0Bp = div(dm0.bp, inv.bp); // fallback: razão da janela (mock / sem bp.month)
