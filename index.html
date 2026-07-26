@@ -6615,10 +6615,24 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, scenLabel) {
   }, {
     title: 'Volume & GGR',
     cards: [bl(ws(dress(MM.depTotal), 'depTotal'), scenL), bl(ws(dress(turnoverCard), 'turnover'), scenL), bl(ws(dress(MM.ggr), 'ggr'), scenL), bl(ws(dressPlain(MM.ggrPerDep), 'ggrPerDep'), scenL), bl(ws(dressPlain(holdCard), 'hold'), scenL), bl(ws(rolloverCard, 'rollover'), scenL), bl(ws(dressPlain(f.freespinDep), 'freespinDep'), SCEN_BP_LABEL), bl(ws(dressPlain(f.bonusDep), 'bonusDep'), SCEN_BP_LABEL)]
-  }, {
+  },
+  // Retenção: Depósito (view de coorte, meta fixa do plano) + GGR (ngr net, mesma fórmula/janela, SEM meta).
+  // ⚠️ o Depósito M3+ usa o residual da FAROL; o GGR M3+ é ratio de coorte puro — ver tooltip/nota.
+  {
     title: 'Retenção',
-    cards: [bl(dressPlain(relabelRet(MM.retM0M1, 'Depósito M0→M1')), SCEN_BP_LABEL), bl(dressPlain(relabelRet(MM.retM1M2, 'Depósito M1→M2')), SCEN_BP_LABEL), bl(dressPlain(relabelRet(MM.retM3plus, 'Depósito M3+')), SCEN_BP_LABEL)]
-  }];
+    cards: [bl(dressPlain(relabelRet(MM.retM0M1, 'Depósito M0→M1')), SCEN_BP_LABEL), bl(dressPlain(relabelRet(MM.retM1M2, 'Depósito M1→M2')), SCEN_BP_LABEL), bl(dressPlain(relabelRet(MM.retM3plus, 'Depósito M3+')), SCEN_BP_LABEL), dressPlain(MM.retGgrM0M1), dressPlain(MM.retGgrM1M2), dressPlain(MM.retGgrM3plus)]
+  },
+  // Margem por safra: qualidade de monetização por IDADE DE COORTE (não é retenção) — janela MTD.
+  // Só entra card com valor: bucket sem safra no período sai da tela em vez de virar um "—" mudo
+  // (e sem ggrSafra nenhum a seção inteira desaparece).
+  {
+    title: 'Margem por safra',
+    cards: [dressPlain(f.ggrDep_m0), dressPlain(f.ggrDep_m1), dressPlain(f.ggrDep_m2), dressPlain(f.ggrDep_m3plus), dressPlain(f.hold_m0), dressPlain(f.hold_m1), dressPlain(f.hold_m2), dressPlain(f.hold_m3plus)].filter(c => c && c.act != null)
+  }].map(g => ({
+    ...g,
+    cards: (g.cards || []).filter(Boolean)
+  })) // card ausente (backend velho) não vira buraco
+  .filter(g => g.cards.length); // grupo sem nenhum card não renderiza título órfão
 }
 
 // Recomputa as métricas de AQUISIÇÃO do Farol com FTDs cohortados por DATA DE CADASTRO (registro), não por
@@ -7050,6 +7064,11 @@ function buildFarolExportGroups_(MM, f, monthlyClose, channels, chFilter, range,
       if (c) G[g.title][c.label] = c;
     });
   });
+  // buildFarolGroups_ agora PODE omitir um grupo inteiro (todos os cards null) — garante o bucket
+  // pra os lookups G['...']['...'] abaixo não estourarem em backend antigo/mock.
+  ['Aquisição', 'Depósito M0', 'Volume & GGR', 'Retenção', 'Margem por safra'].forEach(t => {
+    if (!G[t]) G[t] = {};
+  });
   const relabel = (m, label) => m ? {
     ...m,
     label
@@ -7110,8 +7129,16 @@ function buildFarolExportGroups_(MM, f, monthlyClose, channels, chFilter, range,
     cards: (groups.find(g => g.title === 'Volume & GGR') || {}).cards || []
   }, {
     title: 'Retenção',
-    cards: [G['Retenção']['Depósito M0→M1'], coh('↳ Retido M+1 (R$)', mca.m1, mcb.m1), G['Retenção']['Depósito M1→M2'], coh('↳ Retido M+2 (R$)', mca.m2, mcb.m2), G['Retenção']['Depósito M3+'], coh('↳ Retido M3+ (R$)', mca.m3plus, mcb.m3plus)]
-  }];
+    cards: [G['Retenção']['Depósito M0→M1'], coh('↳ Retido M+1 (R$)', mca.m1, mcb.m1), G['Retenção']['Depósito M1→M2'], coh('↳ Retido M+2 (R$)', mca.m2, mcb.m2), G['Retenção']['Depósito M3+'], coh('↳ Retido M3+ (R$)', mca.m3plus, mcb.m3plus), G['Retenção']['GGR M0→M1'], G['Retenção']['GGR M1→M2'], G['Retenção']['GGR M3+']]
+  },
+  // Margem por safra: sai igual à tela (sem splits/coortes absolutas).
+  {
+    title: 'Margem por safra',
+    cards: (groups.find(g => g.title === 'Margem por safra') || {}).cards || []
+  }].map(g => ({
+    ...g,
+    cards: (g.cards || []).filter(Boolean)
+  })).filter(g => g.cards.length);
 }
 
 // Exporta Farol + Monthly Close num .xlsx (2 abas). Farol = a tela + splits Growth/Not-Growth e coortes
@@ -7230,6 +7257,7 @@ async function exportFarolRange_({
         M: p.metrics,
         componentsByChannel: p.componentsByChannel,
         retentionChannels: p.retentionChannels,
+        ggrRetentionChannels: p.ggrRetentionChannels,
         depM0Channels: p.depM0Channels,
         bp: p.bp,
         ggrSafra: p.ggrSafra,
@@ -8447,7 +8475,7 @@ function deriveMockM_(M, filter) {
 }
 
 // Live: deriva os hero cards do canal/scope a partir dos componentes por canal (exato, mesma fonte do backend).
-function deriveLiveM_(M, filter, comp, retCh, depCh, bp) {
+function deriveLiveM_(M, filter, comp, retCh, depCh, bp, ggrRetCh) {
   const selList = chList_(filter);
   if (!selList.length && filter.scope !== 'growth' || !comp) return M; // Total da Casa: backend já setou BP
   const inSel = selList.length ? ch => selList.includes(ch) : ch => isGrowthCh_(ch);
@@ -8482,6 +8510,20 @@ function deriveLiveM_(M, filter, comp, retCh, depCh, bp) {
     });
     return D > 0 ? N / D : null;
   };
+  // Retenção de GGR: mesmo padrão — soma N e D das linhas do canal (nunca média de %).
+  const grsel = (ggrRetCh || []).filter(c => inSel(c.channel));
+  const gnd = (n, d) => {
+    if (!grsel.length) return undefined;
+    let N = 0,
+      D = 0;
+    grsel.forEach(c => {
+      if (c.nd) {
+        N += c.nd[n] || 0;
+        D += c.nd[d] || 0;
+      }
+    });
+    return D > 0 ? N / D : null;
+  };
   const dsel = (depCh || []).filter(c => inSel(c.channel));
   const depM0Total = dsel.reduce((a, c) => a + (c.depM0 || 0), 0);
   const depM0Growth = dsel.filter(c => isGrowthCh_(c.channel)).reduce((a, c) => a + (c.depM0 || 0), 0);
@@ -8490,6 +8532,8 @@ function deriveLiveM_(M, filter, comp, retCh, depCh, bp) {
     act: act == null ? null : act,
     m1: m1 === undefined ? null : m1
   });
+  // idem, mas degrada: sem o card no payload OU sem a base por canal (undefined), devolve o que veio.
+  const gmk = (m, act) => !m || act === undefined ? m : mk(m, act, null);
   const out = {
     ...M,
     ftdAmount: mk(M.ftdAmount, ftdAmt || null, lFtdAmt || null),
@@ -8506,6 +8550,10 @@ function deriveLiveM_(M, filter, comp, retCh, depCh, bp) {
     retM0M1: mk(M.retM0M1, nd('n1', 'd1'), null),
     retM1M2: mk(M.retM1M2, nd('n2', 'd2'), null),
     retM3plus: mk(M.retM3plus, nd('n3', 'd3'), null),
+    // Backend antigo (sem retGgr*/ggrRetentionChannels): preserva o card como veio — não inventa card vazio.
+    retGgrM0M1: gmk(M.retGgrM0M1, gnd('n1', 'd1')),
+    retGgrM1M2: gmk(M.retGgrM1M2, gnd('n2', 'd2')),
+    retGgrM3plus: gmk(M.retGgrM3plus, gnd('n3', 'd3')),
     depM0Total: mk(M.depM0Total, depM0Total || null, null),
     depM0Growth: mk(M.depM0Growth, depM0Growth || null, null)
   };
@@ -8518,7 +8566,7 @@ function deriveLiveM_(M, filter, comp, retCh, depCh, bp) {
 // D0 e FreeSpins/Bonif = dep_d0/freespin/bonus do mês anterior POR CANAL (depD0Lm/freespinLm/bonusLm do
 // backend) ÷ invest/depTotal do M-1 → some no mock (sem *Lm) e no YTD.
 // BP: CAC/Tkt/ROAS Dep D0/M0 saem do plano per-canal (bp.byChannel); FreeSpins/Bonif não têm meta → farol off.
-function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter) {
+function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra) {
   const sel = chList_(filter);
   const inSel = sel.length ? ch => sel.includes(ch) : filter && filter.scope === 'growth' ? ch => isGrowthCh_(ch) : () => true;
   const sumComp = (bk, key) => {
@@ -8570,6 +8618,26 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter) {
   // BP do ROAS Dep M0 = razão do MÊS INTEIRO do plano (bp.month), NÃO prorateada pela janela: o m0tt
   // diário do plano é front-loaded (runway da coorte), então somar poucos dias contra invest flat INFLA
   // a razão (jul 1-5 = 2,35 vs mês inteiro = 1,9). Total Casa = m0tt/invest; Growth/canal = Dep M0 Growth(colZ)/invest(colN).
+  // MARGEM POR SAFRA (idade de coorte) — GGR/Dep e Hold de cada bucket do payload.ggrSafra, somados no
+  // escopo do filtro de canal (Σ/Σ, nunca média de %). M-1 = mesma janela do mês anterior, que o backend
+  // já manda por bucket (ggrM1/depM1/turnoverM1). Sem BP: o plano tem meta de GGR/Dep e Hold só no nível
+  // da CASA (blend), não por idade de coorte — comparar safra contra a meta do blend seria enganoso.
+  // Janela = MTD (igual ao resto do Farol); a seção Retenção ao lado é mês-calendário, por isso é grupo
+  // separado. Sem ggrSafra no payload → todos os cards ficam null e o grupo some inteiro.
+  const safraMargem = {};
+  [['m0', 'M0'], ['m1', 'M1'], ['m2', 'M2'], ['m3plus', 'M3+']].forEach(([bk, lbl]) => {
+    const arr = filterChannelList_(ggrSafra && ggrSafra[bk] || [], filter);
+    const S = k => arr.reduce((a, c) => a + (c[k] || 0), 0);
+    const on = arr.length > 0;
+    const ggr = S('ggr'),
+      dep = S('dep'),
+      turn = S('turnover');
+    const ggrL = S('ggrM1'),
+      depL = S('depM1'),
+      turnL = S('turnoverM1');
+    safraMargem['ggrDep_' + bk] = mk(`GGR/Dep ${lbl}`, 'pct', on ? div(ggr, dep) : null, null, on ? div(ggrL, depL) : null);
+    safraMargem['hold_' + bk] = mk(`Hold ${lbl}`, 'pct', on ? div(ggr, turn) : null, null, on ? div(ggrL, turnL) : null);
+  });
   const bpM = bp && bp.month || null;
   let roasDepM0Bp = div(dm0.bp, inv.bp); // fallback: razão da janela (mock / sem bp.month)
   if (bpM) {
@@ -8599,6 +8667,7 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter) {
     roasDepD0: mk('ROAS Dep D0', 'multiple', div(depD0M, inv.act), div(B.depD0, B.invest), div(depD0Lm, inv.m1)),
     // BP = razão do MÊS INTEIRO do plano (roasDepM0Bp, calculado acima) — NÃO prorateada pela janela.
     roasDepM0: mk('ROAS Dep M0', 'multiple', div(dm0.act, inv.act), roasDepM0Bp, div(dm0.m1, inv.m1)),
+    ...safraMargem,
     // FreeSpins/Bonif = custos (menor=melhor). BP plano: meta fixa (flat) de % sobre depósitos. Sem trend (pedido do Luis).
     // M-1 = freespin/bonus do mês anterior (mesma janela) ÷ Depósitos Totais do mês anterior (dt.m1).
     freespinDep: mk('FreeSpins / Dep', 'pct', div(fs, dt.act), 0.02, div(fsLm, dt.m1), true),
@@ -9607,7 +9676,7 @@ function filterChannelList_(list, chFilter) {
 // no escopo do chFilter. FONTE ÚNICA: o App (janela atual) e o export YTD (mês a mês) consomem daqui.
 function derivePayloadMetrics_(src, chFilter, isLive) {
   const s = src || {};
-  const displayM = isLive ? deriveLiveM_(s.M, chFilter, s.componentsByChannel, s.retentionChannels, s.depM0Channels, s.bp) : deriveMockM_(s.M, chFilter);
+  const displayM = isLive ? deriveLiveM_(s.M, chFilter, s.componentsByChannel, s.retentionChannels, s.depM0Channels, s.bp, s.ggrRetentionChannels) : deriveMockM_(s.M, chFilter);
   const m0 = s.ggrSafra && s.ggrSafra.m0 ? filterChannelList_(s.ggrSafra.m0, chFilter) : null;
   let dispM = displayM;
   if (m0 && m0.length) {
@@ -9634,7 +9703,7 @@ function derivePayloadMetrics_(src, chFilter, isLive) {
       depM0Growth: over(displayM.depM0Growth, gDep, gDepM1)
     };
   }
-  const farol = buildFarolMetrics_(dispM, s.componentsByChannel, s.channels, s.ggrChannels, s.bp, chFilter);
+  const farol = buildFarolMetrics_(dispM, s.componentsByChannel, s.channels, s.ggrChannels, s.bp, chFilter, s.ggrSafra);
   return {
     dispM,
     farol
@@ -9745,6 +9814,7 @@ function App({
         channels: payload.channels,
         ftdByRegister: payload.ftdByRegister || null,
         retentionChannels: payload.retentionChannels,
+        ggrRetentionChannels: payload.ggrRetentionChannels,
         ggrChannels: payload.ggrChannels,
         ggrSafra: payload.ggrSafra || prev.ggrSafra,
         // mantém o último bom (ou mock) se o live vier vazio → toggle de safra nunca some
@@ -9883,6 +9953,7 @@ function App({
     M: state.M,
     componentsByChannel: state.componentsByChannel,
     retentionChannels: state.retentionChannels,
+    ggrRetentionChannels: state.ggrRetentionChannels,
     depM0Channels: state.depM0Channels,
     bp: state.bp,
     ggrSafra: state.ggrSafra,
