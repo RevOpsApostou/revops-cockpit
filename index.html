@@ -299,11 +299,22 @@
   .hero-farol .hf-trend .trend-tag { color: var(--text-dim); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
   .hero-farol .hf-trend .trend-val { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
   .hero-farol .hf-m1 .m1-val { color: var(--text-dim); font-weight: 600; }
-  /* Sparkline — linha neutra (branca) das 4 semanas fechadas + 1 ponto por semana + seta de direção branca na base */
+  /* Sparkline — linha neutra (branca) das 4 semanas fechadas + 1 ponto por semana + seta de direção branca na base.
+     Cada ponto leva o VALOR da semana num rótulo acima da bolinha (HTML absoluto: o SVG é preserveAspectRatio=none
+     e esticaria o texto). O `top` do rótulo vem do y do ponto em px — logo .spark-svg tem que ter a MESMA altura
+     do viewBox (58, setado inline pelo componente); se mudar o H lá, o rótulo acompanha sozinho. */
   .spark { position: relative; margin-top: 14px; padding-top: 12px; padding-bottom: 6px; border-top: 1px dashed var(--border); }
-  .spark-svg { width: 100%; height: 46px; display: block; }
+  .spark-plot { position: relative; width: 100%; }
+  .spark-svg { width: 100%; height: 100%; display: block; }
   .spark-line { stroke: #e8e8e8; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
   .spark-dot { fill: #f5f5f5; }
+  .spark-lbl {
+    position: absolute; transform: translate(-50%, -100%); margin-top: -7px;
+    font-size: 10.5px; font-weight: 700; line-height: 1; white-space: nowrap;
+    color: var(--text); font-variant-numeric: tabular-nums; letter-spacing: -.01em; pointer-events: auto;
+  }
+  .spark-lbl.start { transform: translate(-3px, -100%); }
+  .spark-lbl.end { transform: translate(calc(-100% + 3px), -100%); }
   .spark-arrow { position: absolute; right: 0; bottom: -8px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 15px; color: var(--text); font-weight: 500; line-height: 1; letter-spacing: -2px; }
   /* Channel table */
   .table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -1421,11 +1432,47 @@ function sparkDir_(vals) {
   return 'flat';
 }
 
+// Rótulo COMPACTO do ponto da sparkline (o card já mostra a unidade no valor grande, então o R$ sai
+// pra caber 4 rótulos lado a lado). Mantém % e x, que SÃO a unidade e sem elas o número fica ambíguo.
+function sparkLbl_(v, fmt) {
+  if (v == null || !isFinite(v)) return '';
+  const a = Math.abs(v),
+    s = v < 0 ? '-' : '';
+  const dec = (x, d) => x.toFixed(d).replace('.', ',');
+  // brl: MESMA escala/casas do valor grande do card (fmtBRL), só sem o "R$" — a unidade já está no card,
+  // e repetir 4× rouba a largura que os rótulos precisam pra não colidir.
+  if (fmt === 'brl') return fmtBRL(v).replace('R$ ', '');
+  if (fmt === 'qty') {
+    if (a >= 1e6) return s + dec(a / 1e6, 1) + 'M';
+    if (a >= 1e4) return s + dec(a / 1e3, 1) + 'k';
+    return fmtQty(v);
+  }
+  if (fmt === 'pct') return fmtPct(v, 1);
+  if (fmt === 'multiple') return fmtMultiple(v);
+  return fmtVal(v, fmt);
+}
+
+// 'YYYY-MM-DD' (segunda-feira, início da semana) → '07–13/07' (seg–dom). UTC pra não escorregar por DST.
+function sparkWeekLbl_(w) {
+  const p = String(w || '').slice(0, 10).split('-');
+  if (p.length < 3 || !p[0]) return String(w || '');
+  const ini = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2]));
+  if (isNaN(ini.getTime())) return String(w);
+  const fim = new Date(ini.getTime() + 6 * 864e5);
+  const dm = x => String(x.getUTCDate()).padStart(2, '0') + '/' + String(x.getUTCMonth() + 1).padStart(2, '0');
+  return dm(ini) + '–' + dm(fim);
+}
+
 // Sparkline dos hero cards do Farol: linha NEUTRA (branca) das últimas 4 semanas fechadas, um ponto por
 // semana, + seta ↑↑/→→/↓↓ (direção) branca na base. Cor de status fica SÓ na bolinha do farol (de propósito).
 // Escala com amplitude mínima (~6% da média) pra série flat parecer flat, não amplificar ruído.
+// Cada ponto carrega o VALOR daquela semana (rótulo acima da bolinha) + tooltip com o intervalo de datas —
+// sem isso a linha só dizia "sobe/desce", não QUANTO. Os rótulos são HTML absoluto (não <text> no SVG)
+// porque o SVG usa preserveAspectRatio="none": texto dentro dele sairia esticado na horizontal.
 function Sparkline({
-  values
+  values,
+  weeks,
+  fmt
 }) {
   const raw = values || [];
   const idx = [];
@@ -1433,12 +1480,13 @@ function Sparkline({
     if (v != null && isFinite(v)) idx.push(i);
   });
   if (idx.length < 2) return null;
+  // padTop maior que o padBot: abre a faixa onde os rótulos ficam, sem achatar a curva (H cresceu junto).
   const n = raw.length,
     W = 300,
-    H = 46,
+    H = 58,
     padX = 5,
-    padTop = 8,
-    padBot = 8;
+    padTop = 20,
+    padBot = 10;
   const xs = i => padX + (n > 1 ? i * ((W - 2 * padX) / (n - 1)) : W / 2);
   const vals = idx.map(i => raw[i]);
   const mn = Math.min.apply(null, vals),
@@ -1455,9 +1503,16 @@ function Sparkline({
   const dir = sparkDir_(raw);
   const arrow = dir === 'up' ? '↑↑' : dir === 'down' ? '↓↓' : '→→';
   const dirLbl = dir === 'up' ? 'subindo' : dir === 'down' ? 'caindo' : 'estável';
+  const wk = weeks || [];
+  const tip = i => (wk[i] ? `Semana ${sparkWeekLbl_(wk[i])} · ` : '') + fmtVal(raw[i], fmt);
   return /*#__PURE__*/React.createElement("div", {
     className: "spark",
-    title: `Últimas 4 semanas fechadas · ${dirLbl}`
+    title: `Últimas 4 semanas fechadas (seg–dom) · ${dirLbl}`
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "spark-plot",
+    style: {
+      height: H + 'px'
+    }
   }, /*#__PURE__*/React.createElement("svg", {
     className: "spark-svg",
     viewBox: `0 0 ${W} ${H}`,
@@ -1473,7 +1528,20 @@ function Sparkline({
     cy: p[1],
     r: "3",
     className: "spark-dot"
-  }))), /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("title", null, tip(idx[k]))))), pts.map((p, k) => {
+    const i = idx[k];
+    // ponta esquerda/direita ancoram na borda pra o rótulo não vazar do card
+    const anchor = i === 0 ? 'start' : i === n - 1 ? 'end' : 'mid';
+    return /*#__PURE__*/React.createElement("span", {
+      key: k,
+      className: `spark-lbl ${anchor}`,
+      style: {
+        left: p[0] / W * 100 + '%',
+        top: p[1] + 'px'
+      },
+      title: tip(i)
+    }, sparkLbl_(raw[i], fmt));
+  })), /*#__PURE__*/React.createElement("span", {
     className: "spark-arrow",
     "aria-hidden": "true"
   }, arrow));
@@ -1535,7 +1603,9 @@ function Hero({
     }, /*#__PURE__*/React.createElement("span", {
       className: "share-val"
     }, fmtPct(metric.share, 0)), ' ', "do ", metric.shareUnit || 'GGR'))), metric.spark ? /*#__PURE__*/React.createElement(Sparkline, {
-      values: metric.spark
+      values: metric.spark,
+      weeks: metric.sparkWeeks,
+      fmt: metric.fmt
     }) : null);
   }
   return /*#__PURE__*/React.createElement("div", {
@@ -6597,12 +6667,14 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, scenLabel) {
   // Pendura a série das 4 semanas (.spark) no card, quando há dado — só cards de FLUXO recebem chave em sparkByKey.
   // Dep M0/ROAS Dep M0/Retenção NÃO têm chave (maturação de coorte) → seguem sem linha, com o header novo.
   const SP = sparkByKey || {};
+  // sparkWeeks vai junto pro rótulo/tooltip de cada ponto saber a QUAL semana pertence.
   const ws = (m, key) => {
     if (!m) return m;
     const s = SP[key];
     return s && s.some(v => v != null && isFinite(v)) ? {
       ...m,
-      spark: s
+      spark: s,
+      sparkWeeks: SP.__weeks || null
     } : m;
   };
   // Prefixo do "BP" no card = nome do cenário ATIVO (Orçado/Conservador/Forecast) — segue o toggle lá de cima.

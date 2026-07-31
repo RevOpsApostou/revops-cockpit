@@ -303,14 +303,48 @@ function sparkDir_(vals) {
   return 'flat';
 }
 
+// Rótulo COMPACTO do ponto da sparkline (o card já mostra a unidade no valor grande, então o R$ sai
+// pra caber 4 rótulos lado a lado). Mantém % e x, que SÃO a unidade e sem elas o número fica ambíguo.
+function sparkLbl_(v, fmt) {
+  if (v == null || !isFinite(v)) return '';
+  const a = Math.abs(v), s = v < 0 ? '-' : '';
+  const dec = (x, d) => x.toFixed(d).replace('.', ',');
+  // brl: MESMA escala/casas do valor grande do card (fmtBRL), só sem o "R$" — a unidade já está no card,
+  // e repetir 4× rouba a largura que os rótulos precisam pra não colidir.
+  if (fmt === 'brl') return fmtBRL(v).replace('R$ ', '');
+  if (fmt === 'qty') {
+    if (a >= 1e6) return s + dec(a / 1e6, 1) + 'M';
+    if (a >= 1e4) return s + dec(a / 1e3, 1) + 'k';
+    return fmtQty(v);
+  }
+  if (fmt === 'pct') return fmtPct(v, 1);
+  if (fmt === 'multiple') return fmtMultiple(v);
+  return fmtVal(v, fmt);
+}
+
+// 'YYYY-MM-DD' (segunda-feira, início da semana) → '07–13/07' (seg–dom). UTC pra não escorregar por DST.
+function sparkWeekLbl_(w) {
+  const p = String(w || '').slice(0, 10).split('-');
+  if (p.length < 3 || !p[0]) return String(w || '');
+  const ini = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2]));
+  if (isNaN(ini.getTime())) return String(w);
+  const fim = new Date(ini.getTime() + 6 * 864e5);
+  const dm = (x) => String(x.getUTCDate()).padStart(2, '0') + '/' + String(x.getUTCMonth() + 1).padStart(2, '0');
+  return dm(ini) + '–' + dm(fim);
+}
+
 // Sparkline dos hero cards do Farol: linha NEUTRA (branca) das últimas 4 semanas fechadas, um ponto por
 // semana, + seta ↑↑/→→/↓↓ (direção) branca na base. Cor de status fica SÓ na bolinha do farol (de propósito).
 // Escala com amplitude mínima (~6% da média) pra série flat parecer flat, não amplificar ruído.
-function Sparkline({ values }) {
+// Cada ponto carrega o VALOR daquela semana (rótulo acima da bolinha) + tooltip com o intervalo de datas —
+// sem isso a linha só dizia "sobe/desce", não QUANTO. Os rótulos são HTML absoluto (não <text> no SVG)
+// porque o SVG usa preserveAspectRatio="none": texto dentro dele sairia esticado na horizontal.
+function Sparkline({ values, weeks, fmt }) {
   const raw = values || [];
   const idx = []; raw.forEach((v, i) => { if (v != null && isFinite(v)) idx.push(i); });
   if (idx.length < 2) return null;
-  const n = raw.length, W = 300, H = 46, padX = 5, padTop = 8, padBot = 8;
+  // padTop maior que o padBot: abre a faixa onde os rótulos ficam, sem achatar a curva (H cresceu junto).
+  const n = raw.length, W = 300, H = 58, padX = 5, padTop = 20, padBot = 10;
   const xs = (i) => padX + (n > 1 ? i * ((W - 2 * padX) / (n - 1)) : (W / 2));
   const vals = idx.map(i => raw[i]);
   const mn = Math.min.apply(null, vals), mx = Math.max.apply(null, vals);
@@ -324,12 +358,31 @@ function Sparkline({ values }) {
   const dir = sparkDir_(raw);
   const arrow = dir === 'up' ? '↑↑' : dir === 'down' ? '↓↓' : '→→';
   const dirLbl = dir === 'up' ? 'subindo' : dir === 'down' ? 'caindo' : 'estável';
+  const wk = weeks || [];
+  const tip = (i) => (wk[i] ? `Semana ${sparkWeekLbl_(wk[i])} · ` : '') + fmtVal(raw[i], fmt);
   return (
-    <div className="spark" title={`Últimas 4 semanas fechadas · ${dirLbl}`}>
-      <svg className="spark-svg" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
-        <path d={d} className="spark-line" fill="none" vectorEffect="non-scaling-stroke" />
-        {pts.map((p, k) => <circle key={k} cx={p[0]} cy={p[1]} r="3" className="spark-dot" />)}
-      </svg>
+    <div className="spark" title={`Últimas 4 semanas fechadas (seg–dom) · ${dirLbl}`}>
+      {/* a altura CSS do .spark-svg é IGUAL ao H do viewBox → o y do ponto vira px direto no `top` do rótulo */}
+      <div className="spark-plot" style={{ height: H + 'px' }}>
+        <svg className="spark-svg" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+          <path d={d} className="spark-line" fill="none" vectorEffect="non-scaling-stroke" />
+          {pts.map((p, k) => (
+            <circle key={k} cx={p[0]} cy={p[1]} r="3" className="spark-dot">
+              <title>{tip(idx[k])}</title>
+            </circle>
+          ))}
+        </svg>
+        {pts.map((p, k) => {
+          const i = idx[k];
+          // ponta esquerda/direita ancoram na borda pra o rótulo não vazar do card
+          const anchor = i === 0 ? 'start' : (i === n - 1 ? 'end' : 'mid');
+          return (
+            <span key={k} className={`spark-lbl ${anchor}`} style={{ left: (p[0] / W * 100) + '%', top: p[1] + 'px' }} title={tip(i)}>
+              {sparkLbl_(raw[i], fmt)}
+            </span>
+          );
+        })}
+      </div>
       <span className="spark-arrow" aria-hidden="true">{arrow}</span>
     </div>
   );
@@ -381,7 +434,7 @@ function Hero({ metric, variant }) {
             )}
           </div>
         </div>
-        {metric.spark ? <Sparkline values={metric.spark} /> : null}
+        {metric.spark ? <Sparkline values={metric.spark} weeks={metric.sparkWeeks} fmt={metric.fmt} /> : null}
       </div>
     );
   }
@@ -3373,7 +3426,8 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, scenLabel) {
   // Pendura a série das 4 semanas (.spark) no card, quando há dado — só cards de FLUXO recebem chave em sparkByKey.
   // Dep M0/ROAS Dep M0/Retenção NÃO têm chave (maturação de coorte) → seguem sem linha, com o header novo.
   const SP = sparkByKey || {};
-  const ws = (m, key) => { if (!m) return m; const s = SP[key]; return (s && s.some(v => v != null && isFinite(v))) ? { ...m, spark: s } : m; };
+  // sparkWeeks vai junto pro rótulo/tooltip de cada ponto saber a QUAL semana pertence.
+  const ws = (m, key) => { if (!m) return m; const s = SP[key]; return (s && s.some(v => v != null && isFinite(v))) ? { ...m, spark: s, sparkWeeks: SP.__weeks || null } : m; };
   // Prefixo do "BP" no card = nome do cenário ATIVO (Orçado/Conservador/Forecast) — segue o toggle lá de cima.
   // scenLabel = cenário ativo (só nos cards que o applyScenarioBp_ re-anchora); baseLabel = Orçado (meta FIXA:
   // Retenção/FreeSpins/Bonif NÃO mudam por cenário, então continuam "Orçado" mesmo em Conservador/Forecast).
