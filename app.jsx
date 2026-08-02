@@ -360,6 +360,12 @@ function Sparkline({ values, weeks, fmt }) {
   const dirLbl = dir === 'up' ? 'subindo' : dir === 'down' ? 'caindo' : 'estável';
   const wk = weeks || [];
   const tip = (i) => (wk[i] ? `Semana ${sparkWeekLbl_(wk[i])} · ` : '') + fmtVal(raw[i], fmt);
+  // Intervalo COBERTO pelas bolinhas, impresso no card (à esquerda, na linha da seta — lado sempre vazio).
+  // Sem isso a linha vira armadilha: numa janela curta o card mostra 5 dias e as bolinhas mostram as 4
+  // semanas fechadas que desembocam nela, e não dá pra saber disso sem passar o mouse.
+  const rangeLbl = wk.length
+    ? sparkWeekLbl_(wk[0]).split('–')[0] + '–' + sparkWeekLbl_(wk[wk.length - 1]).split('–')[1]
+    : '';
   return (
     <div className="spark" title={`${n} semana${n > 1 ? 's' : ''} fechada${n > 1 ? 's' : ''} (seg–dom) dentro do período · ${dirLbl}`}>
       {/* a altura CSS do .spark-svg é IGUAL ao H do viewBox → o y do ponto vira px direto no `top` do rótulo */}
@@ -383,6 +389,7 @@ function Sparkline({ values, weeks, fmt }) {
           );
         })}
       </div>
+      {rangeLbl ? <span className="spark-range">{rangeLbl}</span> : null}
       <span className="spark-arrow" aria-hidden="true">{arrow}</span>
     </div>
   );

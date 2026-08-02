@@ -315,6 +315,8 @@
   }
   .spark-lbl.start { transform: translate(-3px, -100%); }
   .spark-lbl.end { transform: translate(calc(-100% + 3px), -100%); }
+  /* intervalo coberto pelas bolinhas — mesma linha da seta, lado esquerdo (sempre livre) */
+  .spark-range { position: absolute; left: 0; bottom: -6px; font-size: 9.5px; line-height: 1; color: var(--text-dim); font-variant-numeric: tabular-nums; letter-spacing: -.01em; white-space: nowrap; }
   .spark-arrow { position: absolute; right: 0; bottom: -8px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 15px; color: var(--text); font-weight: 500; line-height: 1; letter-spacing: -2px; }
   /* Channel table */
   .table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -1505,6 +1507,10 @@ function Sparkline({
   const dirLbl = dir === 'up' ? 'subindo' : dir === 'down' ? 'caindo' : 'estável';
   const wk = weeks || [];
   const tip = i => (wk[i] ? `Semana ${sparkWeekLbl_(wk[i])} · ` : '') + fmtVal(raw[i], fmt);
+  // Intervalo COBERTO pelas bolinhas, impresso no card (à esquerda, na linha da seta — lado sempre vazio).
+  // Sem isso a linha vira armadilha: numa janela curta o card mostra 5 dias e as bolinhas mostram as 4
+  // semanas fechadas que desembocam nela, e não dá pra saber disso sem passar o mouse.
+  const rangeLbl = wk.length ? sparkWeekLbl_(wk[0]).split('–')[0] + '–' + sparkWeekLbl_(wk[wk.length - 1]).split('–')[1] : '';
   return /*#__PURE__*/React.createElement("div", {
     className: "spark",
     title: `${n} semana${n > 1 ? 's' : ''} fechada${n > 1 ? 's' : ''} (seg–dom) dentro do período · ${dirLbl}`
@@ -1541,7 +1547,9 @@ function Sparkline({
       },
       title: tip(i)
     }, sparkLbl_(raw[i], fmt));
-  })), /*#__PURE__*/React.createElement("span", {
+  })), rangeLbl ? /*#__PURE__*/React.createElement("span", {
+    className: "spark-range"
+  }, rangeLbl) : null, /*#__PURE__*/React.createElement("span", {
     className: "spark-arrow",
     "aria-hidden": "true"
   }, arrow));
