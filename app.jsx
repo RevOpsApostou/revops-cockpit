@@ -361,7 +361,7 @@ function Sparkline({ values, weeks, fmt }) {
   const wk = weeks || [];
   const tip = (i) => (wk[i] ? `Semana ${sparkWeekLbl_(wk[i])} · ` : '') + fmtVal(raw[i], fmt);
   return (
-    <div className="spark" title={`Últimas 4 semanas fechadas (seg–dom) · ${dirLbl}`}>
+    <div className="spark" title={`4 semanas fechadas até a data de referência do período (seg–dom) · ${dirLbl}`}>
       {/* a altura CSS do .spark-svg é IGUAL ao H do viewBox → o y do ponto vira px direto no `top` do rótulo */}
       <div className="spark-plot" style={{ height: H + 'px' }}>
         <svg className="spark-svg" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">

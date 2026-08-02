@@ -1507,7 +1507,7 @@ function Sparkline({
   const tip = i => (wk[i] ? `Semana ${sparkWeekLbl_(wk[i])} · ` : '') + fmtVal(raw[i], fmt);
   return /*#__PURE__*/React.createElement("div", {
     className: "spark",
-    title: `Últimas 4 semanas fechadas (seg–dom) · ${dirLbl}`
+    title: `4 semanas fechadas até a data de referência do período (seg–dom) · ${dirLbl}`
   }, /*#__PURE__*/React.createElement("div", {
     className: "spark-plot",
     style: {
