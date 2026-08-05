@@ -2220,9 +2220,125 @@ function TabAquisicao({
     bp: bp
   })));
 }
+
+// ============================================================
+// PLANO DE RETENÇÃO DESDOBRADO — os 3 cenários não declaram taxa de retenção, declaram os VALORES das
+// linhas M0/M+1/M+2/M3+ mês a mês. Aqui a taxa implícita de cada cenário aparece ao lado do realizado,
+// junto com a composição do depósito planejado. Regra cross-period (igual bpRetention_/Farol):
+//   M0→M1 = M+1[mês ref] ÷ M0[mês ANTERIOR] · M1→M2 = M+2[ref] ÷ M+1[ant] · M3+ = M3+[ref] ÷ (M3++M+2)[ant]
+// Taxa mensal NÃO prorrateia → usa os dois meses CHEIOS do plano, não a janela MTD do slicer.
+// ============================================================
+const PLAN_SCEN_LABEL = {
+  bp: 'Orçado',
+  conserv: 'Conservador',
+  rolling: 'Forecast'
+};
+function PlanRetentionTable({
+  planRetention,
+  M
+}) {
+  const pr = planRetention;
+  if (!pr || !pr.scenarios) return /*#__PURE__*/React.createElement("div", {
+    className: "ch-note"
+  }, "Plano de reten\xE7\xE3o indispon\xEDvel neste payload (backend anterior ao v59) \u2014 recarregue com Atualizar.");
+  const act = {
+    m0m1: M.retM0M1 && M.retM0M1.act,
+    m1m2: M.retM1M2 && M.retM1M2.act,
+    m3plus: M.retM3plus && M.retM3plus.act
+  };
+  const scen = ['bp', 'conserv', 'rolling'];
+  const gapCell = (plan, a) => {
+    if (plan == null || a == null) return /*#__PURE__*/React.createElement("td", {
+      style: {
+        color: 'var(--text-muted)'
+      }
+    }, "\u2014");
+    const d = a - plan;
+    return /*#__PURE__*/React.createElement("td", {
+      style: {
+        color: d >= 0 ? 'var(--accent-green)' : 'var(--accent-red)',
+        fontWeight: 600
+      }
+    }, (d >= 0 ? '+' : '') + fmtPct(d, 1));
+  };
+  const mL = mk => mk ? monthLabelPt_(mk + '-01') : '—';
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "table-scroll"
+  }, /*#__PURE__*/React.createElement("table", {
+    className: "ch-table"
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Cen\xE1rio"), /*#__PURE__*/React.createElement("th", {
+    title: "M+1 do m\xEAs de refer\xEAncia \xF7 M0 do m\xEAs anterior, direto das linhas do plano."
+  }, "M0\u2192M1 plano"), /*#__PURE__*/React.createElement("th", null, "vs realizado"), /*#__PURE__*/React.createElement("th", {
+    title: "M+2 do m\xEAs de refer\xEAncia \xF7 M+1 do m\xEAs anterior."
+  }, "M1\u2192M2 plano"), /*#__PURE__*/React.createElement("th", null, "vs realizado"), /*#__PURE__*/React.createElement("th", {
+    title: "M3+ do m\xEAs de refer\xEAncia \xF7 (M3+ + M+2) do m\xEAs anterior."
+  }, "M3+ plano"), /*#__PURE__*/React.createElement("th", null, "vs realizado"), /*#__PURE__*/React.createElement("th", {
+    title: "Dep\xF3sito total planejado no m\xEAs de refer\xEAncia."
+  }, "Dep\xF3sito plano"))), /*#__PURE__*/React.createElement("tbody", null, scen.map(s => {
+    const r = pr.scenarios[s];
+    if (!r) return null;
+    return /*#__PURE__*/React.createElement("tr", {
+      key: s
+    }, /*#__PURE__*/React.createElement("td", {
+      className: "ch-name"
+    }, PLAN_SCEN_LABEL[s]), /*#__PURE__*/React.createElement("td", null, fmtPct(r.m0m1, 1)), gapCell(r.m0m1, act.m0m1), /*#__PURE__*/React.createElement("td", null, fmtPct(r.m1m2, 1)), gapCell(r.m1m2, act.m1m2), /*#__PURE__*/React.createElement("td", null, fmtPct(r.m3plus, 1)), gapCell(r.m3plus, act.m3plus), /*#__PURE__*/React.createElement("td", null, fmtBRL(r.comp && r.comp.totDep)));
+  })), /*#__PURE__*/React.createElement("tfoot", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", null, "Realizado"), /*#__PURE__*/React.createElement("td", {
+    colSpan: 2
+  }, fmtPct(act.m0m1, 1)), /*#__PURE__*/React.createElement("td", {
+    colSpan: 2
+  }, fmtPct(act.m1m2, 1)), /*#__PURE__*/React.createElement("td", {
+    colSpan: 2
+  }, fmtPct(act.m3plus, 1)), /*#__PURE__*/React.createElement("td", null, "\u2014"))))), /*#__PURE__*/React.createElement("div", {
+    className: "support-title",
+    style: {
+      marginTop: '18px'
+    }
+  }, "Composi\xE7\xE3o do dep\xF3sito planejado \xB7 ", mL(pr.refMonth)), /*#__PURE__*/React.createElement("div", {
+    className: "table-scroll"
+  }, /*#__PURE__*/React.createElement("table", {
+    className: "ch-table"
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Cen\xE1rio"), /*#__PURE__*/React.createElement("th", null, "M0 (safra do m\xEAs)"), /*#__PURE__*/React.createElement("th", null, "M+1"), /*#__PURE__*/React.createElement("th", null, "M+2"), /*#__PURE__*/React.createElement("th", null, "M3+"), /*#__PURE__*/React.createElement("th", null, "Reativados"), /*#__PURE__*/React.createElement("th", null, "Total"))), /*#__PURE__*/React.createElement("tbody", null, scen.map(s => {
+    const c = pr.scenarios[s] && pr.scenarios[s].comp;
+    if (!c) return null;
+    const sh = v => c.totDep > 0 ? ` (${fmtPct(v / c.totDep, 0)})` : '';
+    return /*#__PURE__*/React.createElement("tr", {
+      key: s
+    }, /*#__PURE__*/React.createElement("td", {
+      className: "ch-name"
+    }, PLAN_SCEN_LABEL[s]), /*#__PURE__*/React.createElement("td", null, fmtBRL(c.m0), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: 'var(--text-muted)',
+        fontSize: '11px'
+      }
+    }, sh(c.m0))), /*#__PURE__*/React.createElement("td", null, fmtBRL(c.m1), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: 'var(--text-muted)',
+        fontSize: '11px'
+      }
+    }, sh(c.m1))), /*#__PURE__*/React.createElement("td", null, fmtBRL(c.m2), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: 'var(--text-muted)',
+        fontSize: '11px'
+      }
+    }, sh(c.m2))), /*#__PURE__*/React.createElement("td", null, fmtBRL(c.m3plus), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: 'var(--text-muted)',
+        fontSize: '11px'
+      }
+    }, sh(c.m3plus))), /*#__PURE__*/React.createElement("td", null, fmtBRL(c.reat), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: 'var(--text-muted)',
+        fontSize: '11px'
+      }
+    }, sh(c.reat))), /*#__PURE__*/React.createElement("td", null, fmtBRL(c.totDep)));
+  })))), /*#__PURE__*/React.createElement("div", {
+    className: "ch-note"
+  }, "Os cen\xE1rios do plano ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o declaram taxa de reten\xE7\xE3o"), " \u2014 declaram os valores de M0/M+1/M+2/M3+ m\xEAs a m\xEAs. As taxas acima s\xE3o o que esses valores ", /*#__PURE__*/React.createElement("strong", null, "implicam"), ", pela mesma regra cross-period do Farol: ", /*#__PURE__*/React.createElement("strong", null, "M0\u2192M1 = M+1 de ", mL(pr.refMonth), " \xF7 M0 de ", mL(pr.prevMonth)), " (idem M1\u2192M2; M3+ divide por M3+ + M+2 do m\xEAs anterior). Reten\xE7\xE3o \xE9 taxa mensal e ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o prorrateia"), ": usa os dois meses cheios do plano, n\xE3o a janela do slicer \u2014 por isso n\xE3o muda quando voc\xEA mexe no per\xEDodo.", ' ', "A coluna ", /*#__PURE__*/React.createElement("strong", null, "vs realizado"), " \xE9 a diferen\xE7a em pontos percentuais contra o realizado do topo.", ' ', "Vale ler junto com a composi\xE7\xE3o: um cen\xE1rio pode bater a taxa e errar o dep\xF3sito se a safra M0 n\xE3o vier."));
+}
 function TabRetencao({
   M,
-  retentionChannels
+  retentionChannels,
+  planRetention
 }) {
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "tab-header"
@@ -2243,6 +2359,13 @@ function TabRetencao({
   }, "Reten\xE7\xE3o por Canal"), /*#__PURE__*/React.createElement(RetentionTable, {
     channels: retentionChannels,
     totalM3plus: M.retM3plus && M.retM3plus.act
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "support"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "support-title"
+  }, "Plano de reten\xE7\xE3o desdobrado \xB7 3 cen\xE1rios", planRetention && planRetention.refMonth ? ' · ' + monthLabelPt_(planRetention.refMonth + '-01') : ''), /*#__PURE__*/React.createElement(PlanRetentionTable, {
+    planRetention: planRetention,
+    M: M
   })));
 }
 
@@ -10359,6 +10482,8 @@ function App({
     bp: MOCK_BP,
     planScenarios: null,
     // plano de aquisição 3 cenários {bp,conserv,rolling} (aba DB Plan_Growth Mkt) — switch do Farol (só live/backend v42+)
+    planRetention: null,
+    // retenção implícita nos 3 cenários + composição do depósito planejado (aba DB Plan_RevOps) — aba Retenções (só backend v59+)
     farolSpark: null,
     // últimas 4 semanas fechadas por KPI (semana × canal) — linha de tendência nos hero cards do Farol (só live/backend v50+)
     isLive: false,
@@ -10416,6 +10541,7 @@ function App({
         rolloverMatrix: payload.rolloverMatrix,
         bp: payload.bp || null,
         planScenarios: payload.planScenarios || null,
+        planRetention: payload.planRetention || null,
         farolSpark: payload.farolSpark || null,
         isLive: true
       }));
@@ -10618,6 +10744,8 @@ function App({
     // FTDs por canal por data de cadastro — toggle no Farol (Aquisição)
     planScenarios: state.planScenarios,
     // plano 3 cenários (BP/Conservador/Rolling) — switch de cenário do Farol
+    planRetention: state.planRetention,
+    // retenção implícita nos 3 cenários + composição do depósito — aba Retenções
     farolSpark: state.farolSpark,
     // últimas 4 semanas fechadas por KPI — linha de tendência nos hero cards do Farol
     ytd,

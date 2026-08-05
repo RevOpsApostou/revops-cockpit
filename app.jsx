@@ -952,7 +952,101 @@ function TabAquisicao({ M, channels, bp }) {
   );
 }
 
-function TabRetencao({ M, retentionChannels }) {
+// ============================================================
+// PLANO DE RETENÇÃO DESDOBRADO — os 3 cenários não declaram taxa de retenção, declaram os VALORES das
+// linhas M0/M+1/M+2/M3+ mês a mês. Aqui a taxa implícita de cada cenário aparece ao lado do realizado,
+// junto com a composição do depósito planejado. Regra cross-period (igual bpRetention_/Farol):
+//   M0→M1 = M+1[mês ref] ÷ M0[mês ANTERIOR] · M1→M2 = M+2[ref] ÷ M+1[ant] · M3+ = M3+[ref] ÷ (M3++M+2)[ant]
+// Taxa mensal NÃO prorrateia → usa os dois meses CHEIOS do plano, não a janela MTD do slicer.
+// ============================================================
+const PLAN_SCEN_LABEL = { bp: 'Orçado', conserv: 'Conservador', rolling: 'Forecast' };
+function PlanRetentionTable({ planRetention, M }) {
+  const pr = planRetention;
+  if (!pr || !pr.scenarios) return <div className="ch-note">Plano de retenção indisponível neste payload (backend anterior ao v59) — recarregue com Atualizar.</div>;
+  const act = { m0m1: M.retM0M1 && M.retM0M1.act, m1m2: M.retM1M2 && M.retM1M2.act, m3plus: M.retM3plus && M.retM3plus.act };
+  const scen = ['bp', 'conserv', 'rolling'];
+  const gapCell = (plan, a) => {
+    if (plan == null || a == null) return <td style={{ color: 'var(--text-muted)' }}>—</td>;
+    const d = a - plan;
+    return <td style={{ color: d >= 0 ? 'var(--accent-green)' : 'var(--accent-red)', fontWeight: 600 }}>{(d >= 0 ? '+' : '') + fmtPct(d, 1)}</td>;
+  };
+  const mL = (mk) => mk ? monthLabelPt_(mk + '-01') : '—';
+  return (
+    <React.Fragment>
+      <div className="table-scroll"><table className="ch-table">
+        <thead>
+          <tr>
+            <th>Cenário</th>
+            <th title="M+1 do mês de referência ÷ M0 do mês anterior, direto das linhas do plano.">M0→M1 plano</th>
+            <th>vs realizado</th>
+            <th title="M+2 do mês de referência ÷ M+1 do mês anterior.">M1→M2 plano</th>
+            <th>vs realizado</th>
+            <th title="M3+ do mês de referência ÷ (M3+ + M+2) do mês anterior.">M3+ plano</th>
+            <th>vs realizado</th>
+            <th title="Depósito total planejado no mês de referência.">Depósito plano</th>
+          </tr>
+        </thead>
+        <tbody>
+          {scen.map(s => {
+            const r = pr.scenarios[s]; if (!r) return null;
+            return (
+              <tr key={s}>
+                <td className="ch-name">{PLAN_SCEN_LABEL[s]}</td>
+                <td>{fmtPct(r.m0m1, 1)}</td>{gapCell(r.m0m1, act.m0m1)}
+                <td>{fmtPct(r.m1m2, 1)}</td>{gapCell(r.m1m2, act.m1m2)}
+                <td>{fmtPct(r.m3plus, 1)}</td>{gapCell(r.m3plus, act.m3plus)}
+                <td>{fmtBRL(r.comp && r.comp.totDep)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td>Realizado</td>
+            <td colSpan={2}>{fmtPct(act.m0m1, 1)}</td>
+            <td colSpan={2}>{fmtPct(act.m1m2, 1)}</td>
+            <td colSpan={2}>{fmtPct(act.m3plus, 1)}</td>
+            <td>—</td>
+          </tr>
+        </tfoot>
+      </table></div>
+      <div className="support-title" style={{ marginTop: '18px' }}>Composição do depósito planejado · {mL(pr.refMonth)}</div>
+      <div className="table-scroll"><table className="ch-table">
+        <thead>
+          <tr><th>Cenário</th><th>M0 (safra do mês)</th><th>M+1</th><th>M+2</th><th>M3+</th><th>Reativados</th><th>Total</th></tr>
+        </thead>
+        <tbody>
+          {scen.map(s => {
+            const c = pr.scenarios[s] && pr.scenarios[s].comp; if (!c) return null;
+            const sh = (v) => c.totDep > 0 ? ` (${fmtPct(v / c.totDep, 0)})` : '';
+            return (
+              <tr key={s}>
+                <td className="ch-name">{PLAN_SCEN_LABEL[s]}</td>
+                <td>{fmtBRL(c.m0)}<span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{sh(c.m0)}</span></td>
+                <td>{fmtBRL(c.m1)}<span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{sh(c.m1)}</span></td>
+                <td>{fmtBRL(c.m2)}<span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{sh(c.m2)}</span></td>
+                <td>{fmtBRL(c.m3plus)}<span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{sh(c.m3plus)}</span></td>
+                <td>{fmtBRL(c.reat)}<span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{sh(c.reat)}</span></td>
+                <td>{fmtBRL(c.totDep)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table></div>
+      <div className="ch-note">
+        Os cenários do plano <strong>não declaram taxa de retenção</strong> — declaram os valores de M0/M+1/M+2/M3+
+        mês a mês. As taxas acima são o que esses valores <strong>implicam</strong>, pela mesma regra cross-period do
+        Farol: <strong>M0→M1 = M+1 de {mL(pr.refMonth)} ÷ M0 de {mL(pr.prevMonth)}</strong> (idem M1→M2; M3+ divide por
+        M3+ + M+2 do mês anterior). Retenção é taxa mensal e <strong>não prorrateia</strong>: usa os dois meses cheios
+        do plano, não a janela do slicer — por isso não muda quando você mexe no período.
+        {' '}A coluna <strong>vs realizado</strong> é a diferença em pontos percentuais contra o realizado do topo.
+        {' '}Vale ler junto com a composição: um cenário pode bater a taxa e errar o depósito se a safra M0 não vier.
+      </div>
+    </React.Fragment>
+  );
+}
+
+function TabRetencao({ M, retentionChannels, planRetention }) {
   return (
     <React.Fragment>
       <div className="tab-header">
@@ -972,6 +1066,10 @@ function TabRetencao({ M, retentionChannels }) {
           <RetentionTable channels={retentionChannels} totalM3plus={M.retM3plus && M.retM3plus.act} />
         </div>
       )}
+      <div className="support">
+        <div className="support-title">Plano de retenção desdobrado · 3 cenários{planRetention && planRetention.refMonth ? ' · ' + monthLabelPt_(planRetention.refMonth + '-01') : ''}</div>
+        <PlanRetentionTable planRetention={planRetention} M={M} />
+      </div>
     </React.Fragment>
   );
 }
@@ -5548,6 +5646,7 @@ function App({ user, onLogout, config }) {
     rolloverMatrix: MOCK_ROLLOVER_MATRIX,
     bp: MOCK_BP,
     planScenarios: null,       // plano de aquisição 3 cenários {bp,conserv,rolling} (aba DB Plan_Growth Mkt) — switch do Farol (só live/backend v42+)
+    planRetention: null,       // retenção implícita nos 3 cenários + composição do depósito planejado (aba DB Plan_RevOps) — aba Retenções (só backend v59+)
     farolSpark: null,          // últimas 4 semanas fechadas por KPI (semana × canal) — linha de tendência nos hero cards do Farol (só live/backend v50+)
     isLive: false,
     benchmark: null,           // benchmark.json (3 casas, Excel estático)
@@ -5596,6 +5695,7 @@ function App({ user, onLogout, config }) {
           rolloverMatrix: payload.rolloverMatrix,
           bp: payload.bp || null,
           planScenarios: payload.planScenarios || null,
+          planRetention: payload.planRetention || null,
           farolSpark: payload.farolSpark || null,
           isLive: true,
         }));
@@ -5742,6 +5842,7 @@ function App({ user, onLogout, config }) {
     monthlyClose: state.monthlyClose,   // aba Monthly Close (house-level, segue scope do backend)
     ftdByRegister: state.ftdByRegister,  // FTDs por canal por data de cadastro — toggle no Farol (Aquisição)
     planScenarios: state.planScenarios,  // plano 3 cenários (BP/Conservador/Rolling) — switch de cenário do Farol
+    planRetention: state.planRetention,  // retenção implícita nos 3 cenários + composição do depósito — aba Retenções
     farolSpark: state.farolSpark,  // últimas 4 semanas fechadas por KPI — linha de tendência nos hero cards do Farol
     ytd,   // YTD ativo (preset global): Farol/Monthly Close suprimem M-1/trend e relabelam (a janela já é abril→ontem via appliedRange)
     allTabs: TABS, hiddenTabs, onSetTabHidden: setTabHidden,   // controle de visibilidade (Segurança)
