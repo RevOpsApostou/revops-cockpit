@@ -4458,6 +4458,255 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
   );
 }
 
+// ============================================================
+// ABA DAILY CASHFLOW — o PnL do BP (`BP Update_Apostou_RF.xlsx`, aba PnL) rodado no grão DIÁRIO,
+// com os actuals vindos do BigQuery. Mesma sequência de linhas e a mesma lógica de premissa:
+//   • ACTUAL (BQ)   → GGR Bruto (ggr_total), FreeSpins (valor_wins_freespin), GGR (ngr_total),
+//                     Incentivos e Bonificações (valor_bonus_saldo_real_dia) e Tráfego (spend, mesmo
+//                     ajuste do Farol: imposto Meta ×1,1383 + CPA proxy da Programática).
+//                     → a BONIFICAÇÃO é o % REALIZADO do dia, não o −31,6% fixo da coluna B do arquivo.
+//   • % DO GGR      → Repasse Social 13% · Impostos 10,5% · Custos Variáveis 43,24% (col B15 do arquivo).
+//   • PRÓ-RATA      → Custos Fixos, Despesas, Resultado Financeiro, Depreciação, Influencer e Creator:
+//                     valor MENSAL ÷ dias do mês daquele dia. Somado na janela = pró-rata do MTD
+//                     (é a regra "Pro-Rata" escrita na própria aba PnL, linha 48 do arquivo).
+//   • DESLIGADO     → Créditos de PIS/COFINS (era +10% do investimento no arquivo) e IRPJ/CSL.
+// ESCOPO = CASA INTEIRA: NÃO segue o slicer de canal (o PnL é da empresa; ratear custo fixo/despesa/
+// depreciação por canal não tem regra definida). Sinal = o do arquivo: custo negativo.
+// ============================================================
+const CF_ASSUM = {
+  // % sobre o GGR (linha 9 do PnL). Repasse e Imposto foram TRAVADOS pelo Luis (13% / 10,5%);
+  // o custo variável segue a premissa da coluna B15 do arquivo (junho realizado ÷ GGR).
+  pctRepasse:  0.13,
+  pctImpostos: 0.105,
+  pctCustoVar: 0.43242091501568786,
+  pctCreditos: 0,      // "no credits for now" — no arquivo era +10% do Investimento Total (B13 × linha 19)
+  pctIrpj:     0,      // IRPJ/CSL zerado no arquivo (B33 = 0)
+  // Valores MENSAIS cheios (col G/H da aba PnL) — entram pró-rata por dia.
+  mensal: {
+    custosFixos:  599331.38,   // G17/H17
+    despesas:     377195.86,   // G28/H28
+    resultadoFin:   3000.00,   // H30 — "Manter fixo 3k" (nota B29 do arquivo)
+    depreciacao:  194444.44,   // G31/H31
+    influencer:    84000.00,   // G25/H25 — INFLUENCER/PATROCINIO (contrato, não tem no BQ)
+    creator:       23500.00,   // G26/H26 — CREATOR (contrato, não tem no BQ)
+  },
+};
+
+// Dias do mês a que o dia ISO pertence — base do pró-rata (fev=28/29, abr=30, jul=31…).
+function cfDaysInMonth_(iso) {
+  const [y, m] = String(iso).split('-').map(Number);
+  return new Date(y, m, 0).getDate();
+}
+// R$ cheio, sem abreviar — numa tabela de PnL a ordem de grandeza tem que ser lida direto.
+function cfBRL(n) {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  const sign = n < 0 ? '-' : '';
+  return sign + 'R$ ' + Math.round(Math.abs(n)).toLocaleString('pt-BR');
+}
+
+// Linhas do PnL, na ordem do arquivo. `src` governa o rótulo de origem e o estilo:
+// act = realizado do BQ · pct = % do GGR · fix = valor fixo pró-rata · calc = subtotal · off = desligado.
+const CF_LINES = [
+  { k: 'ggrBruto',    label: 'GGR Bruto',                     src: 'act' },
+  { k: 'freespin',    label: 'FreeSpins',                     src: 'act' },
+  { k: 'ggr',         label: 'GGR',                           src: 'act',  strong: true },
+  { k: 'bonif',       label: 'Incentivos e Bonificações',     src: 'act' },
+  { k: 'repasse',     label: 'Repasse Social — Entidades',    src: 'pct' },
+  { k: 'imposto',     label: 'Impostos',                      src: 'pct' },
+  { k: 'credito',     label: 'Créditos de PIS/COFINS',        src: 'off' },
+  { k: 'ngr',         label: 'NGR',                           src: 'calc', strong: true },
+  { k: 'custoVar',    label: 'Custos Variáveis',              src: 'pct' },
+  { k: 'mc',          label: 'Margem de Contribuição',        src: 'calc', strong: true },
+  { k: 'custosFixos', label: 'Custos Fixos',                  src: 'fix' },
+  { k: 'lbSemMkt',    label: 'Lucro Bruto s/ Marketing',      src: 'calc', strong: true },
+  { k: 'investTotal', label: 'Investimento Total',            src: 'calc', strong: true },
+  { k: 'trafego',     label: 'Tráfego',                       src: 'act',  sub: true },
+  { k: 'influencer',  label: 'Influencer / Patrocínio',       src: 'fix',  sub: true },
+  { k: 'creator',     label: 'Creator',                       src: 'fix',  sub: true },
+  { k: 'lbComMkt',    label: 'Lucro Bruto c/ Marketing',      src: 'calc', strong: true },
+  { k: 'despesas',    label: 'Despesas',                      src: 'fix' },
+  { k: 'ebitda',      label: 'EBITDA',                        src: 'calc', strong: true },
+  { k: 'resFin',      label: 'Resultado Financeiro',          src: 'fix' },
+  { k: 'depre',       label: 'Depreciações e Amortizações',   src: 'fix' },
+  { k: 'lai',         label: 'Lucro Antes de Impostos',       src: 'calc', strong: true },
+  { k: 'irpj',        label: 'IRPJ/CSL',                      src: 'off' },
+  { k: 'resLiq',      label: 'Resultado Líquido',             src: 'calc', strong: true },
+];
+const CF_SRC_LBL = { act: 'BQ', pct: '% GGR', fix: 'pró-rata', calc: '=', off: 'off' };
+const CF_SRC_TIP = {
+  act:  'Realizado — vem do BigQuery',
+  pct:  'Premissa: percentual sobre o GGR',
+  fix:  'Valor mensal fixo do BP, dividido pelos dias do mês (pró-rata)',
+  calc: 'Subtotal calculado',
+  off:  'Desligado nesta versão (fica em zero)',
+};
+
+// Um dia do PnL. `r` = linha crua do backend (only=cashflow); o resto é premissa.
+function cfCalcDay_(r) {
+  const A = CF_ASSUM;
+  const dim = cfDaysInMonth_(r.d);
+  const px = (v) => -(v / dim);            // valor mensal fixo → parcela do dia, com sinal de custo
+  const ggr = r.ggr || 0;
+  const o = {
+    ggrBruto:  r.ggrBruto || 0,
+    freespin:  -(r.freespin || 0),
+    ggr:       ggr,
+    bonif:     -(r.bonus || 0),
+    repasse:   -ggr * A.pctRepasse,
+    imposto:   -ggr * A.pctImpostos,
+    credito:   ggr * A.pctCreditos,
+    custoVar:  -ggr * A.pctCustoVar,
+    custosFixos: px(A.mensal.custosFixos),
+    trafego:   -(r.spend || 0),
+    influencer: px(A.mensal.influencer),
+    creator:   px(A.mensal.creator),
+    despesas:  px(A.mensal.despesas),
+    resFin:    px(A.mensal.resultadoFin),
+    depre:     px(A.mensal.depreciacao),
+    irpj:      0,
+    dep:       r.dep || 0,               // depósitos do dia — não entra no PnL, serve de contexto
+  };
+  o.ngr         = o.ggr + o.bonif + o.repasse + o.imposto + o.credito;
+  o.mc          = o.ngr + o.custoVar;
+  o.lbSemMkt    = o.mc + o.custosFixos;
+  o.investTotal = o.trafego + o.influencer + o.creator;
+  o.lbComMkt    = o.lbSemMkt + o.investTotal;
+  o.ebitda      = o.lbComMkt + o.despesas;
+  o.lai         = o.ebitda + o.resFin + o.depre;
+  o.resLiq      = o.lai + o.irpj;
+  return o;
+}
+
+function TabDailyCashflow({ range, meta }) {
+  const [rows, setRows] = React.useState(null);
+  const [loading, setLoading] = React.useState(!!ENDPOINT_URL);
+  const [error, setError] = React.useState(null);
+  const [view, setView] = usePersistedState('rvops:cfView', 'mtd');   // 'mtd' | 'diario'
+
+  React.useEffect(() => {
+    if (!ENDPOINT_URL || !range) { setLoading(false); return; }
+    let live = true; setLoading(true); setError(null);
+    fetch(`${ENDPOINT_URL}?${authParam_()}&only=cashflow&from=${range.from}&to=${range.to}`)
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(j => { if (!live) return; if (j.error) throw new Error(j.error); setRows(j.cashflowDaily || []); setLoading(false); })
+      .catch(e => { if (live) { setError(String(e.message || e)); setLoading(false); } });
+    return () => { live = false; };
+  }, [range && range.from, range && range.to]);
+
+  if (!ENDPOINT_URL) return (<div className="tab-header"><div><h1>Daily Cashflow</h1><div className="subtitle">Disponível só no modo live (BigQuery).</div></div></div>);
+
+  const src = rows || [];
+  const days = src.map(r => ({ d: r.d, v: cfCalcDay_(r) }));
+  // MTD = soma dos dias. Os fixos entram já pró-rateados por dia → a soma É o pró-rata da janela.
+  const tot = {};
+  CF_LINES.forEach(l => { tot[l.k] = 0; });
+  tot.dep = 0;
+  days.forEach(({ v }) => { CF_LINES.forEach(l => { tot[l.k] += v[l.k] || 0; }); tot.dep += v.dep || 0; });
+
+  const pctGgr = (v) => (tot.ggr > 0 ? v / tot.ggr : null);
+  // Quantos meses a janela toca — se >1, o pró-rata usa dias-do-mês diferentes por trecho (fica dito na nota).
+  const monthsTouched = Array.from(new Set(days.map(x => x.d.slice(0, 7))));
+  const dim0 = days.length ? cfDaysInMonth_(days[0].d) : null;
+  const proRataPct = (monthsTouched.length === 1 && dim0) ? days.length / dim0 : null;
+
+  const rowCls = (l) => `cf-row cf-${l.src}` + (l.strong ? ' cf-strong' : '') + (l.sub ? ' cf-sub' : '');
+  const valCls = (v) => (v == null || isNaN(v)) ? '' : (v < 0 ? 'cf-neg' : (v > 0 ? 'cf-pos' : ''));
+  const srcTag = (l) => <span className="cf-tag" title={CF_SRC_TIP[l.src]}>{CF_SRC_LBL[l.src]}</span>;
+  const dayLbl = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
+
+  return (
+    <React.Fragment>
+      <div className="tab-header">
+        <div>
+          <h1>Daily Cashflow</h1>
+          <div className="subtitle">PnL do BP no grão diário — GGR, bonificação e investimento realizados do BigQuery; percentuais e fixos pela premissa do arquivo. Casa inteira (não segue o filtro de canal).</div>
+        </div>
+      </div>
+      <div className="hero-grid">
+        <Hero metric={{ label: 'GGR', act: tot.ggr || null, m1: null, pctBp: null, fmt: 'brl' }} />
+        <Hero metric={{ label: 'NGR', act: tot.ngr || null, m1: null, pctBp: null, fmt: 'brl' }} />
+        <Hero metric={{ label: 'Margem de Contribuição', act: tot.mc || null, m1: null, pctBp: null, fmt: 'brl' }} />
+        <Hero metric={{ label: 'EBITDA', act: tot.ebitda || null, m1: null, pctBp: null, fmt: 'brl' }} />
+        <Hero metric={{ label: 'Resultado Líquido', act: tot.resLiq || null, m1: null, pctBp: null, fmt: 'brl' }} />
+      </div>
+      <div className="support">
+        <div className="support-title">
+          {view === 'mtd' ? 'MTD acumulado' : 'Diário'} · {fmtBR_(range.from)} → {fmtBR_(range.to)}
+          {proRataPct != null && <> · fixos a <strong>{fmtPct(proRataPct, 0)}</strong> do mês ({days.length}/{dim0} dias)</>}
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, margin: '2px 0 14px' }}>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Visão</span>
+          <div className="slicer-presets">
+            <button className={`preset-btn ${view === 'mtd' ? 'active' : ''}`} onClick={() => setView('mtd')} title="Acumulado da janela, com os valores fixos pró-rateados pelos dias decorridos">MTD (pró-rata)</button>
+            <button className={`preset-btn ${view === 'diario' ? 'active' : ''}`} onClick={() => setView('diario')} title="Uma coluna por dia — os fixos entram como mensal ÷ dias do mês">Diário</button>
+          </div>
+        </div>
+        {loading && <div className="ch-note">Carregando do BigQuery…</div>}
+        {error && <div className="ch-note" style={{ color: 'var(--accent-red, #ef4444)' }}>Erro: {error}</div>}
+        {!loading && !error && !days.length && <div className="ch-note">Sem dado na janela selecionada.</div>}
+
+        {!loading && !error && !!days.length && view === 'mtd' && (
+          <div className="table-scroll"><table className="ch-table cf-table">
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left' }}>Linha</th>
+                <th style={{ textAlign: 'left', width: 90 }}>Fonte</th>
+                <th>Valor</th>
+                <th title="Participação da linha no GGR do período — mesma leitura da coluna B da aba PnL">% do GGR</th>
+                <th title="Valor ÷ dias da janela — quanto essa linha custa/rende por dia">Média/dia</th>
+              </tr>
+            </thead>
+            <tbody>
+              {CF_LINES.map(l => (
+                <tr key={l.k} className={rowCls(l)}>
+                  <td style={{ textAlign: 'left' }}>{l.label}</td>
+                  <td style={{ textAlign: 'left' }}>{srcTag(l)}</td>
+                  <td className={valCls(tot[l.k])}>{cfBRL(tot[l.k])}</td>
+                  <td className="cf-dim">{l.k === 'ggr' ? '100%' : fmtPct(pctGgr(tot[l.k]), 1)}</td>
+                  <td className="cf-dim">{cfBRL(tot[l.k] / days.length)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr><td style={{ textAlign: 'left' }}>Resultado Líquido / GGR</td><td /><td colSpan={3} style={{ textAlign: 'right' }}>{fmtPct(pctGgr(tot.resLiq), 0)}</td></tr>
+            </tfoot>
+          </table></div>
+        )}
+
+        {!loading && !error && !!days.length && view === 'diario' && (
+          <div className="table-scroll tall"><table className="ch-table cf-table cf-daily">
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left' }}>Linha</th>
+                {days.map(x => <th key={x.d} title={fmtBR_(x.d)}>{dayLbl(x.d)}</th>)}
+                <th className="cf-total-col">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {CF_LINES.map(l => (
+                <tr key={l.k} className={rowCls(l)}>
+                  <td style={{ textAlign: 'left' }}>{l.label} {srcTag(l)}</td>
+                  {days.map(x => <td key={x.d} className={valCls(x.v[l.k])}>{cfBRL(x.v[l.k])}</td>)}
+                  <td className={'cf-total-col ' + valCls(tot[l.k])}>{cfBRL(tot[l.k])}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table></div>
+        )}
+
+        <div className="ch-note">
+          <strong>Do BigQuery (realizado):</strong> GGR Bruto = <code>ggr_total</code> · FreeSpins = <code>valor_wins_freespin</code> · GGR = <code>ngr_total</code> (identidade validada: GGR = GGR Bruto − FreeSpins) · Bonificações = <code>valor_bonus_saldo_real_dia</code> — ou seja, o <strong>% de bonificação é o realizado do dia</strong>, não o −31,6% fixo da coluna B do arquivo. <strong>Tráfego</strong> = spend da performance com os mesmos ajustes do Farol (imposto de fechamento da Meta ×1,1383 e CPA manual de R$ 90 × FTD na Programática, que não tem spend rastreado).
+          <br /><strong>Premissas (% do GGR):</strong> Repasse Social {fmtPct(CF_ASSUM.pctRepasse, 0)} · Impostos {fmtPct(CF_ASSUM.pctImpostos, 1)} · Custos Variáveis {fmtPct(CF_ASSUM.pctCustoVar, 1)} (coluna B15 do arquivo). <strong>Créditos de PIS/COFINS e IRPJ/CSL estão em zero</strong> nesta versão.
+          <br /><strong>Pró-rata:</strong> Custos Fixos ({cfBRL(CF_ASSUM.mensal.custosFixos)}/mês), Despesas ({cfBRL(CF_ASSUM.mensal.despesas)}), Resultado Financeiro ({cfBRL(CF_ASSUM.mensal.resultadoFin)}), Depreciação ({cfBRL(CF_ASSUM.mensal.depreciacao)}), Influencer ({cfBRL(CF_ASSUM.mensal.influencer)}) e Creator ({cfBRL(CF_ASSUM.mensal.creator)}) entram como <strong>mensal ÷ dias do mês</strong> em cada dia; o MTD é a soma disso — é a regra "Pro-Rata" escrita na própria aba PnL do arquivo. Influencer e Creator não existem no BQ (são contrato), por isso ficam fixos dentro do Investimento Total.
+          {monthsTouched.length > 1 && <><br /><strong>Atenção:</strong> a janela cruza {monthsTouched.length} meses — cada dia é pró-rateado pelos dias do <em>seu</em> mês, então o total dos fixos não é múltiplo redondo de um mês só.</>}
+          <br /><strong>Escopo:</strong> casa inteira — esta aba <strong>ignora o filtro de canal</strong> do topo (o PnL é da empresa; ratear custo fixo, despesa e depreciação por canal não tem regra definida). Sinal segue o arquivo: custo é negativo.
+          {meta && meta.dataMaxDate && <><br />Dado carregado no BQ até {fmtBR_(meta.dataMaxDate)} — o último dia da série costuma estar incompleto.</>}
+        </div>
+      </div>
+    </React.Fragment>
+  );
+}
+
 const TABS = [
   { id: 'farol', label: 'Farol', component: TabFarol },
   { id: 'monthlyclose', label: 'Monthly Close', component: TabMonthlyClose },
@@ -4468,6 +4717,7 @@ const TABS = [
   { id: 'retfaixa', label: 'Multiplicadores e Retenção', component: TabRetencaoFaixa },
   { id: 'ativacao', label: 'Ativação D0', component: TabAtivacao },
   { id: 'invcampanha', label: 'Investimento p/ Campanha', component: InvCampanhaTab },
+  { id: 'cashflow', label: 'Daily Cashflow', component: TabDailyCashflow },
   { id: 'ggr', label: 'GGR', component: TabGgr },
   { id: 'depositos', label: 'Depósitos', component: TabDepositos },
   { id: 'apostas', label: 'Turnover', component: TabApostas },
