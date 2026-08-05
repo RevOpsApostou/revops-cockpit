@@ -952,101 +952,7 @@ function TabAquisicao({ M, channels, bp }) {
   );
 }
 
-// ============================================================
-// PLANO DE RETENÇÃO DESDOBRADO — os 3 cenários não declaram taxa de retenção, declaram os VALORES das
-// linhas M0/M+1/M+2/M3+ mês a mês. Aqui a taxa implícita de cada cenário aparece ao lado do realizado,
-// junto com a composição do depósito planejado. Regra cross-period (igual bpRetention_/Farol):
-//   M0→M1 = M+1[mês ref] ÷ M0[mês ANTERIOR] · M1→M2 = M+2[ref] ÷ M+1[ant] · M3+ = M3+[ref] ÷ (M3++M+2)[ant]
-// Taxa mensal NÃO prorrateia → usa os dois meses CHEIOS do plano, não a janela MTD do slicer.
-// ============================================================
-const PLAN_SCEN_LABEL = { bp: 'Orçado', conserv: 'Conservador', rolling: 'Forecast' };
-function PlanRetentionTable({ planRetention, M }) {
-  const pr = planRetention;
-  if (!pr || !pr.scenarios) return <div className="ch-note">Plano de retenção indisponível neste payload (backend anterior ao v59) — recarregue com Atualizar.</div>;
-  const act = { m0m1: M.retM0M1 && M.retM0M1.act, m1m2: M.retM1M2 && M.retM1M2.act, m3plus: M.retM3plus && M.retM3plus.act };
-  const scen = ['bp', 'conserv', 'rolling'];
-  const gapCell = (plan, a) => {
-    if (plan == null || a == null) return <td style={{ color: 'var(--text-muted)' }}>—</td>;
-    const d = a - plan;
-    return <td style={{ color: d >= 0 ? 'var(--accent-green)' : 'var(--accent-red)', fontWeight: 600 }}>{(d >= 0 ? '+' : '') + fmtPct(d, 1)}</td>;
-  };
-  const mL = (mk) => mk ? monthLabelPt_(mk + '-01') : '—';
-  return (
-    <React.Fragment>
-      <div className="table-scroll"><table className="ch-table">
-        <thead>
-          <tr>
-            <th>Cenário</th>
-            <th title="M+1 do mês de referência ÷ M0 do mês anterior, direto das linhas do plano.">M0→M1 plano</th>
-            <th>vs realizado</th>
-            <th title="M+2 do mês de referência ÷ M+1 do mês anterior.">M1→M2 plano</th>
-            <th>vs realizado</th>
-            <th title="M3+ do mês de referência ÷ (M3+ + M+2) do mês anterior.">M3+ plano</th>
-            <th>vs realizado</th>
-            <th title="Depósito total planejado no mês de referência.">Depósito plano</th>
-          </tr>
-        </thead>
-        <tbody>
-          {scen.map(s => {
-            const r = pr.scenarios[s]; if (!r) return null;
-            return (
-              <tr key={s}>
-                <td className="ch-name">{PLAN_SCEN_LABEL[s]}</td>
-                <td>{fmtPct(r.m0m1, 1)}</td>{gapCell(r.m0m1, act.m0m1)}
-                <td>{fmtPct(r.m1m2, 1)}</td>{gapCell(r.m1m2, act.m1m2)}
-                <td>{fmtPct(r.m3plus, 1)}</td>{gapCell(r.m3plus, act.m3plus)}
-                <td>{fmtBRL(r.comp && r.comp.totDep)}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-        <tfoot>
-          <tr>
-            <td>Realizado</td>
-            <td colSpan={2}>{fmtPct(act.m0m1, 1)}</td>
-            <td colSpan={2}>{fmtPct(act.m1m2, 1)}</td>
-            <td colSpan={2}>{fmtPct(act.m3plus, 1)}</td>
-            <td>—</td>
-          </tr>
-        </tfoot>
-      </table></div>
-      <div className="support-title" style={{ marginTop: '18px' }}>Composição do depósito planejado · {mL(pr.refMonth)}</div>
-      <div className="table-scroll"><table className="ch-table">
-        <thead>
-          <tr><th>Cenário</th><th>M0 (safra do mês)</th><th>M+1</th><th>M+2</th><th>M3+</th><th>Reativados</th><th>Total</th></tr>
-        </thead>
-        <tbody>
-          {scen.map(s => {
-            const c = pr.scenarios[s] && pr.scenarios[s].comp; if (!c) return null;
-            const sh = (v) => c.totDep > 0 ? ` (${fmtPct(v / c.totDep, 0)})` : '';
-            return (
-              <tr key={s}>
-                <td className="ch-name">{PLAN_SCEN_LABEL[s]}</td>
-                <td>{fmtBRL(c.m0)}<span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{sh(c.m0)}</span></td>
-                <td>{fmtBRL(c.m1)}<span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{sh(c.m1)}</span></td>
-                <td>{fmtBRL(c.m2)}<span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{sh(c.m2)}</span></td>
-                <td>{fmtBRL(c.m3plus)}<span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{sh(c.m3plus)}</span></td>
-                <td>{fmtBRL(c.reat)}<span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{sh(c.reat)}</span></td>
-                <td>{fmtBRL(c.totDep)}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table></div>
-      <div className="ch-note">
-        Os cenários do plano <strong>não declaram taxa de retenção</strong> — declaram os valores de M0/M+1/M+2/M3+
-        mês a mês. As taxas acima são o que esses valores <strong>implicam</strong>, pela mesma regra cross-period do
-        Farol: <strong>M0→M1 = M+1 de {mL(pr.refMonth)} ÷ M0 de {mL(pr.prevMonth)}</strong> (idem M1→M2; M3+ divide por
-        M3+ + M+2 do mês anterior). Retenção é taxa mensal e <strong>não prorrateia</strong>: usa os dois meses cheios
-        do plano, não a janela do slicer — por isso não muda quando você mexe no período.
-        {' '}A coluna <strong>vs realizado</strong> é a diferença em pontos percentuais contra o realizado do topo.
-        {' '}Vale ler junto com a composição: um cenário pode bater a taxa e errar o depósito se a safra M0 não vier.
-      </div>
-    </React.Fragment>
-  );
-}
-
-function TabRetencao({ M, retentionChannels, planRetention }) {
+function TabRetencao({ M, retentionChannels }) {
   return (
     <React.Fragment>
       <div className="tab-header">
@@ -1066,10 +972,6 @@ function TabRetencao({ M, retentionChannels, planRetention }) {
           <RetentionTable channels={retentionChannels} totalM3plus={M.retM3plus && M.retM3plus.act} />
         </div>
       )}
-      <div className="support">
-        <div className="support-title">Plano de retenção desdobrado · 3 cenários{planRetention && planRetention.refMonth ? ' · ' + monthLabelPt_(planRetention.refMonth + '-01') : ''}</div>
-        <PlanRetentionTable planRetention={planRetention} M={M} />
-      </div>
     </React.Fragment>
   );
 }
@@ -2295,102 +2197,6 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
   );
 }
 
-// ============================================================
-// FUNIL D0+D1 — taxas de passagem, retenção D1 (base × montante) e multiplicadores precoces.
-// Métricas do estudo "Ponte BP × Métricas de Retenção" trazidas pro cockpit, no MESMO recorte da aba
-// (canal · faixa · grupo · same-day · coorte) e com o mês anterior fechado como referência.
-//
-// PASSAGEM = contagem de DEPÓSITOS na janela D0+D1 (inclui o 2º depósito feito no próprio dia do FTD):
-//   FTD→2TD = contas com ≥2 dep ÷ FTDs · 2TD→3TD = ≥3 ÷ ≥2 · 3TD→4TD = ≥4 ÷ ≥3.
-// ⚠️ NÃO é o "D1 Ret %" da tabela (esse é "voltou a depositar NO DIA 1"). Um FTD que depositou 2× no D0 e
-//    sumiu conta como 2TD aqui e NÃO conta no D1 Ret — as duas métricas medem coisas diferentes de propósito.
-// ⚠️ Diverge ~1% do xlsx do estudo: lá a coorte veio de outro export (32,1k FTDs em jul/26 vs 33,6k aqui).
-//    Aqui a coorte é a MESMA de toda a aba (1º FTD em player_metrics), pra bater com os outros números da tela.
-// ============================================================
-function EarlyFunnelTable({ data, pmRow, pmLabel, dateLabel, loading, error }) {
-  const rows = data.rows || [], t = data.totals || {};
-  const range = (key) => { const v = rows.map(x => x[key]).filter(x => x != null && !isNaN(x)); return v.length ? { min: Math.min(...v), max: Math.max(...v) } : { min: 0, max: 1 }; };
-  const rPs = range('passStd'), rPt = range('passTtd'), rPq = range('passQtd'), rRb = range('retQtdD1'), rRm = range('retValD1');
-  const dm = (s) => { if (!s || s === 'Total') return s || '—'; const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); return m ? `${m[3]}/${m[2]}` : String(s); };
-  // Dois grupos com tints distintos: PASSAGEM (azul) e RETENÇÃO D1 (amarelo, como no resto da aba).
-  const psTh  = { background: 'linear-gradient(rgba(96,165,250,0.20),rgba(96,165,250,0.20)), var(--surface-2)' };
-  const psThL = { ...psTh, borderLeft: '2px solid rgba(96,165,250,0.55)' };
-  const rtTh  = { background: 'linear-gradient(rgba(250,204,21,0.20),rgba(250,204,21,0.20)), var(--surface-2)' };
-  const rtThL = { ...rtTh, borderLeft: '2px solid rgba(250,204,21,0.55)' };
-  const cell = (v, rng, heat, tint, left) => {
-    const bg = heat ? heatBg_(v, rng.min, rng.max) : `rgba(${tint},0.10)`;
-    return left ? { background: bg, borderLeft: `2px solid rgba(${tint},0.45)` } : { background: bg };
-  };
-  const B = '96,165,250', Y = '250,204,21';
-  const cells = (r, heat) => [
-    <td key="q">{fmtQty(r.qtd)}</td>,
-    <td key="ps" style={cell(r.passStd, rPs, heat, B, true)}>{fmtPct(r.passStd, 1)}</td>,
-    <td key="pt" style={cell(r.passTtd, rPt, heat, B, false)}>{fmtPct(r.passTtd, 1)}</td>,
-    <td key="pq" style={cell(r.passQtd, rPq, heat, B, false)}>{fmtPct(r.passQtd, 1)}</td>,
-    <td key="rb" style={cell(r.retQtdD1, rRb, heat, Y, true)}>{fmtPct(r.retQtdD1, 1)}</td>,
-    <td key="rm" style={cell(r.retValD1, rRm, heat, Y, false)}>{fmtPct(r.retValD1, 1)}</td>,
-    <td key="m0">{fmtMultiple(r.multD0F)}</td>,
-    <td key="m1">{fmtMultiple(r.multD1F)}</td>,
-    <td key="m3">{fmtMultiple(r.multD3F)}</td>,
-  ];
-  const [sortKey, setSortKey] = React.useState(null);
-  const [sortDir, setSortDir] = React.useState('desc');
-  const accessors = { date: r => r.date, qtd: r => r.qtd, passStd: r => r.passStd, passTtd: r => r.passTtd, passQtd: r => r.passQtd, retQtdD1: r => r.retQtdD1, retValD1: r => r.retValD1, multD0F: r => r.multD0F, multD1F: r => r.multD1F, multD3F: r => r.multD3F };
-  const onSort = (k) => { if (sortKey === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortKey(k); setSortDir('desc'); } };
-  const arrow = (k) => sortKey === k ? (sortDir === 'desc' ? ' ▾' : ' ▴') : '';
-  const sorted = (!sortKey || !accessors[sortKey]) ? rows : rows.slice().sort((a, b) => {
-    const acc = accessors[sortKey], dir = sortDir === 'asc' ? 1 : -1;
-    let va = acc(a), vb = acc(b);
-    if (sortKey === 'date') { va = String(va || ''); vb = String(vb || ''); return va < vb ? -dir : va > vb ? dir : 0; }
-    va = (va == null || isNaN(va)) ? -Infinity : va; vb = (vb == null || isNaN(vb)) ? -Infinity : vb;
-    return va < vb ? -dir : va > vb ? dir : 0;
-  });
-  const Th = (k, label, style, title) => <th key={k} onClick={() => onSort(k)} title={(title ? title + ' · ' : '') + 'clique p/ ordenar'} style={{ ...(style || {}), cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>{label}{arrow(k)}</th>;
-  // Intensidade = montante ÷ base: quanto o depósito de quem volta no D1 vale sobre o depósito médio do D0.
-  // É a metade da conta que o "% que voltou" não enxerga (achado central do estudo vs a Lottu).
-  const inten = (t.retQtdD1 > 0 && t.retValD1 != null) ? t.retValD1 / t.retQtdD1 : null;
-  return (
-    <React.Fragment>
-      <div className="table-scroll tall"><table className="ch-table">
-        <thead>
-          <tr>
-            {Th('date', dateLabel || 'Data FTD')}{Th('qtd', 'Qtd FTD')}
-            {Th('passStd', 'FTD→2TD', psThL, 'Janela D0+D1: contas com ≥2 depósitos ÷ FTDs. Conta o 2º depósito feito no próprio dia do FTD.')}
-            {Th('passTtd', '2TD→3TD', psTh, 'Janela D0+D1: contas com ≥3 depósitos ÷ contas com ≥2.')}
-            {Th('passQtd', '3TD→4TD', psTh, 'Janela D0+D1: contas com ≥4 depósitos ÷ contas com ≥3.')}
-            {Th('retQtdD1', 'Ret. base D1/D0', rtThL, '% dos FTDs que voltaram a depositar no dia 1. Não segue o toggle Valor/Qtd.')}
-            {Th('retValD1', 'Ret. montante D1/D0', rtTh, 'R$ depositado no dia 1 ÷ depósito do D0. Não segue o toggle Valor/Qtd.')}
-            {Th('multD0F', 'Mult Dep/FTD D0', null, 'Depósito do D0 ÷ FTD$.')}
-            {Th('multD1F', 'Mult Dep/FTD D1', null, '(D0 + dia 1) ÷ FTD$.')}
-            {Th('multD3F', 'Mult Dep/FTD D3', null, '(D0 + dias 1–3) ÷ FTD$.')}
-          </tr>
-        </thead>
-        <tbody>
-          {pmRow && <tr style={{ opacity: .75 }}><td className="ch-name" title="Mês-calendário anterior fechado, no mesmo recorte — referência.">{pmLabel} (ref.)</td>{cells(pmRow, false)}</tr>}
-          {sorted.map((r, i) => (<tr key={i}><td className="ch-name">{dm(r.date)}</td>{cells(r, true)}</tr>))}
-        </tbody>
-        <tfoot><tr><td>Total</td>{cells(t, false)}</tr></tfoot>
-      </table></div>
-      <div className="ch-note">
-        <strong>Passagem</strong> = nº de depósitos na janela <strong>D0+D1</strong> (conta o 2º depósito feito no
-        próprio dia do FTD): 2TD = contas com ≥2 depósitos ÷ FTDs · 3TD = ≥3 ÷ ≥2 · 4TD = ≥4 ÷ ≥3.
-        <strong> Não é o “D1 Ret %”</strong> da tabela de safra, que é “voltou a depositar no dia 1” — um FTD que
-        depositou 2× no próprio D0 conta como 2TD aqui e não conta lá.
-        <strong> Ret. base</strong> = % dos FTDs que redepositaram no dia 1 · <strong>montante</strong> = R$ do dia 1
-        ÷ depósito do D0; as duas são independentes do toggle Valor/Qtd, por isso aparecem lado a lado.
-        {inten != null && (
-          <span> A razão entre elas é a <strong>intensidade de quem volta</strong> (hoje <strong>{fmtMultiple(inten)}</strong>):
-            subir só o % que volta, sem subir a intensidade, não move a curva de depósito.</span>
-        )}
-        {' '}Multiplicadores = depósito acumulado (incl. D0) ÷ FTD$. Linha <em>(ref.)</em> = mês-calendário anterior
-        fechado, mesmo recorte. Segue todos os filtros da aba e o “Ver por” do topo.
-        {loading ? ' · carregando…' : ''}{error ? ' · erro ao carregar' : ''}
-        {t.passStd == null ? ' · funil indisponível neste payload (backend anterior ao v58) — recarregue com Atualizar.' : ''}
-      </div>
-    </React.Fragment>
-  );
-}
-
 function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   const [faixaSel, setFaixaSel] = React.useState([]);   // multi-select de faixas de FTD; [] = todas
   const [grupoSel, setGrupoSel] = React.useState([]);   // multi-select de GRUPO DE RISCO; [] = todos (filtro global da aba, igual faixas)
@@ -2613,16 +2419,6 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
       <div className="support">
         <div className="support-title">Multiplicador por dimensão · sobre {baseLbl} · {cohort ? 'coorte ' + cohortDays + 'd' : 'últimos 30 dias corridos'} · {chLabel} · {faixaLabelTxt}{grupoActive ? ' · ' + grupoLabelTxt : ''}{sameday ? ' · same-day' : ''}</div>
         <RetMultChart chFilter={chFilter} faixaSel={faixaSel} grupoSel={grupoSel} grupoActive={grupoActive} mode={mode} gran={gran} sameday={sameday} dataMax={dataMax} fallbackRows={retencaoFaixa} cohort={cohort} cohortDays={cohortDays} srcRF={srcRF} srcLoading={cohort && coFetch.loading} srcError={cohort ? coFetch.error : null} base={multBase} />
-      </div>
-      <div className="support">
-        <div className="support-title">Funil D0+D1 · passagem, retenção D1 e multiplicadores precoces {tableDim === 'periodo' ? '· por ' + (gran === 'week' ? 'Semana' : 'Dia') : '· por ' + (tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : tableDim === 'campanha' ? 'Campanha' : 'Grupo de risco')} · {chLabel} · {faixaLabelTxt}{grupoActive ? ' · ' + grupoLabelTxt : ''}{sameday ? ' · same-day' : ''}{coSuffix}</div>
-        <EarlyFunnelTable
-          data={tableData}
-          pmRow={pmRow}
-          pmLabel={monthLabelPt_(pm.from)}
-          dateLabel={tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : tableDim === 'grupo' ? 'Grupo' : tableDim === 'campanha' ? 'Campanha' : (gran === 'week' ? 'Semana' : 'Data FTD')}
-          loading={loadingRF || pmFetch.loading}
-          error={errorRF || pmFetch.error} />
       </div>
     </React.Fragment>
   );
@@ -2921,6 +2717,8 @@ function benchApostouRows_(retencaoFaixa) {
       // Funil D0+D1 (backend v58+). _pass = 0 marca payload ANTIGO (campo ausente) → as taxas saem "—" em vez
       // de 0,0%, que seria lido como "ninguém passou". Sem isso um cache velho mentiria na tela.
       cstd: r.cntStd || 0, cttd: r.cntTtd || 0, cqtd4: r.cntQtd4 || 0,
+      // Coorte semanal de CALENDÁRIO (backend v60+): S0 = semana ISO do FTD, S1 = a seguinte. Aba Métricas do dia a dia.
+      vs0: r.valS0 || 0, vs1: r.valS1 || 0, cs1: r.cntS1 || 0,
       _pass: (r.cntStd === undefined || r.cntStd === null) ? 0 : 1,
       ggrM0: r.ggrM0 || 0,
       dep, saq, net: dep - saq,
@@ -4821,6 +4619,156 @@ function TabDailyCashflow({ range, meta }) {
   );
 }
 
+// ============================================================
+// MÉTRICAS DO DIA A DIA — a escada do estudo "Ponte BP × Métricas de Retenção" ao vivo.
+//   Realizado = agregado do período (soma as bases, depois divide — não é média de %).
+//   T+1 (P75) / T+2 (P90) = percentis da DISTRIBUIÇÃO das safras diárias do período. São degraus
+//     internos: "replicar no todo o que o melhor quartil/decil dos nossos próprios dias já faz".
+//   Meta BP = nível exigido pela curva calibrada na Lottu (constante do estudo, não sai do nosso dado).
+//     Só existe p/ Geral/Google/Meta — outros recortes mostram "—". Passagem não tem meta ("indicativo").
+//
+// ⚠️ MATURAÇÃO: cada métrica só usa safras que já fecharam a janela dela (D14 precisa de 14 dias).
+// Sem isso as safras novas entram com numerador incompleto e afundam D7/D14/S1. A coluna "safras"
+// mostra quantos dias sobraram por linha — se vier baixa, o percentil é frágil.
+// ============================================================
+const MDD_BP = {   // curva-meta do estudo (Lottu-calibrada), por escopo. null = sem meta declarada.
+  Geral:  { jogD1: 0.1111, rsD1: 0.2976, m1: 1.2976, m3: 1.6804, m7: 2.2307, m14: 2.9155, rsS1: 0.6256, jogS1: 0.2806 },
+  Google: { jogD1: 0.1566, rsD1: 0.3672, m1: 1.3672, m3: 1.8204, m7: 2.4569, m14: 3.1264, rsS1: 0.6119, jogS1: 0.3863 },
+  Meta:   { jogD1: 0.0943, rsD1: 0.2603, m1: 1.2603, m3: 1.5571, m7: 2.0197, m14: 2.5162, rsS1: 0.5432, jogS1: 0.2385 },
+};
+// mat = dias que a safra precisa ter completado p/ a métrica ser legível.
+const MDD_ROWS = [
+  { key: 'pStd',  label: 'Taxa de passagem FTD → STD (D0+D1)', mat: 1,  fmt: 'pct',      of: a => a.qtd  ? a.cstd / a.qtd : null,        bp: null, needs: "pass" },
+  { key: 'pTtd',  label: 'Taxa de passagem STD → TTD (D0+D1)', mat: 1,  fmt: 'pct',      of: a => a.cstd ? a.cttd / a.cstd : null,       bp: null, needs: "pass" },
+  { key: 'pQtd',  label: 'Taxa de passagem TTD → QTD (D0+D1)', mat: 1,  fmt: 'pct',      of: a => a.cttd ? a.cqtd4 / a.cttd : null,      bp: null, needs: "pass" },
+  { key: 'jogD1', label: 'Retenção de jogadores D1/D0',        mat: 1,  fmt: 'pct',      of: a => a.qtd  ? a.cd1 / a.qtd : null,         bp: 'jogD1' },
+  { key: 'rsD1',  label: 'Retenção de depósito R$ D1/D0',      mat: 1,  fmt: 'pct',      of: a => a.d0   ? a.vd1 / a.d0 : null,          bp: 'rsD1' },
+  { key: 'm1',    label: 'Multiplicador D1',                   mat: 1,  fmt: 'multiple', of: a => a.d0   ? (a.d0 + a.vd1) / a.d0 : null, bp: 'm1' },
+  { key: 'm3',    label: 'Multiplicador D3',                   mat: 3,  fmt: 'multiple', of: a => a.d0   ? (a.d0 + a.vd3) / a.d0 : null, bp: 'm3' },
+  { key: 'm7',    label: 'Multiplicador D7',                   mat: 7,  fmt: 'multiple', of: a => a.d0   ? (a.d0 + a.vw1) / a.d0 : null, bp: 'm7' },
+  { key: 'm14',   label: 'Multiplicador D14',                  mat: 14, fmt: 'multiple', of: a => a.d0   ? (a.d0 + a.vw2) / a.d0 : null, bp: 'm14' },
+  { key: 'rsS1',  label: 'Retenção de depósito R$ S1/S0 (semanal)', mat: 13, fmt: 'pct', of: a => a.vs0  ? a.vs1 / a.vs0 : null,         bp: 'rsS1', needs: "sem" },
+  // ⚠️ SEM Meta BP de propósito. A curva semanal de JOGADORES do estudo é ESTIMADA (jogadores únicos na
+  // semana inferidos das taxas diárias assumindo independência entre dias) — o que infla o número: o
+  // "realizado" do estudo dá 20,7% e a MESMA coorte medida de forma exata dá ~12,0%. Como a meta (28,1%)
+  // foi construída sobre a régua estimada, pôr ela ao lado da contagem exata mostraria um gap que é
+  // definição, não performance. A linha de R$ não tem esse problema (bate: 26,5% medido vs 26,9% do estudo).
+  { key: 'jogS1', label: 'Retenção de jogadores S1/S0 (semanal)',   mat: 13, fmt: 'pct', of: a => a.qtd  ? a.cs1 / a.qtd : null,         bp: null, needs: "sem" },
+];
+// Percentil linear-interpolado sobre os valores diários ordenados (mesma régua do estudo: safras
+// diárias sem ponderar por volume — é distribuição de dias, não de reais).
+function mddPct_(vals, p) {
+  const v = vals.filter(x => x != null && isFinite(x)).sort((a, b) => a - b);
+  if (!v.length) return null;
+  if (v.length === 1) return v[0];
+  const i = (v.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i);
+  return lo === hi ? v[lo] : v[lo] + (v[hi] - v[lo]) * (i - lo);
+}
+function TabMetricasDia({ retencaoFaixa, chFilter, meta }) {
+  const dataMax = meta && meta.dataMaxDate;
+  const rows = benchApostouRows_(retencaoFaixa || []);
+  const selCh = chSelector_(chFilter);
+  // Uma linha por DIA de safra (soma canais/faixas dentro do recorte) — base dos percentis.
+  const byDay = React.useMemo(() => {
+    const m = {};
+    rows.forEach(r => {
+      if (!selCh(r.canal)) return;
+      const k = String(r.date);
+      if (!m[k]) m[k] = { date: k, qtd: 0, d0: 0, cd1: 0, vd1: 0, vd3: 0, vw1: 0, vw2: 0, vs0: 0, vs1: 0, cs1: 0, cstd: 0, cttd: 0, cqtd4: 0, _pass: 0 };
+      const a = m[k];
+      a.qtd += r.qtd || 0; a.d0 += r.d0 || 0; a.cd1 += r.cd1 || 0; a.vd1 += r.vd1 || 0;
+      a.vd3 += r.vd3 || 0; a.vw1 += r.vw1 || 0; a.vw2 += r.vw2 || 0;
+      a.vs0 += r.vs0 || 0; a.vs1 += r.vs1 || 0; a.cs1 += r.cs1 || 0;
+      a.cstd += r.cstd || 0; a.cttd += r.cttd || 0; a.cqtd4 += r.cqtd4 || 0; a._pass += r._pass || 0;
+    });
+    return Object.values(m).sort((a, b) => a.date < b.date ? -1 : 1);
+  }, [retencaoFaixa, chFilter && chFilter.scope, JSON.stringify(chFilter && chFilter.canals)]);
+  const bpScope = MDD_BP[chLabel_(chFilter)] || null;   // 'Geral'/'Google'/'Meta' batem com as chaves
+  const out = MDD_ROWS.map(row => {
+    // Só safras que já fecharam a janela da métrica (maturação).
+    const cut = dataMax ? isoAddDays_(dataMax, -row.mat) : null;
+    const days = byDay.filter(d => !cut || d.date <= cut);
+    const tot = days.reduce((acc, d) => { for (const k in d) if (k !== 'date') acc[k] = (acc[k] || 0) + d[k]; return acc; }, {});
+    // Passagem depende do backend v58+; S1/S0 do v60+. Sem base → linha inteira "—" (não 0).
+    const missing = (row.needs === 'pass' && !(tot._pass > 0)) || (row.needs === 'sem' && !(tot.vs0 > 0) && !(tot.cs1 > 0));
+    const real = missing ? null : row.of(tot);
+    const dist = missing ? [] : days.filter(d => d.qtd > 0).map(row.of);
+    return {
+      ...row, n: days.length, real,
+      p75: missing ? null : mddPct_(dist, 0.75),
+      p90: missing ? null : mddPct_(dist, 0.90),
+      bpVal: (row.bp && bpScope) ? bpScope[row.bp] : null,
+    };
+  });
+  const gapCell = (v, base, fmt) => {
+    if (v == null || base == null) return null;
+    const d = fmt === 'pct' ? (v - base) : (v - base);
+    return <span style={{ color: 'var(--text-muted)', fontSize: '11px', marginLeft: '6px' }}>{(d >= 0 ? '+' : '') + (fmt === 'pct' ? fmtPct(d, 1) : fmtMultiple(d))}</span>;
+  };
+  const val = (v, fmt) => v == null ? '—' : (fmt === 'pct' ? fmtPct(v, 1) : fmtMultiple(v));
+  const chLbl = chLabel_(chFilter);
+  return (
+    <React.Fragment>
+      <div className="tab-header">
+        <div>
+          <h1>Métricas do dia a dia</h1>
+          <div className="subtitle">A escada que sustenta a curva de depósito do BP — realizado, os degraus internos (P75/P90 das safras diárias) e o nível que a curva-meta exige</div>
+        </div>
+      </div>
+      <div className="support">
+        <div className="support-title">Escada de retenção precoce · {chLbl} · safras do período{dataMax ? ' (até ' + dataMax.slice(8, 10) + '/' + dataMax.slice(5, 7) + ')' : ''}</div>
+        <div className="table-scroll"><table className="ch-table">
+          <thead>
+            <tr>
+              <th>Métrica do dia a dia</th>
+              <th title="Agregado do período: soma as bases e divide (não é média das % diárias). Só safras já maduras p/ a janela da métrica.">Realizado</th>
+              <th title="Percentil 75 da distribuição das safras diárias do período — o degrau alcançável replicando internamente o melhor quartil dos nossos próprios dias.">T+1 (P75)</th>
+              <th title="Percentil 90 das safras diárias do período.">T+2 (P90)</th>
+              <th title="Nível exigido pela curva-meta calibrada na Lottu (constante do estudo, não deriva do nosso dado). Só Geral/Google/Meta.">Meta BP</th>
+              <th title="Nº de safras diárias que já fecharam a janela da métrica e entraram na conta.">Safras</th>
+            </tr>
+          </thead>
+          <tbody>
+            {out.map(r => (
+              <tr key={r.key}>
+                <td className="ch-name">{r.label}</td>
+                <td style={{ fontWeight: 600 }}>{val(r.real, r.fmt)}</td>
+                <td>{val(r.p75, r.fmt)}{gapCell(r.p75, r.real, r.fmt)}</td>
+                <td>{val(r.p90, r.fmt)}{gapCell(r.p90, r.real, r.fmt)}</td>
+                <td style={{ fontWeight: 700, color: r.bpVal != null ? 'var(--accent-yellow)' : 'var(--text-muted)' }}>
+                  {r.bp == null ? <span style={{ fontWeight: 400, fontStyle: 'italic' }}>indicativo</span> : val(r.bpVal, r.fmt)}
+                </td>
+                <td style={{ color: r.n < 14 ? 'var(--accent-red)' : 'var(--text-muted)' }}>{fmtQty(r.n)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table></div>
+        <div className="ch-note">
+          <strong>Realizado</strong> = agregado do período (soma as bases, depois divide — não é média das % diárias).
+          <strong> T+1 (P75)</strong> e <strong>T+2 (P90)</strong> são percentis da distribuição das <strong>safras
+          diárias</strong> do período, sem ponderar por volume: são degraus internos — “replicar no todo o que o melhor
+          quartil dos nossos próprios dias já faz”, não uma meta externa. <strong>Meta BP</strong> é o nível exigido pela
+          curva calibrada na Lottu; é constante do estudo, <strong>não deriva do nosso dado</strong>, e só existe p/ Geral,
+          Google e Meta — em qualquer outro recorte de canal fica “—”. As 3 taxas de passagem não têm meta declarada
+          (<em>indicativo</em>): o estudo mostra que elas medem qualidade de aquisição/ativação, não retenção de cauda
+          (r = −0,28 no Geral).
+          {' '}<strong>Maturação:</strong> cada linha só usa safras que já fecharam a janela dela — D14 exige 14 dias,
+          S1/S0 exige 13. Por isso a coluna <strong>Safras</strong> muda de linha pra linha; quando ela fica
+          <span style={{ color: 'var(--accent-red)' }}> vermelha (&lt;14)</span> o percentil está frágil, amplie o período no slicer.
+          {' '}Multiplicadores aqui são <strong>sobre o depósito do D0</strong> (D0 = 1,00x), não sobre o FTD$ — é a base do estudo.
+          {' '}<strong>S0/S1 são semanas de calendário</strong> (seg–dom): S0 = depósito na semana do FTD, S1 = na semana
+          seguinte — mesma lógica do M0/M+1, um nível acima. Não é janela de 7 dias corridos.
+          {' '}A linha de <strong>jogadores S1/S0 fica sem Meta BP de propósito</strong>: a curva semanal de jogadores do
+          estudo é <em>estimada</em> (infere jogadores únicos das taxas diárias assumindo independência entre dias), o que
+          infla o nível — a mesma coorte medida de forma exata dá bem menos. Comparar a contagem exata daqui com aquela
+          meta mostraria um gap de definição, não de performance. A linha de R$ não tem esse problema.
+          {out.some(r => r.real == null) ? ' · alguma linha sem base: payload anterior ao v60, recarregue com Atualizar.' : ''}
+        </div>
+      </div>
+    </React.Fragment>
+  );
+}
+
 const TABS = [
   { id: 'farol', label: 'Farol', component: TabFarol },
   { id: 'monthlyclose', label: 'Monthly Close', component: TabMonthlyClose },
@@ -4829,6 +4777,7 @@ const TABS = [
   { id: 'safras', label: 'Safras Diárias', component: TabSafras },
   { id: 'retencao', label: 'Retenções', component: TabRetencao },
   { id: 'retfaixa', label: 'Multiplicadores e Retenção', component: TabRetencaoFaixa },
+  { id: 'metricasdia', label: 'Métricas do dia a dia', component: TabMetricasDia },
   { id: 'ativacao', label: 'Ativação D0', component: TabAtivacao },
   { id: 'invcampanha', label: 'Investimento p/ Campanha', component: InvCampanhaTab },
   { id: 'cashflow', label: 'Daily Cashflow', component: TabDailyCashflow },
@@ -5646,7 +5595,6 @@ function App({ user, onLogout, config }) {
     rolloverMatrix: MOCK_ROLLOVER_MATRIX,
     bp: MOCK_BP,
     planScenarios: null,       // plano de aquisição 3 cenários {bp,conserv,rolling} (aba DB Plan_Growth Mkt) — switch do Farol (só live/backend v42+)
-    planRetention: null,       // retenção implícita nos 3 cenários + composição do depósito planejado (aba DB Plan_RevOps) — aba Retenções (só backend v59+)
     farolSpark: null,          // últimas 4 semanas fechadas por KPI (semana × canal) — linha de tendência nos hero cards do Farol (só live/backend v50+)
     isLive: false,
     benchmark: null,           // benchmark.json (3 casas, Excel estático)
@@ -5695,7 +5643,6 @@ function App({ user, onLogout, config }) {
           rolloverMatrix: payload.rolloverMatrix,
           bp: payload.bp || null,
           planScenarios: payload.planScenarios || null,
-          planRetention: payload.planRetention || null,
           farolSpark: payload.farolSpark || null,
           isLive: true,
         }));
@@ -5842,7 +5789,6 @@ function App({ user, onLogout, config }) {
     monthlyClose: state.monthlyClose,   // aba Monthly Close (house-level, segue scope do backend)
     ftdByRegister: state.ftdByRegister,  // FTDs por canal por data de cadastro — toggle no Farol (Aquisição)
     planScenarios: state.planScenarios,  // plano 3 cenários (BP/Conservador/Rolling) — switch de cenário do Farol
-    planRetention: state.planRetention,  // retenção implícita nos 3 cenários + composição do depósito — aba Retenções
     farolSpark: state.farolSpark,  // últimas 4 semanas fechadas por KPI — linha de tendência nos hero cards do Farol
     ytd,   // YTD ativo (preset global): Farol/Monthly Close suprimem M-1/trend e relabelam (a janela já é abril→ontem via appliedRange)
     allTabs: TABS, hiddenTabs, onSetTabHidden: setTabHidden,   // controle de visibilidade (Segurança)
