@@ -17,7 +17,6 @@ function usePersistedState(key, initial) {
 // Quando `null`, o dashboard mostra o snapshot mock (modo dev).
 // ============================================================
 const ENDPOINT_URL = 'https://script.google.com/macros/s/AKfycbz23PQIQhJcqeNaLhdvyypl2epktR3frFcmekKv6OXmU5drx_BjLQVBAjSKZTIlFfw/exec';
-const ACCESS_TOKEN = 'rvops_5fa28e9c4b1d3a7f';   // legado — o gate real agora é a sessão (login)
 
 // ===== AUTH (front) — sessão validada no backend (doPost). Token em localStorage; os
 // fetches de dados (GET) mandam &session=<tok> via authParam_(). Login/admin via apiPost_.
