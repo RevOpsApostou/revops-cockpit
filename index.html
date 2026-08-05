@@ -3010,7 +3010,7 @@ function RetFaixaTable({
     return m ? `${m[3]}/${m[2]}` : String(s);
   };
   // Heatmap por coluna (vermelho→amarelo→verde, min/max das linhas) nas retenções —
-  // igual à aba Safras Diárias. Total (heat=false) mantém o amarelo chapado.
+  // Total (heat=false) mantém o amarelo chapado.
   const range = key => {
     const v = rows.map(x => x[key]).filter(x => x != null && !isNaN(x));
     return v.length ? {

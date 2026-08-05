@@ -1358,7 +1358,7 @@ function RetFaixaTable({ data, dateLabel, m0Label, base }) {
   };
   const dm = (s) => { if (!s || s === 'Total') return s || '—'; const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); return m ? `${m[3]}/${m[2]}` : String(s); };
   // Heatmap por coluna (vermelho→amarelo→verde, min/max das linhas) nas retenções —
-  // igual à aba Safras Diárias. Total (heat=false) mantém o amarelo chapado.
+  // Total (heat=false) mantém o amarelo chapado.
   const range = (key) => { const v = rows.map(x => x[key]).filter(x => x != null && !isNaN(x)); return v.length ? { min: Math.min(...v), max: Math.max(...v) } : { min: 0, max: 1 }; };
   const rD1 = range('retD1'), rW1 = range('retW1'), rW2 = range('retW2'), rM0 = range('retM0');
   // Header sticky: fundo OPACO (tint amarelo composto sobre --surface-2) p/ as linhas não
