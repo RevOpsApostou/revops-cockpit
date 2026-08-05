@@ -1816,7 +1816,7 @@ function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, d
   const selFx = (fx) => faixaArr.length === 0 || faixaArr.includes(fx);
   const grpArr = Array.isArray(grupoSel) ? grupoSel : [];   // [] = todos os grupos (filtro de grupo de risco)
   const selGr = (g) => grpArr.length === 0 || grpArr.indexOf(g || 'sem grupo') >= 0;
-  const keys = ['qtd','ftd','d0','cd1','vd1','vd4','cw1','vw1','cw2','vw2','vd30','cm0','vm0','ggrM0'];
+  const keys = ['qtd','ftd','d0','cd1','vd1','vd3','vd4','cw1','vw1','cw2','vw2','vd30','cm0','vm0','ggrM0','cstd','cttd','cqtd4','_pass'];
   const zero = () => { const o = {}; keys.forEach(k => o[k] = 0); o._esp = 0; o._espFtd = 0; o._espD0 = 0; o._rwMin = null; o._rwMax = null; return o; };
   const weekly = gran === 'week';
   // Chave de agrupamento da tabela: período (dia/semana · default) OU por canal OU por faixa — toggle
@@ -1863,6 +1863,7 @@ function retMultCols_(base, mL) {
   const M = mL || 'M0';
   if (base === 'd0') return [
     { key: 'd1', label: 'Mult D1/D0', get: r => r.multD1D0, tip: '(D0 + dia 1) ÷ depósito do D0. O D0/D0 (=1,00x) é omitido por ser constante.' },
+    { key: 'd3', label: 'Mult D3/D0', get: r => r.multD3D0, tip: '(D0 + dias 1–3) ÷ depósito do D0.' },
     { key: 'd4', label: 'Mult D4/D0', get: r => r.multD4D0, tip: '(D0 + dias 1–4) ÷ depósito do D0.' },
     { key: 'w1', label: 'Mult W1/D0', get: r => r.multW1D0, tip: '(D0 + dias 1–7) ÷ depósito do D0.' },
     { key: 'w2', label: 'Mult W2/D0', get: r => r.multW2D0, tip: '(D0 + dias 1–14) ÷ depósito do D0.' },
@@ -1870,6 +1871,7 @@ function retMultCols_(base, mL) {
   ];
   if (base === 'd1') return [
     { key: 'd1', label: 'Mult D1/D1', get: r => r.multD1D1, tip: 'Nível D1 (D0 + dep do dia 1) ÷ ele mesmo = 1,00x (âncora da base D1).' },
+    { key: 'd3', label: 'Mult D3/D1', get: r => r.multD3D1, tip: '(D0 + dias 1–3) ÷ nível D1.' },
     { key: 'd4', label: 'Mult D4/D1', get: r => r.multD4D1, tip: '(D0 + dias 1–4) ÷ nível D1.' },
     { key: 'w1', label: 'Mult W1/D1', get: r => r.multW1D1, tip: '(D0 + dias 1–7) ÷ nível D1.' },
     { key: 'w2', label: 'Mult W2/D1', get: r => r.multW2D1, tip: '(D0 + dias 1–14) ÷ nível D1.' },
@@ -1878,6 +1880,7 @@ function retMultCols_(base, mL) {
   return [
     { key: 'd0', label: 'Mult D0/FTD', get: r => r.multD0F, tip: 'Dep do D0 ÷ FTD.' },
     { key: 'd1', label: 'Mult D1/FTD', get: r => r.multD1F, tip: '(D0 + dia 1) ÷ FTD.' },
+    { key: 'd3', label: 'Mult D3/FTD', get: r => r.multD3F, tip: '(D0 + dias 1–3) ÷ FTD.' },
     { key: 'd4', label: 'Mult D4/FTD', get: r => r.multD4F, tip: '(D0 + dias 1–4) ÷ FTD.' },
     { key: 'w1', label: 'Mult W1/FTD', get: r => r.multW1F, tip: '(D0 + dias 1–7) ÷ FTD.' },
     { key: 'w2', label: 'Mult W2/FTD', get: r => r.multW2F, tip: '(D0 + dias 1–14) ÷ FTD.' },
@@ -1907,6 +1910,15 @@ function RetFaixaTable({ data, dateLabel, m0Label, base }) {
   // igual à aba Safras Diárias. Total (heat=false) mantém o amarelo chapado.
   const range = (key) => { const v = rows.map(x => x[key]).filter(x => x != null && !isNaN(x)); return v.length ? { min: Math.min(...v), max: Math.max(...v) } : { min: 0, max: 1 }; };
   const rD1 = range('retD1'), rW1 = range('retW1'), rW2 = range('retW2'), rM0 = range('retM0');
+  const rPs = range('passStd'), rPt = range('passTtd'), rPq = range('passQtd');
+  // Grupo do FUNIL D0+D1 em AZUL — separa visualmente das retenções (amarelo): são janelas e definições
+  // diferentes (contagem de depósitos D0+D1 vs "voltou no dia 1/semana 1/mês").
+  const psTh  = { background: 'linear-gradient(rgba(96,165,250,0.20),rgba(96,165,250,0.20)), var(--surface-2)' };
+  const psThL = { ...psTh, borderLeft: '2px solid rgba(96,165,250,0.55)' };
+  const psCell = (v, rng, heat, left) => {
+    const bg = heat ? heatBg_(v, rng.min, rng.max) : 'rgba(96,165,250,0.10)';
+    return left ? { background: bg, borderLeft: '2px solid rgba(96,165,250,0.45)' } : { background: bg };
+  };
   // Header sticky: fundo OPACO (tint amarelo composto sobre --surface-2) p/ as linhas não
   // vazarem por baixo do título ao rolar. rgba puro deixava o header transparente.
   const retTh = { background: 'linear-gradient(rgba(250,204,21,0.20),rgba(250,204,21,0.20)), var(--surface-2)' };
@@ -1919,6 +1931,9 @@ function RetFaixaTable({ data, dateLabel, m0Label, base }) {
     <td key="q">{fmtQty(r.qtd)}</td>,
     <td key="ftd">{fmtBRL(r.ftdMedio)}</td>,
     <td key="d0">{fmtBRL(r.d0Medio)}</td>,
+    <td key="ps" style={psCell(r.passStd, rPs, heat, true)}>{fmtPct(r.passStd, 1)}</td>,
+    <td key="pt" style={psCell(r.passTtd, rPt, heat, false)}>{fmtPct(r.passTtd, 1)}</td>,
+    <td key="pq" style={psCell(r.passQtd, rPq, heat, false)}>{fmtPct(r.passQtd, 1)}</td>,
     ...multCols.map(c => <td key={c.key}>{fmtMultiple(c.get(r))}</td>),
     espCell(r),
     <td key="r1" style={retCell(r.retD1, rD1, heat, true)}>{fmtPct(r.retD1, 1)}</td>,
@@ -1930,7 +1945,7 @@ function RetFaixaTable({ data, dateLabel, m0Label, base }) {
   // sortKey null = ordem que veio do agregador. O Total fica sempre no rodapé (tfoot, fora da ordenação).
   const [sortKey, setSortKey] = React.useState(null);
   const [sortDir, setSortDir] = React.useState('desc');
-  const accessors = { date: r => r.date, qtd: r => r.qtd, ftdMedio: r => r.ftdMedio, d0Medio: r => r.d0Medio, m0Esp: espOf, retD1: r => r.retD1, retW1: r => r.retW1, retW2: r => r.retW2, retM0: r => r.retM0 };
+  const accessors = { date: r => r.date, qtd: r => r.qtd, ftdMedio: r => r.ftdMedio, d0Medio: r => r.d0Medio, m0Esp: espOf, retD1: r => r.retD1, retW1: r => r.retW1, retW2: r => r.retW2, retM0: r => r.retM0, passStd: r => r.passStd, passTtd: r => r.passTtd, passQtd: r => r.passQtd };
   multCols.forEach(c => { accessors[c.key] = c.get; });
   const onSort = (key) => { if (sortKey === key) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortKey(key); setSortDir('desc'); } };
   const arrow = (key) => sortKey === key ? (sortDir === 'desc' ? ' ▾' : ' ▴') : '';
@@ -1947,6 +1962,9 @@ function RetFaixaTable({ data, dateLabel, m0Label, base }) {
       <thead>
         <tr>
           {Th('date', dateLabel || 'Data FTD')}{Th('qtd', 'Qtd FTD')}{Th('ftdMedio', 'FTD $$')}{Th('d0Medio', 'Dep D0 Med')}
+          {Th('passStd', 'FTD→2TD', psThL, 'Taxa de passagem na janela D0+D1: contas com ≥2 depósitos ÷ FTDs. Conta o 2º depósito feito no próprio dia do FTD.')}
+          {Th('passTtd', '2TD→3TD', psTh, 'Na janela D0+D1: contas com ≥3 depósitos ÷ contas com ≥2.')}
+          {Th('passQtd', '3TD→4TD', psTh, 'Na janela D0+D1: contas com ≥4 depósitos ÷ contas com ≥3.')}
           {multCols.map(c => Th(c.key, c.label, null, c.tip))}
           {Th('m0Esp', 'M0 Esp.', null, `M0/${espBase} esperado no fechamento, ancorado no realizado: realizado × G(runway) ÷ G(idade). G = curva histórica de desenvolvimento (maio), por escopo (Total/Growth) e por canal. Canal sem curva robusta (ex. Kwai, amostra pequena) fica —.`)}
           {Th('retD1', 'D1 Ret %', retThL)}{Th('retW1', 'W1 Ret %', retTh)}{Th('retW2', 'W2 Ret %', retTh)}{Th('retM0', mL + ' Ret %', retTh)}
@@ -1970,6 +1988,10 @@ function RetFaixaPrevRow({ row, label, loading, error, base }) {
   const retThL = { ...retTh, borderLeft: '2px solid rgba(250,204,21,0.55)' };
   const flat = { background: 'rgba(250,204,21,0.10)' };
   const flatL = { ...flat, borderLeft: '2px solid rgba(250,204,21,0.45)' };
+  const psTh  = { background: 'linear-gradient(rgba(96,165,250,0.20),rgba(96,165,250,0.20)), var(--surface-2)' };
+  const psThL = { ...psTh, borderLeft: '2px solid rgba(96,165,250,0.55)' };
+  const psFlat = { background: 'rgba(96,165,250,0.10)' };
+  const psFlatL = { ...psFlat, borderLeft: '2px solid rgba(96,165,250,0.45)' };
   const r = row || {};
   const ready = !!row && !loading && !error;
   const multCols = retMultCols_(base, 'M0');
@@ -1978,6 +2000,9 @@ function RetFaixaPrevRow({ row, label, loading, error, base }) {
       <thead>
         <tr>
           <th>Mês</th><th>Qtd FTD</th><th>FTD $$</th><th>Dep D0 Med</th>
+          <th style={psThL} title="Janela D0+D1: contas com ≥2 depósitos ÷ FTDs.">FTD→2TD</th>
+          <th style={psTh} title="Janela D0+D1: contas com ≥3 depósitos ÷ contas com ≥2.">2TD→3TD</th>
+          <th style={psTh} title="Janela D0+D1: contas com ≥4 depósitos ÷ contas com ≥3.">3TD→4TD</th>
           {multCols.map(c => <th key={c.key} title={c.tip}>{c.label}</th>)}
           <th title="Mês fechado — aqui o M0 já é o realizado completo (não há 'esperado').">M0 Esp.</th>
           <th style={retThL}>D1 Ret %</th><th style={retTh}>W1 Ret %</th><th style={retTh}>W2 Ret %</th><th style={retTh}>M0 Ret %</th>
@@ -1990,13 +2015,16 @@ function RetFaixaPrevRow({ row, label, loading, error, base }) {
             <td key="q">{fmtQty(r.qtd)}</td>,
             <td key="ftd">{fmtBRL(r.ftdMedio)}</td>,
             <td key="d0">{fmtBRL(r.d0Medio)}</td>,
+            <td key="ps" style={psFlatL}>{fmtPct(r.passStd, 1)}</td>,
+            <td key="pt" style={psFlat}>{fmtPct(r.passTtd, 1)}</td>,
+            <td key="pq" style={psFlat}>{fmtPct(r.passQtd, 1)}</td>,
             ...multCols.map(c => <td key={c.key}>{fmtMultiple(c.get(r))}</td>),
             <td key="m0p" style={{ color: 'var(--text-muted)' }} title="Mês fechado — M0 já é o realizado completo.">—</td>,
             <td key="r1" style={flatL}>{fmtPct(r.retD1, 1)}</td>,
             <td key="rw1" style={flat}>{fmtPct(r.retW1, 1)}</td>,
             <td key="rw2" style={flat}>{fmtPct(r.retW2, 1)}</td>,
             <td key="rm0" style={flat}>{fmtPct(r.retM0, 1)}</td>,
-          ] : <td colSpan={8 + multCols.length} style={{ color: 'var(--text-muted)' }}>{error ? 'erro ao carregar' : (loading ? 'carregando…' : '—')}</td>}
+          ] : <td colSpan={11 + multCols.length} style={{ color: 'var(--text-muted)' }}>{error ? 'erro ao carregar' : (loading ? 'carregando…' : '—')}</td>}
         </tr>
       </tbody>
     </table></div>
@@ -2008,6 +2036,7 @@ function RetFaixaPrevRow({ row, label, loading, error, base }) {
 const RET_MULT_METRICS = [
   { id: 'D0',  key: 'multD0F',  desc: 'Dep D0 ÷ FTD' },
   { id: 'D1',  key: 'multD1F',  desc: '(D0 + dia 1) ÷ FTD' },
+  { id: 'D3',  key: 'multD3F',  desc: '(D0 + dias 1–3) ÷ FTD' },
   { id: 'D7',  key: 'multW1F',  desc: '(D0 + dias 1–7) ÷ FTD' },
   { id: 'D14', key: 'multW2F',  desc: '(D0 + dias 1–14) ÷ FTD' },
   { id: 'D30', key: 'multD30F', desc: '(D0 + dias 1–30) ÷ FTD' },
@@ -2015,6 +2044,7 @@ const RET_MULT_METRICS = [
 // Mesmas séries na base D0 (toggle da aba). D0 sai da lista: D0/D0 = 1,00x constante, não é série.
 const RET_MULT_METRICS_D0 = [
   { id: 'D1',  key: 'multD1D0',  desc: '(D0 + dia 1) ÷ dep D0' },
+  { id: 'D3',  key: 'multD3D0',  desc: '(D0 + dias 1–3) ÷ dep D0' },
   { id: 'D7',  key: 'multW1D0',  desc: '(D0 + dias 1–7) ÷ dep D0' },
   { id: 'D14', key: 'multW2D0',  desc: '(D0 + dias 1–14) ÷ dep D0' },
   { id: 'D30', key: 'multD30D0', desc: '(D0 + dias 1–30) ÷ dep D0' },
@@ -2305,6 +2335,57 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
   );
 }
 
+// ============================================================
+// FUNIL D0+D1 — taxas de passagem, retenção D1 (base × montante) e multiplicadores precoces.
+// Métricas do estudo "Ponte BP × Métricas de Retenção" trazidas pro cockpit, no MESMO recorte da aba
+// (canal · faixa · grupo · same-day · coorte) e com o mês anterior fechado como referência.
+//
+// PASSAGEM = contagem de DEPÓSITOS na janela D0+D1 (inclui o 2º depósito feito no próprio dia do FTD):
+//   FTD→2TD = contas com ≥2 dep ÷ FTDs · 2TD→3TD = ≥3 ÷ ≥2 · 3TD→4TD = ≥4 ÷ ≥3.
+// ⚠️ NÃO é o "D1 Ret %" da tabela (esse é "voltou a depositar NO DIA 1"). Um FTD que depositou 2× no D0 e
+//    sumiu conta como 2TD aqui e NÃO conta no D1 Ret — as duas métricas medem coisas diferentes de propósito.
+// ⚠️ Diverge ~1% do xlsx do estudo: lá a coorte veio de outro export (32,1k FTDs em jul/26 vs 33,6k aqui).
+//    Aqui a coorte é a MESMA de toda a aba (1º FTD em player_metrics), pra bater com os outros números da tela.
+// ============================================================
+function EarlyFunnelCards({ t, pm, loading, error }) {
+  const m1 = pm || {};
+  const cards = [
+    { label: 'FTD → 2TD (D0+D1)', act: t.passStd, m1: m1.passStd, fmt: 'pct' },
+    { label: '2TD → 3TD (D0+D1)', act: t.passTtd, m1: m1.passTtd, fmt: 'pct' },
+    { label: '3TD → 4TD (D0+D1)', act: t.passQtd, m1: m1.passQtd, fmt: 'pct' },
+    { label: 'Retenção base D1/D0', act: t.retQtdD1, m1: m1.retQtdD1, fmt: 'pct' },
+    { label: 'Retenção montante D1/D0', act: t.retValD1, m1: m1.retValD1, fmt: 'pct' },
+    { label: 'Mult Dep/FTD D0', act: t.multD0F, m1: m1.multD0F, fmt: 'multiple' },
+    { label: 'Mult Dep/FTD D1', act: t.multD1F, m1: m1.multD1F, fmt: 'multiple' },
+    { label: 'Mult Dep/FTD D3', act: t.multD3F, m1: m1.multD3F, fmt: 'multiple' },
+  ].map(c => ({ ...c, bp: null, pctBp: null }));
+  // Intensidade = montante ÷ base: quantas vezes o depósito médio de quem volta no D1 vale o depósito médio
+  // do D0. É a metade da conta que o "% que voltou" não enxerga (achado central do estudo vs a Lottu).
+  const inten = (t.retQtdD1 > 0 && t.retValD1 != null) ? t.retValD1 / t.retQtdD1 : null;
+  const intenM1 = (m1.retQtdD1 > 0 && m1.retValD1 != null) ? m1.retValD1 / m1.retQtdD1 : null;
+  return (
+    <React.Fragment>
+      <div className="hero-grid">{cards.map((c, i) => <Hero key={i} metric={c} />)}</div>
+      <div className="ch-note">
+        <strong>Passagem</strong> = nº de depósitos na janela <strong>D0+D1</strong> (conta o 2º depósito feito no
+        próprio dia do FTD): 2TD = contas com ≥2 depósitos ÷ FTDs · 3TD = ≥3 ÷ ≥2 · 4TD = ≥4 ÷ ≥3.
+        Não confundir com o <strong>D1 Ret %</strong> da tabela abaixo, que é “voltou a depositar no dia 1”.
+        <strong> Retenção base</strong> = % dos FTDs que redepositaram no dia 1; <strong>montante</strong> = R$ do
+        dia 1 ÷ depósito do D0 — as duas são independentes do toggle Valor/Qtd, aparecem sempre lado a lado.
+        {inten != null && (
+          <span> A razão entre elas é a <strong>intensidade de quem volta</strong>: hoje{' '}
+            <strong>{fmtMultiple(inten)}</strong>{intenM1 != null ? ` (mês anterior ${fmtMultiple(intenM1)})` : ''} —
+            quanto o depósito de quem volta no D1 vale sobre o depósito médio do D0. Subir só o % que volta sem
+            subir a intensidade não move a curva de depósito.</span>
+        )}
+        {' '}Multiplicadores <strong>D0/D1/D3</strong> = depósito acumulado (incl. D0) ÷ FTD$.
+        {loading ? ' · carregando…' : ''}{error ? ' · erro ao carregar' : ''}
+        {t.passStd == null ? ' · funil indisponível neste payload (backend anterior ao v58) — recarregue com Atualizar.' : ''}
+      </div>
+    </React.Fragment>
+  );
+}
+
 function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   const [faixaSel, setFaixaSel] = React.useState([]);   // multi-select de faixas de FTD; [] = todas
   const [grupoSel, setGrupoSel] = React.useState([]);   // multi-select de GRUPO DE RISCO; [] = todos (filtro global da aba, igual faixas)
@@ -2514,6 +2595,10 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
         </div>
       <div className="hero-grid">
         {heroes.map((m, i) => <Hero key={i} metric={m} />)}
+      </div>
+      <div className="support">
+        <div className="support-title">Funil D0+D1 · passagem, retenção D1 e multiplicadores precoces · {chLabel} · {faixaLabelTxt}{grupoActive ? ' · ' + grupoLabelTxt : ''}{sameday ? ' · same-day' : ''}{coSuffix} · ref. {monthLabelPt_(pm.from)}</div>
+        <EarlyFunnelCards t={t} pm={pmRow} loading={loadingRF || pmFetch.loading} error={errorRF || pmFetch.error} />
       </div>
       <div className="support">
         <div className="support-title">Mês anterior · {monthLabelPt_(pm.from)} · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''} · mult sobre {baseLbl}{pmFetch.loading ? ' · carregando…' : ''}{pmFetch.error ? ' · erro ao carregar' : ''}</div>
@@ -2825,14 +2910,18 @@ function benchApostouRows_(retencaoFaixa) {
     return {
       date: String(r.date), canal: r.canal, faixa: r.faixa, grupo: (r.grupo != null ? r.grupo : null), campanha: (r.campanha != null ? r.campanha : null),
       qtd: r.qtdFtds || 0, ftd: r.ftdTotal || 0, d0: r.depD0 || 0,
-      cd1: r.cntD1 || 0, vd1: r.valD1 || 0, vd4: r.valD4 || 0, cw1: r.cntW1 || 0, vw1: r.valW1 || 0, cw2: r.cntW2 || 0, vw2: r.valW2 || 0, vd30: r.valD30 || 0, cm0: r.cntM0 || 0, vm0: r.valM0 || 0,
+      cd1: r.cntD1 || 0, vd1: r.valD1 || 0, vd3: r.valD3 || 0, vd4: r.valD4 || 0, cw1: r.cntW1 || 0, vw1: r.valW1 || 0, cw2: r.cntW2 || 0, vw2: r.valW2 || 0, vd30: r.valD30 || 0, cm0: r.cntM0 || 0, vm0: r.valM0 || 0,
+      // Funil D0+D1 (backend v58+). _pass = 0 marca payload ANTIGO (campo ausente) → as taxas saem "—" em vez
+      // de 0,0%, que seria lido como "ninguém passou". Sem isso um cache velho mentiria na tela.
+      cstd: r.cntStd || 0, cttd: r.cntTtd || 0, cqtd4: r.cntQtd4 || 0,
+      _pass: (r.cntStd === undefined || r.cntStd === null) ? 0 : 1,
       ggrM0: r.ggrM0 || 0,
       dep, saq, net: dep - saq,
     };
   });
 }
 function aggBench_(rows, sel) {
-  const out = { qtd: 0, ftd: 0, d0: 0, cd1: 0, vd1: 0, vd4: 0, cw1: 0, vw1: 0, cw2: 0, vw2: 0, vd30: 0, cm0: 0, vm0: 0, dep: 0, saq: 0, net: 0 };
+  const out = { qtd: 0, ftd: 0, d0: 0, cd1: 0, vd1: 0, vd3: 0, vd4: 0, cw1: 0, vw1: 0, cw2: 0, vw2: 0, vd30: 0, cm0: 0, vm0: 0, dep: 0, saq: 0, net: 0, cstd: 0, cttd: 0, cqtd4: 0, _pass: 0 };
   const canals = sel.canals || (sel.canal && sel.canal !== 'all' ? [sel.canal] : []);
   (rows || []).forEach(r => {
     // canais específicos têm precedência; senão, scope 'growth' = só mídia paga (exclui social/orgânico/afiliados)
@@ -2842,8 +2931,9 @@ function aggBench_(rows, sel) {
     if (sel.from && r.date < sel.from) return;
     if (sel.to && r.date > sel.to) return;
     out.qtd += r.qtd; out.ftd += r.ftd; out.d0 += r.d0;
-    out.cd1 += r.cd1; out.vd1 += r.vd1; out.vd4 += r.vd4 || 0; out.cw1 += r.cw1; out.vw1 += r.vw1; out.cw2 += r.cw2 || 0; out.vw2 += r.vw2 || 0; out.vd30 += r.vd30 || 0; out.cm0 += r.cm0; out.vm0 += r.vm0;
+    out.cd1 += r.cd1; out.vd1 += r.vd1; out.vd3 += r.vd3 || 0; out.vd4 += r.vd4 || 0; out.cw1 += r.cw1; out.vw1 += r.vw1; out.cw2 += r.cw2 || 0; out.vw2 += r.vw2 || 0; out.vd30 += r.vd30 || 0; out.cm0 += r.cm0; out.vm0 += r.vm0;
     out.dep += r.dep || 0; out.saq += r.saq || 0; out.net += r.net || 0;
+    out.cstd += r.cstd || 0; out.cttd += r.cttd || 0; out.cqtd4 += r.cqtd4 || 0; out._pass += r._pass || 0;
   });
   return out;
 }
@@ -2860,6 +2950,9 @@ function benchMetrics_(a, mode) {
     d0Medio: a.qtd ? a.d0 / a.qtd : null,     // Dep D0 Med = Σ D0 ÷ qtd FTDs
     multD0F: multF(a.d0),                      // D0 ÷ FTD
     multD1F: multF(a.d0 + a.vd1),              // (D0 + dia 1) ÷ FTD — acumulado
+    // D3 só existe a partir do backend v58 (e nunca no JSON de benchmark). Sem a base, devolve null em vez de
+    // cair pro nível D0 — um 1,42x silencioso seria lido como "o D3 não cresceu", que é falso.
+    multD3F: a._pass > 0 ? multF(a.d0 + (a.vd3 || 0)) : null,   // (D0 + dias 1–3) ÷ FTD
     multD4F: multF(a.d0 + (a.vd4 || 0)),       // (D0 + dias 1–4) ÷ FTD
     multW1F: multF(a.d0 + a.vw1),              // (D0 + dias 1–7) ÷ FTD
     multW2F: multF(a.d0 + (a.vw2 || 0)),       // (D0 + dias 1–14) ÷ FTD
@@ -2867,6 +2960,7 @@ function benchMetrics_(a, mode) {
     multM0F: multF(a.d0 + a.vm0),              // (D0 + resto do mês do FTD) ÷ FTD
     // Mesmos acúmulos, mas divididos pelo NÍVEL D1 (toggle "sobre D1"): D1 vira a base (=1,00x), sem D0.
     multD1D1: multD1(a.d0 + (a.vd1 || 0)),     // = 1,00x (âncora)
+    multD3D1: a._pass > 0 ? multD1(a.d0 + (a.vd3 || 0)) : null,
     multD4D1: multD1(a.d0 + (a.vd4 || 0)),
     multW1D1: multD1(a.d0 + a.vw1),
     multW2D1: multD1(a.d0 + (a.vw2 || 0)),
@@ -2874,6 +2968,7 @@ function benchMetrics_(a, mode) {
     // Mesmos acúmulos ÷ DEPÓSITO D0 (toggle "sobre D0"): D0 vira a base (=1,00x, não vai pra tela).
     // Quanto o dinheiro do primeiro dia se multiplicou — não depende do ticket de FTD.
     multD1D0: multD0(a.d0 + (a.vd1 || 0)),
+    multD3D0: a._pass > 0 ? multD0(a.d0 + (a.vd3 || 0)) : null,
     multD4D0: multD0(a.d0 + (a.vd4 || 0)),
     multW1D0: multD0(a.d0 + a.vw1),
     multW2D0: multD0(a.d0 + (a.vw2 || 0)),
@@ -2883,6 +2978,20 @@ function benchMetrics_(a, mode) {
     retW1: ret(a.cw1, a.vw1),
     retW2: ret(a.cw2 || 0, a.vw2 || 0),
     retM0: ret(a.cm0, a.vm0),
+    // As DUAS leituras do D1 lado a lado, independentes do toggle Valor/Qtd (o toggle troca retD1; estas não).
+    // Base (jogadores) = % dos FTDs que voltaram a depositar no dia 1. Montante = R$ do dia 1 ÷ depósito do D0.
+    // A distância entre as duas é a INTENSIDADE de quem volta (montante ÷ base) — o gap central vs a Lottu.
+    retQtdD1: a.qtd ? a.cd1 / a.qtd : null,
+    retValD1: a.d0 ? a.vd1 / a.d0 : null,
+    // Funil de passagem na janela D0+D1, por CONTAGEM DE DEPÓSITOS (inclui o 2º depósito feito no próprio D0).
+    // _pass = 0 → payload de backend anterior ao v58, que não traz as contagens: devolve null (tela mostra —).
+    passStd: (a._pass > 0 && a.qtd) ? a.cstd / a.qtd : null,          // FTD → 2TD
+    passTtd: (a._pass > 0 && a.cstd) ? a.cttd / a.cstd : null,        // 2TD → 3TD
+    passQtd: (a._pass > 0 && a.cttd) ? a.cqtd4 / a.cttd : null,       // 3TD → 4TD
+    // Alcance acumulado sobre a base de FTD (o "funil" do estudo: 1 → sSTD → sTTD → sQTD).
+    reachStd: (a._pass > 0 && a.qtd) ? a.cstd / a.qtd : null,
+    reachTtd: (a._pass > 0 && a.qtd) ? a.cttd / a.qtd : null,
+    reachQtd: (a._pass > 0 && a.qtd) ? a.cqtd4 / a.qtd : null,
   };
 }
 
