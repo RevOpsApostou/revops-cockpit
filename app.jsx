@@ -57,7 +57,9 @@ const MOCK_M = {
   rollover:    { act: 2.27,     bp: 2.50,     m1: 2.34,     pctBp: 0.9080, fmt: 'multiple', label: 'Rollover (Turnover / Depósito)' },
 };
 
-// Mock — rollover por canal × tipo de jogo (modo dev). Live vem de payload.rolloverMatrix.
+// Mock — rollover por canal × tipo de jogo (modo dev). Só alimenta a métrica `rollover` do dataset
+// mock (card do Farol). ⚠️ 2026-08-05: com a aba Turnover removida, o front NÃO guarda mais
+// `payload.rolloverMatrix` — o backend ainda manda, mas ninguém lê no modo live.
 // Verticais reais da player_metrics: valor_apostas_esporte / _casino / _loteria
 const MOCK_ROLLOVER_MATRIX = {
   columns: ['Sports', 'Casino', 'Loteria'],
@@ -474,29 +476,6 @@ function Hero({ metric, variant }) {
     </div>
   );
 }
-
-function HBarList({ items, valueFmt = 'brl' }) {
-  const max = Math.max(...items.map(i => i.value));
-  return (
-    <div className="hbar-list">
-      {items.map((it, i) => (
-        <div key={i} className="hbar">
-          <div className="hbar-head">
-            <span className="hbar-label">{it.label}</span>
-            <span className="hbar-value">
-              {valueFmt === 'pct' ? fmtPct(it.value, 1) : fmtBRL(it.value)}
-              {it.amount != null && <span className="secondary">{fmtBRL(it.amount)}</span>}
-            </span>
-          </div>
-          <div className="hbar-track">
-            <div className="hbar-fill" style={{ width: `${(it.value / max) * 100}%` }} />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 // ============================================================
 // CHANNEL TABLE — análise de aquisição por canal
 //   ROAS = FTD R$ / Investimento · CAC = Investimento / FTD qtd · Ticket = FTD R$ / FTD qtd
@@ -654,102 +633,6 @@ function GgrChannelTable({ channels, payback }) {
     </table></div>
   );
 }
-
-// ============================================================
-// ROLLOVER MATRIX — rollover (turnover/depósito) por canal × tipo de jogo
-// ============================================================
-
-function RolloverMatrix({ data }) {
-  // Total ponderado pelo depósito (weight) das linhas exibidas
-  const W = data.rows.reduce((a, r) => a + (r.weight || 0), 0);
-  const totCol = (j) => (W > 0
-    ? data.rows.reduce((a, r) => a + ((r.values[j] || 0) * (r.weight || 0)), 0) / W
-    : null);
-  const totAll = (W > 0
-    ? data.rows.reduce((a, r) => a + ((r.total || 0) * (r.weight || 0)), 0) / W
-    : null);
-
-  return (
-    <div className="table-scroll"><table className="ch-table">
-      <thead>
-        <tr>
-          <th>Canal</th>
-          {data.columns.map((c, i) => <th key={i}>{c}</th>)}
-          <th>Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        {data.rows.map((r, i) => (
-          <tr key={i}>
-            <td className="ch-name">{r.channel}</td>
-            {r.values.map((v, j) => <td key={j}>{fmtMultiple(v)}</td>)}
-            <td style={{ fontWeight: 700 }}>{fmtMultiple(r.total)}</td>
-          </tr>
-        ))}
-      </tbody>
-      <tfoot>
-        <tr>
-          <td>Total</td>
-          {data.columns.map((c, j) => <td key={j}>{fmtMultiple(totCol(j))}</td>)}
-          <td>{fmtMultiple(totAll)}</td>
-        </tr>
-      </tfoot>
-    </table></div>
-  );
-}
-
-// ============================================================
-// DEP M0 TABLE — depósito da safra atual por canal
-//   ROAS M0 = DEP M0 ÷ Investimento
-// ============================================================
-
-function DepM0Table({ channels }) {
-  const tot = channels.reduce((a, c) => ({
-    depM0: a.depM0 + (c.depM0 || 0),
-    invest: a.invest + (c.invest || 0),
-  }), { depM0: 0, invest: 0 });
-
-  const roasM0 = (c) => (c.invest != null && c.invest > 0 && c.depM0 != null ? c.depM0 / c.invest : null);
-  const roasCell = (r) => {
-    if (r == null) return <td>—</td>;
-    return <td className={r >= 1 ? 'ch-roas-pos' : 'ch-roas-neg'}>{fmtMultiple(r)}</td>;
-  };
-
-  return (
-    <div className="table-scroll"><table className="ch-table">
-      <thead>
-        <tr>
-          <th>Canal</th>
-          <th>Investimento</th>
-          <th>DEP M0</th>
-          <th>ROAS M0</th>
-          <th>% do Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        {channels.map((c, i) => (
-          <tr key={i}>
-            <td className="ch-name">{c.channel}</td>
-            <td>{fmtBRL(c.invest)}</td>
-            <td>{fmtBRL(c.depM0)}</td>
-            {roasCell(roasM0(c))}
-            <td>{tot.depM0 > 0 ? fmtPct((c.depM0 || 0) / tot.depM0) : '—'}</td>
-          </tr>
-        ))}
-      </tbody>
-      <tfoot>
-        <tr>
-          <td>Total</td>
-          <td>{fmtBRL(tot.invest)}</td>
-          <td>{fmtBRL(tot.depM0)}</td>
-          {roasCell(tot.invest > 0 ? tot.depM0 / tot.invest : null)}
-          <td>100%</td>
-        </tr>
-      </tfoot>
-    </table></div>
-  );
-}
-
 // ============================================================
 // RETENTION TABLE — retenção de valor (R$) por canal
 //   M0→M1 / M1→M2: média das safras com janela completa
@@ -927,31 +810,6 @@ function FtdBridge({ channels, bp }) {
     </React.Fragment>
   );
 }
-
-function TabAquisicao({ M, channels, bp }) {
-  return (
-    <React.Fragment>
-      <div className="tab-header">
-        <div>
-          <h1>Aquisições</h1>
-          <div className="subtitle">FTDs, eficiência e investimento de mídia (canal Growth)</div>
-        </div>
-      </div>
-      <div className="hero-grid">
-        <Hero metric={M.ftdAmount} />
-        <Hero metric={M.roasFtd} />
-        <Hero metric={M.invest} />
-      </div>
-      {channels && channels.length > 0 && (
-        <div className="support">
-          <div className="support-title">Análise por Canal</div>
-          <ChannelTable channels={channels} bp={bp} />
-        </div>
-      )}
-    </React.Fragment>
-  );
-}
-
 function TabRetencao({ M, retentionChannels }) {
   return (
     <React.Fragment>
@@ -975,78 +833,6 @@ function TabRetencao({ M, retentionChannels }) {
     </React.Fragment>
   );
 }
-
-// Depósito e saque do mês (transações) por canal — volume total na janela.
-function DepByChannelTable({ channels }) {
-  const tot = channels.reduce((a, c) => ({
-    dep: a.dep + (c.depositos || 0), qtd: a.qtd + (c.qtdDep || 0),
-    saq: a.saq + (c.saques || 0), qsaq: a.qsaq + (c.qtdSaque || 0),
-  }), { dep: 0, qtd: 0, saq: 0, qsaq: 0 });
-  const ticket = (c) => (c.qtdDep > 0 ? c.depositos / c.qtdDep : null);
-  const rows = [...channels].sort((a, b) => (b.depositos || 0) - (a.depositos || 0));
-  return (
-    <div className="table-scroll"><table className="ch-table">
-      <thead>
-        <tr><th>Canal</th><th>Depósitos</th><th>Qtd Depósitos</th><th>Saques</th><th>Qtd Saques</th><th>Ticket Médio</th><th>% do Total</th></tr>
-      </thead>
-      <tbody>
-        {rows.map((c, i) => (
-          <tr key={i}>
-            <td className="ch-name">{c.channel}</td>
-            <td>{fmtBRL(c.depositos)}</td>
-            <td>{fmtQty(c.qtdDep)}</td>
-            <td>{fmtBRL(c.saques)}</td>
-            <td>{fmtQty(c.qtdSaque)}</td>
-            <td>{fmtBRL(ticket(c))}</td>
-            <td>{tot.qtd > 0 ? fmtPct((c.qtdDep || 0) / tot.qtd) : '—'}</td>
-          </tr>
-        ))}
-      </tbody>
-      <tfoot>
-        <tr>
-          <td>Total</td>
-          <td>{fmtBRL(tot.dep)}</td>
-          <td>{fmtQty(tot.qtd)}</td>
-          <td>{fmtBRL(tot.saq)}</td>
-          <td>{fmtQty(tot.qsaq)}</td>
-          <td>{fmtBRL(tot.qtd > 0 ? tot.dep / tot.qtd : null)}</td>
-          <td>100%</td>
-        </tr>
-      </tfoot>
-    </table></div>
-  );
-}
-
-function TabDepositos({ M, depM0Channels, depByChannel }) {
-  return (
-    <React.Fragment>
-      <div className="tab-header">
-        <div>
-          <h1>Gestão de Depósitos</h1>
-          <div className="subtitle">Volume depositado e safra atual por canal</div>
-        </div>
-      </div>
-      <div className="hero-grid">
-        <Hero metric={M.depTotal} />
-        {M.qtdDep ? <Hero metric={M.qtdDep} /> : null}
-        <Hero metric={M.depM0Total} />
-      </div>
-      {depByChannel && depByChannel.length > 0 && (
-        <div className="support">
-          <div className="support-title">Depósitos do Mês por Canal</div>
-          <DepByChannelTable channels={depByChannel} />
-        </div>
-      )}
-      {depM0Channels && depM0Channels.length > 0 && (
-        <div className="support">
-          <div className="support-title">DEP M0 por Canal — Safra Atual</div>
-          <DepM0Table channels={depM0Channels} />
-        </div>
-      )}
-    </React.Fragment>
-  );
-}
-
 // Deriva GGR/NGR por canal para UMA vertical (casino|sportsbook). Casino sai líquido de
 // freespin (mecânica de casino). Bônus NÃO vem por vertical no BQ → RATEADO pró-rata pela
 // participação positiva da vertical no GGR do canal → casino + sportsbook = NGR do canal.
@@ -1382,32 +1168,6 @@ function TabGgr({ M, ggrChannels, ggrSafra, ggrSafraRoas, ggrPayback, chFilter }
     </React.Fragment>
   );
 }
-
-function TabApostas({ M, rolloverMatrix, isLive }) {
-  return (
-    <React.Fragment>
-      <div className="tab-header">
-        <div>
-          <h1>Turnover</h1>
-          <div className="subtitle">Volume apostado, margem da casa e rollover</div>
-        </div>
-        {!isLive && <span className="mock-chip">Dados mock</span>}
-      </div>
-      <div className="hero-grid">
-        <Hero metric={M.turnover} />
-        <Hero metric={M.hold} />
-        <Hero metric={M.rollover} />
-      </div>
-      {rolloverMatrix && rolloverMatrix.rows && rolloverMatrix.rows.length > 0 && (
-        <div className="support">
-          <div className="support-title">Rollover por Canal × Tipo de Jogo</div>
-          <RolloverMatrix data={rolloverMatrix} />
-        </div>
-      )}
-    </React.Fragment>
-  );
-}
-
 // ============================================================
 // SHELL
 // ============================================================
@@ -3238,15 +2998,7 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
     </React.Fragment>
   );
 }
-
-// Aba Benchmark — 3 casas (faixa_diaria) vs Apostou (coorte cheia).
-function BenchmarkTab({ retencaoFaixa, benchmark }) {
-  return <BenchmarkView retencaoFaixa={retencaoFaixa} benchmark={benchmark}
-    houseOrder={BENCH_HOUSE_ORDER} sameday={false} pkey="bench"
-    title="Benchmark entre casas"
-    subtitle="Apostou vs Lottu · Bet.Bet · Donald — ticket de FTD, depósito D0 e retenção D1/W1/M0 por faixa e canal" />;
-}
-// Aba Benchmark Lottu — Apostou (BQ ao vivo) vs Lottu (Excel). NÃO é mais same-day (nem de um lado nem do
+// Aba Benchmark Lottu — Apostou (BQ ao vivo) vs Lottu (Excel). NÃO é same-day (nem de um lado nem do
 // outro): a coorte é CHEIA dos dois. Apostou vem do only=retfaixa SEM &sameday=1; Lottu do benchmark_net.json
 // (rebuild do 'lottubet nosameday'). Bruto = retenção/multiplicadores; Líquido = caixa da safra (Σ dep − Σ saque
 // observados), saque da Apostou vem do retfaixa (depTot/saqTot).
@@ -3919,207 +3671,6 @@ function TabMonthlyClose({ M, farol, monthlyClose, range, isLive, ytd }) {
     </React.Fragment>
   );
 }
-
-// ===== Investimento por Campanha — grão atômico canal × campanha × grupo × faixa FTD (aba de otimização) =====
-// Fetch próprio (only=invcamp). Junta spend (performance) à coorte de FTD; investimento RATEADO por share de
-// FTD → CPA fica igual entre segmentos (matemático); a diferença aparece em ROAS/multiplicadores.
-// PIVOT client-side: "Ver por" (Canal|Grupo|Faixa) define o agrupamento primário; campanhas rankeadas dentro;
-// expande p/ a dimensão secundária. Sub-slicers de grupo e faixa filtram o universo. Multiplicadores/ROAS
-// re-agregados no CLIENTE somando os blocos crus (dep_d0, val_d1/14/30, ftd$, ngr) e dividindo — nunca média de razão.
-function InvCampanhaTab({ range, chFilter }) {
-  const [rows, setRows] = React.useState(null);
-  const [loading, setLoading] = React.useState(!!ENDPOINT_URL);
-  const [error, setError] = React.useState(null);
-  const [expanded, setExpanded] = React.useState({});
-  const [sortKey, setSortKey] = React.useState('invest');
-  const [sortDir, setSortDir] = React.useState('desc');
-  const [primaryDim, setPrimaryDim] = usePersistedState('rvops:invcampDim', 'canal');   // Canal | Grupo | Faixa
-  const [grupoSel, setGrupoSel] = React.useState([]);   // [] = todos
-  const [faixaSel, setFaixaSel] = React.useState([]);   // [] = todas
-
-  React.useEffect(() => {
-    if (!ENDPOINT_URL || !range) { setLoading(false); return; }
-    let live = true; setLoading(true); setError(null);
-    fetch(`${ENDPOINT_URL}?${authParam_()}&only=invcamp&from=${range.from}&to=${range.to}`)
-      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
-      .then(j => { if (!live) return; if (j.error) throw new Error(j.error); setRows(j.invCampanha || []); setLoading(false); })
-      .catch(e => { if (live) { setError(String(e.message || e)); setLoading(false); } });
-    return () => { live = false; };
-  }, [range && range.from, range && range.to]);
-
-  // Blocos crus → métricas derivadas. Só computa razão com denominador > 0.
-  const blank = () => ({ ftds: 0, invest: 0, ftdAmount: 0, depD0: 0, valD1: 0, valD14: 0, valD30: 0, ngrM0: 0 });
-  const addInto = (a, r) => { a.ftds += r.ftds || 0; a.invest += r.invest || 0; a.ftdAmount += r.ftdAmount || 0; a.depD0 += r.depD0 || 0; a.valD1 += r.valD1 || 0; a.valD14 += r.valD14 || 0; a.valD30 += r.valD30 || 0; a.ngrM0 += r.ngrM0 || 0; return a; };
-  const derive = (a) => ({
-    ...a,
-    cpa: (a.invest > 0 && a.ftds > 0) ? a.invest / a.ftds : null,
-    roasFtd: a.invest > 0 ? a.ftdAmount / a.invest : null,
-    roasGgr: a.invest > 0 ? a.ngrM0 / a.invest : null,
-    multD1: a.depD0 > 0 ? (a.depD0 + a.valD1) / a.depD0 : null,
-    multD14: a.depD0 > 0 ? (a.depD0 + a.valD14) / a.depD0 : null,
-    multD30: a.depD0 > 0 ? (a.depD0 + a.valD30) / a.depD0 : null,
-  });
-
-  if (!ENDPOINT_URL) return (<div className="tab-header"><div><h1>Investimento por Campanha</h1><div className="subtitle">Disponível só no modo live (BigQuery).</div></div></div>);
-
-  const DIMS = { canal: 'Canal', grupo: 'Grupo de risco', faixa: 'Faixa FTD' };
-  const gLabel = (g) => (g == null || g === 'sem grupo' || String(g).charAt(0) === '(') ? (g || '—') : ('grupo ' + g);
-  const dimValLabel = (dim, v) => dim === 'grupo' ? gLabel(v) : (v == null ? '—' : v);
-  const expandDim = primaryDim === 'grupo' ? 'faixa' : 'grupo';   // dimensão secundária (drill)
-
-  const chSel = chList_(chFilter);
-  const channelPass = (canal) => chSel.length ? chSel.includes(canal) : (chFilter.scope === 'growth' ? isGrowthCh_(canal) : true);
-  const all = rows || [];
-  const grupoOptions = Array.from(new Set(all.map(r => r.grupo))).filter(x => x != null).sort();
-  const faixaOptions = Array.from(new Set(all.map(r => r.faixa))).filter(x => x != null).sort();
-  const grupoPass = (g) => grupoSel.length ? grupoSel.includes(g) : true;
-  const faixaPass = (f) => faixaSel.length ? faixaSel.includes(f) : true;
-  const src = all.filter(r => channelPass(r.canal) && grupoPass(r.grupo) && faixaPass(r.faixa));
-
-  // canal → Map(campanha → { label, groups[], agg })
-  const sections = new Map();
-  src.forEach(r => {
-    const pk = r[primaryDim] == null ? '—' : r[primaryDim];
-    const ck = r.campanha || '(sem campanha)';
-    const ek = r[expandDim] == null ? '—' : r[expandDim];
-    if (!sections.has(pk)) sections.set(pk, new Map());
-    const camps = sections.get(pk);
-    if (!camps.has(ck)) camps.set(ck, { key: ck, label: r.campanhaLabel || ck, agg: blank(), subs: new Map() });
-    const c = camps.get(ck); addInto(c.agg, r);
-    if (!c.subs.has(ek)) c.subs.set(ek, { key: ek, agg: blank() });
-    addInto(c.subs.get(ek).agg, r);
-  });
-
-  const SORTS = { invest: r => r.invest, ftds: r => r.ftds, cpa: r => r.cpa, depD0: r => r.depD0, roasFtd: r => r.roasFtd, roasGgr: r => r.roasGgr, multD1: r => r.multD1, multD14: r => r.multD14, multD30: r => r.multD30 };
-  const cmp = (a, b) => { const acc = SORTS[sortKey] || SORTS.invest, d = sortDir === 'asc' ? 1 : -1; let va = acc(a), vb = acc(b); va = (va == null || isNaN(va)) ? -Infinity : va; vb = (vb == null || isNaN(vb)) ? -Infinity : vb; return va < vb ? -d : va > vb ? d : 0; };
-
-  // pivot montado + subtotais por seção; ordena seções por investimento; total geral.
-  const sectionArr = Array.from(sections.entries()).map(([pk, camps]) => {
-    const campaigns = Array.from(camps.values()).map(c => ({
-      key: c.key, label: c.label, d: derive(c.agg),
-      subs: Array.from(c.subs.values()).map(s => ({ key: s.key, d: derive(s.agg) })).sort((a, b) => cmp(a.d, b.d)),
-    }));
-    const sub = blank(); Array.from(camps.values()).forEach(c => addInto(sub, c.agg));
-    campaigns.sort((a, b) => cmp(a.d, b.d));
-    return { pk, campaigns, sub: derive(sub) };
-  }).sort((a, b) => b.sub.invest - a.sub.invest);
-  const grand = blank(); sectionArr.forEach(s => addInto(grand, s.sub)); const gd = derive(grand);
-
-  const onSort = (k) => { if (sortKey === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc'); else { setSortKey(k); setSortDir('desc'); } };
-  const arrow = (k) => sortKey === k ? (sortDir === 'desc' ? ' ▾' : ' ▴') : '';
-  const Th = (k, label, title) => <th key={k} onClick={() => onSort(k)} title={(title ? title + ' · ' : '') + 'clique p/ ordenar'} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', textAlign: 'right' }}>{label}{arrow(k)}</th>;
-  const roasStyle = (v) => ({ textAlign: 'right', color: v == null ? 'var(--text-muted)' : (v < 0 ? 'var(--accent-red, #ef4444)' : (v >= 1 ? 'var(--accent-green, #22c55e)' : 'inherit')), fontWeight: v != null && v >= 1 ? 600 : 400 });
-  const num = (v, f) => <td style={{ textAlign: 'right' }}>{f(v)}</td>;
-
-  // células de métrica (reusadas por campanha/grupo/subtotal/total)
-  const metricCells = (d, key) => [
-    <td key="inv" style={{ textAlign: 'right', fontWeight: 600 }}>{fmtBRL(d.invest)}</td>,
-    <td key="ftd" style={{ textAlign: 'right' }}>{fmtQty(d.ftds)}</td>,
-    <td key="cpa" style={{ textAlign: 'right' }}>{d.cpa == null ? '—' : fmtBRL(d.cpa)}</td>,
-    <td key="d0" style={{ textAlign: 'right' }}>{fmtBRL(d.depD0)}</td>,
-    <td key="rf" style={roasStyle(d.roasFtd)}>{fmtMultiple(d.roasFtd)}</td>,
-    <td key="rg" style={roasStyle(d.roasGgr)}>{fmtMultiple(d.roasGgr)}</td>,
-    <td key="m1" style={{ textAlign: 'right' }}>{fmtMultiple(d.multD1)}</td>,
-    <td key="m14" style={{ textAlign: 'right' }}>{fmtMultiple(d.multD14)}</td>,
-    <td key="m30" style={{ textAlign: 'right' }}>{fmtMultiple(d.multD30)}</td>,
-  ];
-
-  const chLabel = chLabel_(chFilter);
-  const nCamp = sectionArr.reduce((n, s) => n + s.campaigns.length, 0);
-  const mSel = () => ({ fontSize: 12, color: 'var(--text-muted)' });
-
-  return (
-    <React.Fragment>
-      <div className="tab-header">
-        <div>
-          <h1>Investimento por Campanha</h1>
-          <div className="subtitle">Investimento, CPA, ROAS e multiplicadores por campanha, grupo de risco e faixa FTD — para otimização de verba</div>
-        </div>
-      </div>
-      <div className="hero-grid">
-        <Hero metric={{ label: 'Investimento', act: gd.invest, m1: null, pctBp: null, fmt: 'brl' }} />
-        <Hero metric={{ label: 'FTDs', act: gd.ftds, m1: null, pctBp: null, fmt: 'qty' }} />
-        <Hero metric={{ label: 'CPA FTD', act: gd.cpa, m1: null, pctBp: null, fmt: 'brl' }} />
-        <Hero metric={{ label: 'ROAS FTD', act: gd.roasFtd, m1: null, pctBp: null, fmt: 'multiple' }} />
-      </div>
-      <div className="support">
-        <div className="support-title">Ver por {DIMS[primaryDim]} · {chLabel}</div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, margin: '2px 0 14px' }}>
-          <span style={mSel()}>Ver por</span>
-          <div className="slicer-presets">
-            {['canal', 'grupo', 'faixa'].map(d => (
-              <button key={d} className={`preset-btn ${primaryDim === d ? 'active' : ''}`} onClick={() => { setPrimaryDim(d); setExpanded({}); }} title={`Agrupar por ${DIMS[d]}; campanhas rankeadas dentro`}>{DIMS[d]}</button>
-            ))}
-          </div>
-          <span style={{ ...mSel(), marginLeft: 8 }}>Grupo</span>
-          <ChannelMultiSelect options={grupoOptions} selected={grupoSel} onChange={setGrupoSel} labelOf={gLabel} allLabel="Todos grupos" countNoun="grupos" />
-          <span style={mSel()}>Faixa FTD</span>
-          <ChannelMultiSelect options={faixaOptions} selected={faixaSel} onChange={setFaixaSel} allLabel="Todas faixas" countNoun="faixas" />
-        </div>
-        {loading && <div className="ch-note">Carregando do BigQuery…</div>}
-        {error && <div className="ch-note" style={{ color: 'var(--accent-red, #ef4444)' }}>Erro: {error}</div>}
-        {!loading && !error && !nCamp && <div className="ch-note">Sem campanhas com investimento na janela / filtro atual.</div>}
-        {!loading && !error && !!nCamp && (
-          <div className="table-scroll tall"><table className="ch-table">
-            <thead>
-              <tr>
-                <th style={{ textAlign: 'left', whiteSpace: 'nowrap' }}>{DIMS[primaryDim]} / Campanha</th>
-                {Th('invest', 'Investimento', 'Spend rateado (Meta já com imposto ×1,1383)')}
-                {Th('ftds', 'FTDs')}
-                {Th('cpa', 'CPA FTD', 'Investimento ÷ FTDs')}
-                {Th('depD0', 'Dep D0', 'Depósito no dia do FTD')}
-                {Th('roasFtd', 'ROAS FTD', 'FTD$ ÷ investimento')}
-                {Th('roasGgr', 'ROAS GGR', 'NGR do mês do FTD ÷ investimento')}
-                {Th('multD1', 'Mult D1', '(Dep D0 + dep dia 1) ÷ Dep D0')}
-                {Th('multD14', 'Mult D14', '(Dep D0 + dep dias 1–14) ÷ Dep D0')}
-                {Th('multD30', 'Mult D30', '(Dep D0 + dep dias 1–30) ÷ Dep D0 · imaturo p/ coortes < 30 dias')}
-              </tr>
-            </thead>
-            {sectionArr.map(s => (
-              <tbody key={String(s.pk)}>
-                <tr style={{ background: 'var(--surface-2)', fontWeight: 700 }}>
-                  <td style={{ textAlign: 'left' }}>{dimValLabel(primaryDim, s.pk)}</td>
-                  {metricCells(s.sub)}
-                </tr>
-                {s.campaigns.map(camp => {
-                  const ekey = String(s.pk) + '|' + camp.key;
-                  const isOpen = !!expanded[ekey];
-                  const canExp = camp.subs.length > 1;
-                  return (
-                    <React.Fragment key={camp.key}>
-                      <tr onClick={() => canExp && setExpanded(e => ({ ...e, [ekey]: !isOpen }))} style={{ cursor: canExp ? 'pointer' : 'default' }}>
-                        <td className="ch-name" style={{ textAlign: 'left' }} title={camp.key}>
-                          {canExp ? (isOpen ?'▾ ' : '▸ ') : '   '}{camp.label}
-                        </td>
-                        {metricCells(camp.d)}
-                      </tr>
-                      {isOpen && camp.subs.map((sub, i) => (
-                        <tr key={i} style={{ fontSize: '0.92em', color: 'var(--text-muted)' }}>
-                          <td style={{ textAlign: 'left', paddingLeft: 28 }}>{dimValLabel(expandDim, sub.key)}</td>
-                          {metricCells(sub.d)}
-                        </tr>
-                      ))}
-                    </React.Fragment>
-                  );
-                })}
-              </tbody>
-            ))}
-            <tfoot>
-              <tr style={{ fontWeight: 700 }}><td style={{ textAlign: 'left' }}>Total</td>{metricCells(gd)}</tr>
-            </tfoot>
-          </table></div>
-        )}
-        <div className="ch-note">
-          <strong>Ver por</strong> reorganiza a tabela (Canal / Grupo de risco / Faixa FTD como agrupamento primário); campanhas rankeadas dentro — clique numa campanha p/ abrir a quebra por <strong>{DIMS[expandDim].toLowerCase()}</strong>. Os sub-filtros de <strong>grupo</strong> e <strong>faixa</strong> recortam o universo.
-          <strong> Investimento</strong> = spend da performance (Meta com imposto ×1,1383) casado à coorte de FTD pela campanha, <strong>rateado por share de FTD</strong> no nível de segmento (premissa — por isso o CPA fica igual entre segmentos; a diferença real aparece em <strong>ROAS e multiplicadores</strong>).
-          <strong> Mult DN</strong> = (Dep D0 + depósitos dias 1–N) ÷ Dep D0. <strong>Mult D14/D30 ficam imaturos para coortes recentes</strong> (a safra ainda não viveu N dias) — leia como piso, não teto.
-          Campanhas com spend e <strong>sem FTD atribuído</strong> (ex.: remarketing) aparecem no grupo <em>(sem FTD atribuído)</em> / faixa <em>(sem)</em>. Programática não entra (sem spend por campanha).
-        </div>
-      </div>
-    </React.Fragment>
-  );
-}
-
 // ============================================================
 // ABA ATIVAÇÃO D0 — sinais precoces da coorte de FTD (visão semanal, seg–dom).
 // Seção D0: % que apostou no D0, turnover D0, aposta média/mediana D0, rollover D0 (turnover D0 ÷ dep D0).
@@ -4772,19 +4323,14 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta }) {
 const TABS = [
   { id: 'farol', label: 'Farol', component: TabFarol },
   { id: 'monthlyclose', label: 'Monthly Close', component: TabMonthlyClose },
-  { id: 'aquisicao', label: 'Aquisições', component: TabAquisicao },
   { id: 'caccalc', label: 'CAC Calculator', component: TabCacCalculator },
   { id: 'safras', label: 'Safras Diárias', component: TabSafras },
   { id: 'retencao', label: 'Retenções', component: TabRetencao },
   { id: 'retfaixa', label: 'Multiplicadores e Retenção', component: TabRetencaoFaixa },
   { id: 'metricasdia', label: 'Métricas do dia a dia', component: TabMetricasDia },
   { id: 'ativacao', label: 'Ativação D0', component: TabAtivacao },
-  { id: 'invcampanha', label: 'Investimento p/ Campanha', component: InvCampanhaTab },
   { id: 'cashflow', label: 'Daily Cashflow', component: TabDailyCashflow },
   { id: 'ggr', label: 'GGR', component: TabGgr },
-  { id: 'depositos', label: 'Depósitos', component: TabDepositos },
-  { id: 'apostas', label: 'Turnover', component: TabApostas },
-  { id: 'benchmark', label: 'Benchmark', component: BenchmarkTab },
   { id: 'sameday', label: 'Benchmark Lottu', component: NetBenchTab },
 ];
 
@@ -5550,7 +5096,9 @@ function derivePayloadMetrics_(src, chFilter, isLive) {
 }
 
 function App({ user, onLogout, config }) {
-  const [tabId, setTabId] = usePersistedState('rvops:tab', 'aquisicao');
+  // 'aquisicao' era o default até 2026-08-05, quando a aba foi eliminada. Quem tinha uma aba removida
+  // persistida cai no fallback da linha ~5775 (1ª aba visível) — não quebra, só volta pro Farol.
+  const [tabId, setTabId] = usePersistedState('rvops:tab', 'farol');
   // Visibilidade de abas (global, editável por admin). hiddenTabs = ids ocultas p/ não-admins.
   const [hiddenTabs, setHiddenTabsState] = React.useState(() => (config && config.hiddenTabs) || []);
   React.useEffect(() => { if (config && Array.isArray(config.hiddenTabs)) setHiddenTabsState(config.hiddenTabs); }, [config]);
@@ -5592,13 +5140,10 @@ function App({ user, onLogout, config }) {
     retencaoFaixa: MOCK_RETENCAO_FAIXA,
     componentsByChannel: null,
     depM0Channels: MOCK_DEPM0_CHANNELS,
-    rolloverMatrix: MOCK_ROLLOVER_MATRIX,
     bp: MOCK_BP,
     planScenarios: null,       // plano de aquisição 3 cenários {bp,conserv,rolling} (aba DB Plan_Growth Mkt) — switch do Farol (só live/backend v42+)
     farolSpark: null,          // últimas 4 semanas fechadas por KPI (semana × canal) — linha de tendência nos hero cards do Farol (só live/backend v50+)
     isLive: false,
-    benchmark: null,           // benchmark.json (3 casas, Excel estático)
-    benchmarkSameday: null,    // benchmark_sameday.json (só Lottu, coorte same-day)
     benchmarkNet: null,        // benchmark_net.json (Apostou + Lottu, faixa_diaria com saque/net)
   });
 
@@ -5640,7 +5185,6 @@ function App({ user, onLogout, config }) {
           retencaoFaixa: payload.retencaoFaixa || prev.retencaoFaixa,  // cai no mock até o backend mandar (igual às outras abas)
           componentsByChannel: payload.componentsByChannel || null,
           depM0Channels: payload.depM0Channels,
-          rolloverMatrix: payload.rolloverMatrix,
           bp: payload.bp || null,
           planScenarios: payload.planScenarios || null,
           farolSpark: payload.farolSpark || null,
@@ -5654,18 +5198,13 @@ function App({ user, onLogout, config }) {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // Benchmark das casas concorrentes — arquivos estáticos servidos ao lado do index.html.
+  // Benchmark das casas concorrentes — arquivo estático servido ao lado do index.html.
+  // 2026-08-05: `benchmark.json` (3 casas, ~828 KB) e `benchmark_sameday.json` (~201 KB) deixaram de ser
+  // baixados junto com a remoção da aba Benchmark — ficaram sem consumidor. Os arquivos seguem no repo
+  // (o build_benchmark.py ainda os gera); se a aba voltar, é só religar o fetch.
   useEffect(() => {
     // cache:'no-cache' = revalida sempre (304 se igual) — evita date bounds/casas estagnados de versão antiga do JSON.
     const opt = { cache: 'no-cache' };
-    fetch('benchmark.json', opt)
-      .then(r => r.ok ? r.json() : null)
-      .then(j => { if (j) setState(prev => ({ ...prev, benchmark: j })); })
-      .catch(() => {});
-    fetch('benchmark_sameday.json', opt)
-      .then(r => r.ok ? r.json() : null)
-      .then(j => { if (j) setState(prev => ({ ...prev, benchmarkSameday: j })); })
-      .catch(() => {});
     fetch('benchmark_net.json', opt)
       .then(r => r.ok ? r.json() : null)
       .then(j => { if (j) setState(prev => ({ ...prev, benchmarkNet: j })); })
@@ -5717,19 +5256,8 @@ function App({ user, onLogout, config }) {
   const fGgrSafraRoas = state.ggrSafraRoas
     ? Object.keys(state.ggrSafraRoas).reduce((o, b) => { o[b] = filterByChannel(state.ggrSafraRoas[b], null); return o; }, {})
     : null;
-  const fDepM0Channels = filterByChannel(state.depM0Channels, c => c.invest != null);
   // Depósitos do mês por canal (qtd + valor) — derivado do componentsByChannel (player_metrics).
-  const depByChannelList = state.componentsByChannel
-    ? Object.keys(state.componentsByChannel).map(ch => {
-        const m = (state.componentsByChannel[ch] && state.componentsByChannel[ch].mtd) || {};
-        return { channel: ch, depositos: m.depositos || 0, qtdDep: m.qtdDep || 0, saques: m.saques || 0, qtdSaque: m.qtdSaque || 0 };
-      }).filter(c => c.qtdDep > 0)   // só com qtd do backend (@34+); pré-deploy a tabela some
-    : null;
-  const fDepByChannel = filterByChannel(depByChannelList, null);
   const fRetentionChannels = filterByChannel(state.retentionChannels, null);
-  const fRolloverMatrix = state.rolloverMatrix
-    ? { ...state.rolloverMatrix, rows: filterByChannel(state.rolloverMatrix.rows, null) || [] }
-    : null;
 
   // Opções do dropdown: nomes dos canais presentes no dado (sem filtro aplicado)
   const channelOptions = (state.channels || []).map(c => c.channel);
@@ -5782,9 +5310,8 @@ function App({ user, onLogout, config }) {
     retentionChannels: fRetentionChannels, ggrChannels: fGgrChannels, ggrSafra: fGgrSafra, ggrSafraRoas: fGgrSafraRoas, ggrPayback: state.ggrPayback,
     dailyCohort: selectDailyCohort_(state.dailyCohort, chFilter), retencaoFaixa: state.retencaoFaixa,
     componentsByChannel: state.componentsByChannel,   // spend/ftd por canal (tbl_performance_daily) — aba CAC usa p/ Investimento bater com o Farol
-    meta: state.meta, benchmark: state.benchmark, benchmarkSameday: state.benchmarkSameday,
+    meta: state.meta,
     benchmarkNet: state.benchmarkNet, chFilter, range: appliedRange,
-    depM0Channels: fDepM0Channels, depByChannel: fDepByChannel, rolloverMatrix: fRolloverMatrix,
     isLive: state.isLive,
     monthlyClose: state.monthlyClose,   // aba Monthly Close (house-level, segue scope do backend)
     ftdByRegister: state.ftdByRegister,  // FTDs por canal por data de cadastro — toggle no Farol (Aquisição)

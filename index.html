@@ -701,7 +701,9 @@ const MOCK_M = {
   }
 };
 
-// Mock — rollover por canal × tipo de jogo (modo dev). Live vem de payload.rolloverMatrix.
+// Mock — rollover por canal × tipo de jogo (modo dev). Só alimenta a métrica `rollover` do dataset
+// mock (card do Farol). ⚠️ 2026-08-05: com a aba Turnover removida, o front NÃO guarda mais
+// `payload.rolloverMatrix` — o backend ainda manda, mas ninguém lê no modo live.
 // Verticais reais da player_metrics: valor_apostas_esporte / _casino / _loteria
 const MOCK_ROLLOVER_MATRIX = {
   columns: ['Sports', 'Casino', 'Loteria'],
@@ -1680,34 +1682,6 @@ function Hero({
     className: "m1-val"
   }, fmtVal(metric.m1, metric.fmt)), ' ', "m\xEAs anterior"));
 }
-function HBarList({
-  items,
-  valueFmt = 'brl'
-}) {
-  const max = Math.max(...items.map(i => i.value));
-  return /*#__PURE__*/React.createElement("div", {
-    className: "hbar-list"
-  }, items.map((it, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    className: "hbar"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "hbar-head"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "hbar-label"
-  }, it.label), /*#__PURE__*/React.createElement("span", {
-    className: "hbar-value"
-  }, valueFmt === 'pct' ? fmtPct(it.value, 1) : fmtBRL(it.value), it.amount != null && /*#__PURE__*/React.createElement("span", {
-    className: "secondary"
-  }, fmtBRL(it.amount)))), /*#__PURE__*/React.createElement("div", {
-    className: "hbar-track"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "hbar-fill",
-    style: {
-      width: `${it.value / max * 100}%`
-    }
-  })))));
-}
-
 // ============================================================
 // CHANNEL TABLE — análise de aquisição por canal
 //   ROAS = FTD R$ / Investimento · CAC = Investimento / FTD qtd · Ticket = FTD R$ / FTD qtd
@@ -1850,72 +1824,6 @@ function GgrChannelTable({
     className: "ch-name"
   }, c.channel), ggrCell(c.ggr), ggrCell(ngrOf(c)), /*#__PURE__*/React.createElement("td", null, fmtBRL(c.spend)), roasCell(roasGgr(c)), paybackCell(byCh[c.channel]), /*#__PURE__*/React.createElement("td", null, fmtBRL(c.freespin))))), /*#__PURE__*/React.createElement("tfoot", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", null, "Total"), ggrCell(tot.ggr), ggrCell(tot.ggr - tot.bonus), /*#__PURE__*/React.createElement("td", null, fmtBRL(tot.spend)), roasCell(tot.spend > 0 ? tot.ggr / tot.spend : null), paybackCell(payback && payback.total), /*#__PURE__*/React.createElement("td", null, tot.hasFreespin ? fmtBRL(tot.freespin) : '—')))));
 }
-
-// ============================================================
-// ROLLOVER MATRIX — rollover (turnover/depósito) por canal × tipo de jogo
-// ============================================================
-
-function RolloverMatrix({
-  data
-}) {
-  // Total ponderado pelo depósito (weight) das linhas exibidas
-  const W = data.rows.reduce((a, r) => a + (r.weight || 0), 0);
-  const totCol = j => W > 0 ? data.rows.reduce((a, r) => a + (r.values[j] || 0) * (r.weight || 0), 0) / W : null;
-  const totAll = W > 0 ? data.rows.reduce((a, r) => a + (r.total || 0) * (r.weight || 0), 0) / W : null;
-  return /*#__PURE__*/React.createElement("div", {
-    className: "table-scroll"
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "ch-table"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Canal"), data.columns.map((c, i) => /*#__PURE__*/React.createElement("th", {
-    key: i
-  }, c)), /*#__PURE__*/React.createElement("th", null, "Total"))), /*#__PURE__*/React.createElement("tbody", null, data.rows.map((r, i) => /*#__PURE__*/React.createElement("tr", {
-    key: i
-  }, /*#__PURE__*/React.createElement("td", {
-    className: "ch-name"
-  }, r.channel), r.values.map((v, j) => /*#__PURE__*/React.createElement("td", {
-    key: j
-  }, fmtMultiple(v))), /*#__PURE__*/React.createElement("td", {
-    style: {
-      fontWeight: 700
-    }
-  }, fmtMultiple(r.total))))), /*#__PURE__*/React.createElement("tfoot", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", null, "Total"), data.columns.map((c, j) => /*#__PURE__*/React.createElement("td", {
-    key: j
-  }, fmtMultiple(totCol(j)))), /*#__PURE__*/React.createElement("td", null, fmtMultiple(totAll))))));
-}
-
-// ============================================================
-// DEP M0 TABLE — depósito da safra atual por canal
-//   ROAS M0 = DEP M0 ÷ Investimento
-// ============================================================
-
-function DepM0Table({
-  channels
-}) {
-  const tot = channels.reduce((a, c) => ({
-    depM0: a.depM0 + (c.depM0 || 0),
-    invest: a.invest + (c.invest || 0)
-  }), {
-    depM0: 0,
-    invest: 0
-  });
-  const roasM0 = c => c.invest != null && c.invest > 0 && c.depM0 != null ? c.depM0 / c.invest : null;
-  const roasCell = r => {
-    if (r == null) return /*#__PURE__*/React.createElement("td", null, "\u2014");
-    return /*#__PURE__*/React.createElement("td", {
-      className: r >= 1 ? 'ch-roas-pos' : 'ch-roas-neg'
-    }, fmtMultiple(r));
-  };
-  return /*#__PURE__*/React.createElement("div", {
-    className: "table-scroll"
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "ch-table"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Canal"), /*#__PURE__*/React.createElement("th", null, "Investimento"), /*#__PURE__*/React.createElement("th", null, "DEP M0"), /*#__PURE__*/React.createElement("th", null, "ROAS M0"), /*#__PURE__*/React.createElement("th", null, "% do Total"))), /*#__PURE__*/React.createElement("tbody", null, channels.map((c, i) => /*#__PURE__*/React.createElement("tr", {
-    key: i
-  }, /*#__PURE__*/React.createElement("td", {
-    className: "ch-name"
-  }, c.channel), /*#__PURE__*/React.createElement("td", null, fmtBRL(c.invest)), /*#__PURE__*/React.createElement("td", null, fmtBRL(c.depM0)), roasCell(roasM0(c)), /*#__PURE__*/React.createElement("td", null, tot.depM0 > 0 ? fmtPct((c.depM0 || 0) / tot.depM0) : '—')))), /*#__PURE__*/React.createElement("tfoot", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", null, "Total"), /*#__PURE__*/React.createElement("td", null, fmtBRL(tot.invest)), /*#__PURE__*/React.createElement("td", null, fmtBRL(tot.depM0)), roasCell(tot.invest > 0 ? tot.depM0 / tot.invest : null), /*#__PURE__*/React.createElement("td", null, "100%")))));
-}
-
 // ============================================================
 // RETENTION TABLE — retenção de valor (R$) por canal
 //   M0→M1 / M1→M2: média das safras com janela completa
@@ -2194,32 +2102,6 @@ function FtdBridge({
     className: "ch-note"
   }, /*#__PURE__*/React.createElement("strong", null, "Ponte de vari\xE2ncia FTD (R$):"), " parte do ", /*#__PURE__*/React.createElement("strong", null, "BP"), " (FTD planejado, somado nos canais com plano de m\xEDdia) e acumula a diferen\xE7a ", /*#__PURE__*/React.createElement("strong", null, "Realizado \u2212 BP"), " de cada canal at\xE9 o ", /*#__PURE__*/React.createElement("strong", null, "Realizado"), ". Verde = acima do plano \xB7 vermelho = abaixo.", hasBucket && /*#__PURE__*/React.createElement(React.Fragment, null, " O balde ", /*#__PURE__*/React.createElement("strong", null, "\u201COutros (s/ BP)\u201D"), " re\xFAne canais sem plano de m\xEDdia (org\xE2nico, afiliados, social) \u2014 entram pelo valor cheio por n\xE3o terem BP; troque o filtro para ", /*#__PURE__*/React.createElement("strong", null, "\u201CCanais Growth\u201D"), " para a ponte pura de m\xEDdia paga."), ' ', "Acompanha o filtro de canal e bate com o total da tabela abaixo."));
 }
-function TabAquisicao({
-  M,
-  channels,
-  bp
-}) {
-  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "tab-header"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", null, "Aquisi\xE7\xF5es"), /*#__PURE__*/React.createElement("div", {
-    className: "subtitle"
-  }, "FTDs, efici\xEAncia e investimento de m\xEDdia (canal Growth)"))), /*#__PURE__*/React.createElement("div", {
-    className: "hero-grid"
-  }, /*#__PURE__*/React.createElement(Hero, {
-    metric: M.ftdAmount
-  }), /*#__PURE__*/React.createElement(Hero, {
-    metric: M.roasFtd
-  }), /*#__PURE__*/React.createElement(Hero, {
-    metric: M.invest
-  })), channels && channels.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "support"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "support-title"
-  }, "An\xE1lise por Canal"), /*#__PURE__*/React.createElement(ChannelTable, {
-    channels: channels,
-    bp: bp
-  })));
-}
 function TabRetencao({
   M,
   retentionChannels
@@ -2245,66 +2127,6 @@ function TabRetencao({
     totalM3plus: M.retM3plus && M.retM3plus.act
   })));
 }
-
-// Depósito e saque do mês (transações) por canal — volume total na janela.
-function DepByChannelTable({
-  channels
-}) {
-  const tot = channels.reduce((a, c) => ({
-    dep: a.dep + (c.depositos || 0),
-    qtd: a.qtd + (c.qtdDep || 0),
-    saq: a.saq + (c.saques || 0),
-    qsaq: a.qsaq + (c.qtdSaque || 0)
-  }), {
-    dep: 0,
-    qtd: 0,
-    saq: 0,
-    qsaq: 0
-  });
-  const ticket = c => c.qtdDep > 0 ? c.depositos / c.qtdDep : null;
-  const rows = [...channels].sort((a, b) => (b.depositos || 0) - (a.depositos || 0));
-  return /*#__PURE__*/React.createElement("div", {
-    className: "table-scroll"
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "ch-table"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Canal"), /*#__PURE__*/React.createElement("th", null, "Dep\xF3sitos"), /*#__PURE__*/React.createElement("th", null, "Qtd Dep\xF3sitos"), /*#__PURE__*/React.createElement("th", null, "Saques"), /*#__PURE__*/React.createElement("th", null, "Qtd Saques"), /*#__PURE__*/React.createElement("th", null, "Ticket M\xE9dio"), /*#__PURE__*/React.createElement("th", null, "% do Total"))), /*#__PURE__*/React.createElement("tbody", null, rows.map((c, i) => /*#__PURE__*/React.createElement("tr", {
-    key: i
-  }, /*#__PURE__*/React.createElement("td", {
-    className: "ch-name"
-  }, c.channel), /*#__PURE__*/React.createElement("td", null, fmtBRL(c.depositos)), /*#__PURE__*/React.createElement("td", null, fmtQty(c.qtdDep)), /*#__PURE__*/React.createElement("td", null, fmtBRL(c.saques)), /*#__PURE__*/React.createElement("td", null, fmtQty(c.qtdSaque)), /*#__PURE__*/React.createElement("td", null, fmtBRL(ticket(c))), /*#__PURE__*/React.createElement("td", null, tot.qtd > 0 ? fmtPct((c.qtdDep || 0) / tot.qtd) : '—')))), /*#__PURE__*/React.createElement("tfoot", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", null, "Total"), /*#__PURE__*/React.createElement("td", null, fmtBRL(tot.dep)), /*#__PURE__*/React.createElement("td", null, fmtQty(tot.qtd)), /*#__PURE__*/React.createElement("td", null, fmtBRL(tot.saq)), /*#__PURE__*/React.createElement("td", null, fmtQty(tot.qsaq)), /*#__PURE__*/React.createElement("td", null, fmtBRL(tot.qtd > 0 ? tot.dep / tot.qtd : null)), /*#__PURE__*/React.createElement("td", null, "100%")))));
-}
-function TabDepositos({
-  M,
-  depM0Channels,
-  depByChannel
-}) {
-  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "tab-header"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", null, "Gest\xE3o de Dep\xF3sitos"), /*#__PURE__*/React.createElement("div", {
-    className: "subtitle"
-  }, "Volume depositado e safra atual por canal"))), /*#__PURE__*/React.createElement("div", {
-    className: "hero-grid"
-  }, /*#__PURE__*/React.createElement(Hero, {
-    metric: M.depTotal
-  }), M.qtdDep ? /*#__PURE__*/React.createElement(Hero, {
-    metric: M.qtdDep
-  }) : null, /*#__PURE__*/React.createElement(Hero, {
-    metric: M.depM0Total
-  })), depByChannel && depByChannel.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "support"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "support-title"
-  }, "Dep\xF3sitos do M\xEAs por Canal"), /*#__PURE__*/React.createElement(DepByChannelTable, {
-    channels: depByChannel
-  })), depM0Channels && depM0Channels.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "support"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "support-title"
-  }, "DEP M0 por Canal \u2014 Safra Atual"), /*#__PURE__*/React.createElement(DepM0Table, {
-    channels: depM0Channels
-  })));
-}
-
 // Deriva GGR/NGR por canal para UMA vertical (casino|sportsbook). Casino sai líquido de
 // freespin (mecânica de casino). Bônus NÃO vem por vertical no BQ → RATEADO pró-rata pela
 // participação positiva da vertical no GGR do canal → casino + sportsbook = NGR do canal.
@@ -2880,34 +2702,6 @@ function TabGgr({
     className: "ch-roas-neg"
   }, ` >${H}d`), " = n\xE3o atingiu o payback."))));
 }
-function TabApostas({
-  M,
-  rolloverMatrix,
-  isLive
-}) {
-  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "tab-header"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", null, "Turnover"), /*#__PURE__*/React.createElement("div", {
-    className: "subtitle"
-  }, "Volume apostado, margem da casa e rollover")), !isLive && /*#__PURE__*/React.createElement("span", {
-    className: "mock-chip"
-  }, "Dados mock")), /*#__PURE__*/React.createElement("div", {
-    className: "hero-grid"
-  }, /*#__PURE__*/React.createElement(Hero, {
-    metric: M.turnover
-  }), /*#__PURE__*/React.createElement(Hero, {
-    metric: M.hold
-  }), /*#__PURE__*/React.createElement(Hero, {
-    metric: M.rollover
-  })), rolloverMatrix && rolloverMatrix.rows && rolloverMatrix.rows.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "support"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "support-title"
-  }, "Rollover por Canal \xD7 Tipo de Jogo"), /*#__PURE__*/React.createElement(RolloverMatrix, {
-    data: rolloverMatrix
-  })));
-}
-
 // ============================================================
 // SHELL
 // ============================================================
@@ -6306,23 +6100,7 @@ function BenchmarkView({
     houseTo: houseTo
   })));
 }
-
-// Aba Benchmark — 3 casas (faixa_diaria) vs Apostou (coorte cheia).
-function BenchmarkTab({
-  retencaoFaixa,
-  benchmark
-}) {
-  return /*#__PURE__*/React.createElement(BenchmarkView, {
-    retencaoFaixa: retencaoFaixa,
-    benchmark: benchmark,
-    houseOrder: BENCH_HOUSE_ORDER,
-    sameday: false,
-    pkey: "bench",
-    title: "Benchmark entre casas",
-    subtitle: "Apostou vs Lottu \xB7 Bet.Bet \xB7 Donald \u2014 ticket de FTD, dep\xF3sito D0 e reten\xE7\xE3o D1/W1/M0 por faixa e canal"
-  });
-}
-// Aba Benchmark Lottu — Apostou (BQ ao vivo) vs Lottu (Excel). NÃO é mais same-day (nem de um lado nem do
+// Aba Benchmark Lottu — Apostou (BQ ao vivo) vs Lottu (Excel). NÃO é same-day (nem de um lado nem do
 // outro): a coorte é CHEIA dos dois. Apostou vem do only=retfaixa SEM &sameday=1; Lottu do benchmark_net.json
 // (rebuild do 'lottubet nosameday'). Bruto = retenção/multiplicadores; Líquido = caixa da safra (Σ dep − Σ saque
 // observados), saque da Apostou vem do retfaixa (depTot/saqTot).
@@ -7400,406 +7178,6 @@ function TabMonthlyClose({
     className: "ch-note"
   }, /*#__PURE__*/React.createElement("strong", null, "ACT"), " = realizado (BigQuery, mesma fonte/defini\xE7\xE3o das outras abas \u2014 ", /*#__PURE__*/React.createElement("strong", null, "Investimento"), " = spend de aquisi\xE7\xE3o, ", /*#__PURE__*/React.createElement("strong", null, "#FTD"), " = todos os canais). ", /*#__PURE__*/React.createElement("strong", null, "BP"), " = plano prorrateado pela janela. ", /*#__PURE__*/React.createElement("strong", null, "M+1/M+2/M3+"), " = dep\xF3sito da safra por idade de coorte (M+1 = coorte de 1 m\xEAs atr\xE1s, etc.); soma com M0 = Total Deposit. BP de M+1/M+2/M3+ e Turnover s\xF3 aparece onde o plano tem o valor. Segue o slicer de data/canal do topo.")));
 }
-
-// ===== Investimento por Campanha — grão atômico canal × campanha × grupo × faixa FTD (aba de otimização) =====
-// Fetch próprio (only=invcamp). Junta spend (performance) à coorte de FTD; investimento RATEADO por share de
-// FTD → CPA fica igual entre segmentos (matemático); a diferença aparece em ROAS/multiplicadores.
-// PIVOT client-side: "Ver por" (Canal|Grupo|Faixa) define o agrupamento primário; campanhas rankeadas dentro;
-// expande p/ a dimensão secundária. Sub-slicers de grupo e faixa filtram o universo. Multiplicadores/ROAS
-// re-agregados no CLIENTE somando os blocos crus (dep_d0, val_d1/14/30, ftd$, ngr) e dividindo — nunca média de razão.
-function InvCampanhaTab({
-  range,
-  chFilter
-}) {
-  const [rows, setRows] = React.useState(null);
-  const [loading, setLoading] = React.useState(!!ENDPOINT_URL);
-  const [error, setError] = React.useState(null);
-  const [expanded, setExpanded] = React.useState({});
-  const [sortKey, setSortKey] = React.useState('invest');
-  const [sortDir, setSortDir] = React.useState('desc');
-  const [primaryDim, setPrimaryDim] = usePersistedState('rvops:invcampDim', 'canal'); // Canal | Grupo | Faixa
-  const [grupoSel, setGrupoSel] = React.useState([]); // [] = todos
-  const [faixaSel, setFaixaSel] = React.useState([]); // [] = todas
-
-  React.useEffect(() => {
-    if (!ENDPOINT_URL || !range) {
-      setLoading(false);
-      return;
-    }
-    let live = true;
-    setLoading(true);
-    setError(null);
-    fetch(`${ENDPOINT_URL}?${authParam_()}&only=invcamp&from=${range.from}&to=${range.to}`).then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))).then(j => {
-      if (!live) return;
-      if (j.error) throw new Error(j.error);
-      setRows(j.invCampanha || []);
-      setLoading(false);
-    }).catch(e => {
-      if (live) {
-        setError(String(e.message || e));
-        setLoading(false);
-      }
-    });
-    return () => {
-      live = false;
-    };
-  }, [range && range.from, range && range.to]);
-
-  // Blocos crus → métricas derivadas. Só computa razão com denominador > 0.
-  const blank = () => ({
-    ftds: 0,
-    invest: 0,
-    ftdAmount: 0,
-    depD0: 0,
-    valD1: 0,
-    valD14: 0,
-    valD30: 0,
-    ngrM0: 0
-  });
-  const addInto = (a, r) => {
-    a.ftds += r.ftds || 0;
-    a.invest += r.invest || 0;
-    a.ftdAmount += r.ftdAmount || 0;
-    a.depD0 += r.depD0 || 0;
-    a.valD1 += r.valD1 || 0;
-    a.valD14 += r.valD14 || 0;
-    a.valD30 += r.valD30 || 0;
-    a.ngrM0 += r.ngrM0 || 0;
-    return a;
-  };
-  const derive = a => ({
-    ...a,
-    cpa: a.invest > 0 && a.ftds > 0 ? a.invest / a.ftds : null,
-    roasFtd: a.invest > 0 ? a.ftdAmount / a.invest : null,
-    roasGgr: a.invest > 0 ? a.ngrM0 / a.invest : null,
-    multD1: a.depD0 > 0 ? (a.depD0 + a.valD1) / a.depD0 : null,
-    multD14: a.depD0 > 0 ? (a.depD0 + a.valD14) / a.depD0 : null,
-    multD30: a.depD0 > 0 ? (a.depD0 + a.valD30) / a.depD0 : null
-  });
-  if (!ENDPOINT_URL) return /*#__PURE__*/React.createElement("div", {
-    className: "tab-header"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", null, "Investimento por Campanha"), /*#__PURE__*/React.createElement("div", {
-    className: "subtitle"
-  }, "Dispon\xEDvel s\xF3 no modo live (BigQuery).")));
-  const DIMS = {
-    canal: 'Canal',
-    grupo: 'Grupo de risco',
-    faixa: 'Faixa FTD'
-  };
-  const gLabel = g => g == null || g === 'sem grupo' || String(g).charAt(0) === '(' ? g || '—' : 'grupo ' + g;
-  const dimValLabel = (dim, v) => dim === 'grupo' ? gLabel(v) : v == null ? '—' : v;
-  const expandDim = primaryDim === 'grupo' ? 'faixa' : 'grupo'; // dimensão secundária (drill)
-
-  const chSel = chList_(chFilter);
-  const channelPass = canal => chSel.length ? chSel.includes(canal) : chFilter.scope === 'growth' ? isGrowthCh_(canal) : true;
-  const all = rows || [];
-  const grupoOptions = Array.from(new Set(all.map(r => r.grupo))).filter(x => x != null).sort();
-  const faixaOptions = Array.from(new Set(all.map(r => r.faixa))).filter(x => x != null).sort();
-  const grupoPass = g => grupoSel.length ? grupoSel.includes(g) : true;
-  const faixaPass = f => faixaSel.length ? faixaSel.includes(f) : true;
-  const src = all.filter(r => channelPass(r.canal) && grupoPass(r.grupo) && faixaPass(r.faixa));
-
-  // canal → Map(campanha → { label, groups[], agg })
-  const sections = new Map();
-  src.forEach(r => {
-    const pk = r[primaryDim] == null ? '—' : r[primaryDim];
-    const ck = r.campanha || '(sem campanha)';
-    const ek = r[expandDim] == null ? '—' : r[expandDim];
-    if (!sections.has(pk)) sections.set(pk, new Map());
-    const camps = sections.get(pk);
-    if (!camps.has(ck)) camps.set(ck, {
-      key: ck,
-      label: r.campanhaLabel || ck,
-      agg: blank(),
-      subs: new Map()
-    });
-    const c = camps.get(ck);
-    addInto(c.agg, r);
-    if (!c.subs.has(ek)) c.subs.set(ek, {
-      key: ek,
-      agg: blank()
-    });
-    addInto(c.subs.get(ek).agg, r);
-  });
-  const SORTS = {
-    invest: r => r.invest,
-    ftds: r => r.ftds,
-    cpa: r => r.cpa,
-    depD0: r => r.depD0,
-    roasFtd: r => r.roasFtd,
-    roasGgr: r => r.roasGgr,
-    multD1: r => r.multD1,
-    multD14: r => r.multD14,
-    multD30: r => r.multD30
-  };
-  const cmp = (a, b) => {
-    const acc = SORTS[sortKey] || SORTS.invest,
-      d = sortDir === 'asc' ? 1 : -1;
-    let va = acc(a),
-      vb = acc(b);
-    va = va == null || isNaN(va) ? -Infinity : va;
-    vb = vb == null || isNaN(vb) ? -Infinity : vb;
-    return va < vb ? -d : va > vb ? d : 0;
-  };
-
-  // pivot montado + subtotais por seção; ordena seções por investimento; total geral.
-  const sectionArr = Array.from(sections.entries()).map(([pk, camps]) => {
-    const campaigns = Array.from(camps.values()).map(c => ({
-      key: c.key,
-      label: c.label,
-      d: derive(c.agg),
-      subs: Array.from(c.subs.values()).map(s => ({
-        key: s.key,
-        d: derive(s.agg)
-      })).sort((a, b) => cmp(a.d, b.d))
-    }));
-    const sub = blank();
-    Array.from(camps.values()).forEach(c => addInto(sub, c.agg));
-    campaigns.sort((a, b) => cmp(a.d, b.d));
-    return {
-      pk,
-      campaigns,
-      sub: derive(sub)
-    };
-  }).sort((a, b) => b.sub.invest - a.sub.invest);
-  const grand = blank();
-  sectionArr.forEach(s => addInto(grand, s.sub));
-  const gd = derive(grand);
-  const onSort = k => {
-    if (sortKey === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc');else {
-      setSortKey(k);
-      setSortDir('desc');
-    }
-  };
-  const arrow = k => sortKey === k ? sortDir === 'desc' ? ' ▾' : ' ▴' : '';
-  const Th = (k, label, title) => /*#__PURE__*/React.createElement("th", {
-    key: k,
-    onClick: () => onSort(k),
-    title: (title ? title + ' · ' : '') + 'clique p/ ordenar',
-    style: {
-      cursor: 'pointer',
-      userSelect: 'none',
-      whiteSpace: 'nowrap',
-      textAlign: 'right'
-    }
-  }, label, arrow(k));
-  const roasStyle = v => ({
-    textAlign: 'right',
-    color: v == null ? 'var(--text-muted)' : v < 0 ? 'var(--accent-red, #ef4444)' : v >= 1 ? 'var(--accent-green, #22c55e)' : 'inherit',
-    fontWeight: v != null && v >= 1 ? 600 : 400
-  });
-  const num = (v, f) => /*#__PURE__*/React.createElement("td", {
-    style: {
-      textAlign: 'right'
-    }
-  }, f(v));
-
-  // células de métrica (reusadas por campanha/grupo/subtotal/total)
-  const metricCells = (d, key) => [/*#__PURE__*/React.createElement("td", {
-    key: "inv",
-    style: {
-      textAlign: 'right',
-      fontWeight: 600
-    }
-  }, fmtBRL(d.invest)), /*#__PURE__*/React.createElement("td", {
-    key: "ftd",
-    style: {
-      textAlign: 'right'
-    }
-  }, fmtQty(d.ftds)), /*#__PURE__*/React.createElement("td", {
-    key: "cpa",
-    style: {
-      textAlign: 'right'
-    }
-  }, d.cpa == null ? '—' : fmtBRL(d.cpa)), /*#__PURE__*/React.createElement("td", {
-    key: "d0",
-    style: {
-      textAlign: 'right'
-    }
-  }, fmtBRL(d.depD0)), /*#__PURE__*/React.createElement("td", {
-    key: "rf",
-    style: roasStyle(d.roasFtd)
-  }, fmtMultiple(d.roasFtd)), /*#__PURE__*/React.createElement("td", {
-    key: "rg",
-    style: roasStyle(d.roasGgr)
-  }, fmtMultiple(d.roasGgr)), /*#__PURE__*/React.createElement("td", {
-    key: "m1",
-    style: {
-      textAlign: 'right'
-    }
-  }, fmtMultiple(d.multD1)), /*#__PURE__*/React.createElement("td", {
-    key: "m14",
-    style: {
-      textAlign: 'right'
-    }
-  }, fmtMultiple(d.multD14)), /*#__PURE__*/React.createElement("td", {
-    key: "m30",
-    style: {
-      textAlign: 'right'
-    }
-  }, fmtMultiple(d.multD30))];
-  const chLabel = chLabel_(chFilter);
-  const nCamp = sectionArr.reduce((n, s) => n + s.campaigns.length, 0);
-  const mSel = () => ({
-    fontSize: 12,
-    color: 'var(--text-muted)'
-  });
-  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "tab-header"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", null, "Investimento por Campanha"), /*#__PURE__*/React.createElement("div", {
-    className: "subtitle"
-  }, "Investimento, CPA, ROAS e multiplicadores por campanha, grupo de risco e faixa FTD \u2014 para otimiza\xE7\xE3o de verba"))), /*#__PURE__*/React.createElement("div", {
-    className: "hero-grid"
-  }, /*#__PURE__*/React.createElement(Hero, {
-    metric: {
-      label: 'Investimento',
-      act: gd.invest,
-      m1: null,
-      pctBp: null,
-      fmt: 'brl'
-    }
-  }), /*#__PURE__*/React.createElement(Hero, {
-    metric: {
-      label: 'FTDs',
-      act: gd.ftds,
-      m1: null,
-      pctBp: null,
-      fmt: 'qty'
-    }
-  }), /*#__PURE__*/React.createElement(Hero, {
-    metric: {
-      label: 'CPA FTD',
-      act: gd.cpa,
-      m1: null,
-      pctBp: null,
-      fmt: 'brl'
-    }
-  }), /*#__PURE__*/React.createElement(Hero, {
-    metric: {
-      label: 'ROAS FTD',
-      act: gd.roasFtd,
-      m1: null,
-      pctBp: null,
-      fmt: 'multiple'
-    }
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "support"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "support-title"
-  }, "Ver por ", DIMS[primaryDim], " \xB7 ", chLabel), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexWrap: 'wrap',
-      alignItems: 'center',
-      gap: 10,
-      margin: '2px 0 14px'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: mSel()
-  }, "Ver por"), /*#__PURE__*/React.createElement("div", {
-    className: "slicer-presets"
-  }, ['canal', 'grupo', 'faixa'].map(d => /*#__PURE__*/React.createElement("button", {
-    key: d,
-    className: `preset-btn ${primaryDim === d ? 'active' : ''}`,
-    onClick: () => {
-      setPrimaryDim(d);
-      setExpanded({});
-    },
-    title: `Agrupar por ${DIMS[d]}; campanhas rankeadas dentro`
-  }, DIMS[d]))), /*#__PURE__*/React.createElement("span", {
-    style: {
-      ...mSel(),
-      marginLeft: 8
-    }
-  }, "Grupo"), /*#__PURE__*/React.createElement(ChannelMultiSelect, {
-    options: grupoOptions,
-    selected: grupoSel,
-    onChange: setGrupoSel,
-    labelOf: gLabel,
-    allLabel: "Todos grupos",
-    countNoun: "grupos"
-  }), /*#__PURE__*/React.createElement("span", {
-    style: mSel()
-  }, "Faixa FTD"), /*#__PURE__*/React.createElement(ChannelMultiSelect, {
-    options: faixaOptions,
-    selected: faixaSel,
-    onChange: setFaixaSel,
-    allLabel: "Todas faixas",
-    countNoun: "faixas"
-  })), loading && /*#__PURE__*/React.createElement("div", {
-    className: "ch-note"
-  }, "Carregando do BigQuery\u2026"), error && /*#__PURE__*/React.createElement("div", {
-    className: "ch-note",
-    style: {
-      color: 'var(--accent-red, #ef4444)'
-    }
-  }, "Erro: ", error), !loading && !error && !nCamp && /*#__PURE__*/React.createElement("div", {
-    className: "ch-note"
-  }, "Sem campanhas com investimento na janela / filtro atual."), !loading && !error && !!nCamp && /*#__PURE__*/React.createElement("div", {
-    className: "table-scroll tall"
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "ch-table"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
-    style: {
-      textAlign: 'left',
-      whiteSpace: 'nowrap'
-    }
-  }, DIMS[primaryDim], " / Campanha"), Th('invest', 'Investimento', 'Spend rateado (Meta já com imposto ×1,1383)'), Th('ftds', 'FTDs'), Th('cpa', 'CPA FTD', 'Investimento ÷ FTDs'), Th('depD0', 'Dep D0', 'Depósito no dia do FTD'), Th('roasFtd', 'ROAS FTD', 'FTD$ ÷ investimento'), Th('roasGgr', 'ROAS GGR', 'NGR do mês do FTD ÷ investimento'), Th('multD1', 'Mult D1', '(Dep D0 + dep dia 1) ÷ Dep D0'), Th('multD14', 'Mult D14', '(Dep D0 + dep dias 1–14) ÷ Dep D0'), Th('multD30', 'Mult D30', '(Dep D0 + dep dias 1–30) ÷ Dep D0 · imaturo p/ coortes < 30 dias'))), sectionArr.map(s => /*#__PURE__*/React.createElement("tbody", {
-    key: String(s.pk)
-  }, /*#__PURE__*/React.createElement("tr", {
-    style: {
-      background: 'var(--surface-2)',
-      fontWeight: 700
-    }
-  }, /*#__PURE__*/React.createElement("td", {
-    style: {
-      textAlign: 'left'
-    }
-  }, dimValLabel(primaryDim, s.pk)), metricCells(s.sub)), s.campaigns.map(camp => {
-    const ekey = String(s.pk) + '|' + camp.key;
-    const isOpen = !!expanded[ekey];
-    const canExp = camp.subs.length > 1;
-    return /*#__PURE__*/React.createElement(React.Fragment, {
-      key: camp.key
-    }, /*#__PURE__*/React.createElement("tr", {
-      onClick: () => canExp && setExpanded(e => ({
-        ...e,
-        [ekey]: !isOpen
-      })),
-      style: {
-        cursor: canExp ? 'pointer' : 'default'
-      }
-    }, /*#__PURE__*/React.createElement("td", {
-      className: "ch-name",
-      style: {
-        textAlign: 'left'
-      },
-      title: camp.key
-    }, canExp ? isOpen ? '▾ ' : '▸ ' : '   ', camp.label), metricCells(camp.d)), isOpen && camp.subs.map((sub, i) => /*#__PURE__*/React.createElement("tr", {
-      key: i,
-      style: {
-        fontSize: '0.92em',
-        color: 'var(--text-muted)'
-      }
-    }, /*#__PURE__*/React.createElement("td", {
-      style: {
-        textAlign: 'left',
-        paddingLeft: 28
-      }
-    }, dimValLabel(expandDim, sub.key)), metricCells(sub.d))));
-  }))), /*#__PURE__*/React.createElement("tfoot", null, /*#__PURE__*/React.createElement("tr", {
-    style: {
-      fontWeight: 700
-    }
-  }, /*#__PURE__*/React.createElement("td", {
-    style: {
-      textAlign: 'left'
-    }
-  }, "Total"), metricCells(gd))))), /*#__PURE__*/React.createElement("div", {
-    className: "ch-note"
-  }, /*#__PURE__*/React.createElement("strong", null, "Ver por"), " reorganiza a tabela (Canal / Grupo de risco / Faixa FTD como agrupamento prim\xE1rio); campanhas rankeadas dentro \u2014 clique numa campanha p/ abrir a quebra por ", /*#__PURE__*/React.createElement("strong", null, DIMS[expandDim].toLowerCase()), ". Os sub-filtros de ", /*#__PURE__*/React.createElement("strong", null, "grupo"), " e ", /*#__PURE__*/React.createElement("strong", null, "faixa"), " recortam o universo.", /*#__PURE__*/React.createElement("strong", null, " Investimento"), " = spend da performance (Meta com imposto \xD71,1383) casado \xE0 coorte de FTD pela campanha, ", /*#__PURE__*/React.createElement("strong", null, "rateado por share de FTD"), " no n\xEDvel de segmento (premissa \u2014 por isso o CPA fica igual entre segmentos; a diferen\xE7a real aparece em ", /*#__PURE__*/React.createElement("strong", null, "ROAS e multiplicadores"), ").", /*#__PURE__*/React.createElement("strong", null, " Mult DN"), " = (Dep D0 + dep\xF3sitos dias 1\u2013N) \xF7 Dep D0. ", /*#__PURE__*/React.createElement("strong", null, "Mult D14/D30 ficam imaturos para coortes recentes"), " (a safra ainda n\xE3o viveu N dias) \u2014 leia como piso, n\xE3o teto. Campanhas com spend e ", /*#__PURE__*/React.createElement("strong", null, "sem FTD atribu\xEDdo"), " (ex.: remarketing) aparecem no grupo ", /*#__PURE__*/React.createElement("em", null, "(sem FTD atribu\xEDdo)"), " / faixa ", /*#__PURE__*/React.createElement("em", null, "(sem)"), ". Program\xE1tica n\xE3o entra (sem spend por campanha).")));
-}
-
 // ============================================================
 // ABA ATIVAÇÃO D0 — sinais precoces da coorte de FTD (visão semanal, seg–dom).
 // Seção D0: % que apostou no D0, turnover D0, aposta média/mediana D0, rollover D0 (turnover D0 ÷ dep D0).
@@ -8958,10 +8336,6 @@ const TABS = [{
   label: 'Monthly Close',
   component: TabMonthlyClose
 }, {
-  id: 'aquisicao',
-  label: 'Aquisições',
-  component: TabAquisicao
-}, {
   id: 'caccalc',
   label: 'CAC Calculator',
   component: TabCacCalculator
@@ -8986,10 +8360,6 @@ const TABS = [{
   label: 'Ativação D0',
   component: TabAtivacao
 }, {
-  id: 'invcampanha',
-  label: 'Investimento p/ Campanha',
-  component: InvCampanhaTab
-}, {
   id: 'cashflow',
   label: 'Daily Cashflow',
   component: TabDailyCashflow
@@ -8997,18 +8367,6 @@ const TABS = [{
   id: 'ggr',
   label: 'GGR',
   component: TabGgr
-}, {
-  id: 'depositos',
-  label: 'Depósitos',
-  component: TabDepositos
-}, {
-  id: 'apostas',
-  label: 'Turnover',
-  component: TabApostas
-}, {
-  id: 'benchmark',
-  label: 'Benchmark',
-  component: BenchmarkTab
 }, {
   id: 'sameday',
   label: 'Benchmark Lottu',
@@ -10419,7 +9777,9 @@ function App({
   onLogout,
   config
 }) {
-  const [tabId, setTabId] = usePersistedState('rvops:tab', 'aquisicao');
+  // 'aquisicao' era o default até 2026-08-05, quando a aba foi eliminada. Quem tinha uma aba removida
+  // persistida cai no fallback da linha ~5775 (1ª aba visível) — não quebra, só volta pro Farol.
+  const [tabId, setTabId] = usePersistedState('rvops:tab', 'farol');
   // Visibilidade de abas (global, editável por admin). hiddenTabs = ids ocultas p/ não-admins.
   const [hiddenTabs, setHiddenTabsState] = React.useState(() => config && config.hiddenTabs || []);
   React.useEffect(() => {
@@ -10474,17 +9834,12 @@ function App({
     retencaoFaixa: MOCK_RETENCAO_FAIXA,
     componentsByChannel: null,
     depM0Channels: MOCK_DEPM0_CHANNELS,
-    rolloverMatrix: MOCK_ROLLOVER_MATRIX,
     bp: MOCK_BP,
     planScenarios: null,
     // plano de aquisição 3 cenários {bp,conserv,rolling} (aba DB Plan_Growth Mkt) — switch do Farol (só live/backend v42+)
     farolSpark: null,
     // últimas 4 semanas fechadas por KPI (semana × canal) — linha de tendência nos hero cards do Farol (só live/backend v50+)
     isLive: false,
-    benchmark: null,
-    // benchmark.json (3 casas, Excel estático)
-    benchmarkSameday: null,
-    // benchmark_sameday.json (só Lottu, coorte same-day)
     benchmarkNet: null // benchmark_net.json (Apostou + Lottu, faixa_diaria com saque/net)
   });
   const loadData = React.useCallback((opts = {}) => {
@@ -10532,7 +9887,6 @@ function App({
         // cai no mock até o backend mandar (igual às outras abas)
         componentsByChannel: payload.componentsByChannel || null,
         depM0Channels: payload.depM0Channels,
-        rolloverMatrix: payload.rolloverMatrix,
         bp: payload.bp || null,
         planScenarios: payload.planScenarios || null,
         farolSpark: payload.farolSpark || null,
@@ -10551,24 +9905,15 @@ function App({
     loadData();
   }, [loadData]);
 
-  // Benchmark das casas concorrentes — arquivos estáticos servidos ao lado do index.html.
+  // Benchmark das casas concorrentes — arquivo estático servido ao lado do index.html.
+  // 2026-08-05: `benchmark.json` (3 casas, ~828 KB) e `benchmark_sameday.json` (~201 KB) deixaram de ser
+  // baixados junto com a remoção da aba Benchmark — ficaram sem consumidor. Os arquivos seguem no repo
+  // (o build_benchmark.py ainda os gera); se a aba voltar, é só religar o fetch.
   useEffect(() => {
     // cache:'no-cache' = revalida sempre (304 se igual) — evita date bounds/casas estagnados de versão antiga do JSON.
     const opt = {
       cache: 'no-cache'
     };
-    fetch('benchmark.json', opt).then(r => r.ok ? r.json() : null).then(j => {
-      if (j) setState(prev => ({
-        ...prev,
-        benchmark: j
-      }));
-    }).catch(() => {});
-    fetch('benchmark_sameday.json', opt).then(r => r.ok ? r.json() : null).then(j => {
-      if (j) setState(prev => ({
-        ...prev,
-        benchmarkSameday: j
-      }));
-    }).catch(() => {});
     fetch('benchmark_net.json', opt).then(r => r.ok ? r.json() : null).then(j => {
       if (j) setState(prev => ({
         ...prev,
@@ -10625,25 +9970,8 @@ function App({
     o[b] = filterByChannel(state.ggrSafraRoas[b], null);
     return o;
   }, {}) : null;
-  const fDepM0Channels = filterByChannel(state.depM0Channels, c => c.invest != null);
   // Depósitos do mês por canal (qtd + valor) — derivado do componentsByChannel (player_metrics).
-  const depByChannelList = state.componentsByChannel ? Object.keys(state.componentsByChannel).map(ch => {
-    const m = state.componentsByChannel[ch] && state.componentsByChannel[ch].mtd || {};
-    return {
-      channel: ch,
-      depositos: m.depositos || 0,
-      qtdDep: m.qtdDep || 0,
-      saques: m.saques || 0,
-      qtdSaque: m.qtdSaque || 0
-    };
-  }).filter(c => c.qtdDep > 0) // só com qtd do backend (@34+); pré-deploy a tabela some
-  : null;
-  const fDepByChannel = filterByChannel(depByChannelList, null);
   const fRetentionChannels = filterByChannel(state.retentionChannels, null);
-  const fRolloverMatrix = state.rolloverMatrix ? {
-    ...state.rolloverMatrix,
-    rows: filterByChannel(state.rolloverMatrix.rows, null) || []
-  } : null;
 
   // Opções do dropdown: nomes dos canais presentes no dado (sem filtro aplicado)
   const channelOptions = (state.channels || []).map(c => c.channel);
@@ -10722,14 +10050,9 @@ function App({
     componentsByChannel: state.componentsByChannel,
     // spend/ftd por canal (tbl_performance_daily) — aba CAC usa p/ Investimento bater com o Farol
     meta: state.meta,
-    benchmark: state.benchmark,
-    benchmarkSameday: state.benchmarkSameday,
     benchmarkNet: state.benchmarkNet,
     chFilter,
     range: appliedRange,
-    depM0Channels: fDepM0Channels,
-    depByChannel: fDepByChannel,
-    rolloverMatrix: fRolloverMatrix,
     isLive: state.isLive,
     monthlyClose: state.monthlyClose,
     // aba Monthly Close (house-level, segue scope do backend)

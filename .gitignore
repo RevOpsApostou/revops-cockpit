@@ -10,6 +10,7 @@ node_modules/
 # Scripts de QA headless (rodam em Node, não fazem parte da página) e material interno.
 # ⚠️ Este repo É o GitHub Pages: tudo que entra aqui vira URL pública.
 mddtest.js
+boot.js
 fronttest.js
 *.pptx
 *.pdf
