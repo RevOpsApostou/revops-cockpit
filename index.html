@@ -7922,7 +7922,8 @@ function mddPct_(vals, p) {
 function TabMetricasDia({
   retencaoFaixa,
   chFilter,
-  meta
+  meta,
+  retFaixaLive
 }) {
   const [faixaSel, setFaixaSel] = React.useState([]); // multi-select de faixa de FTD; [] = todas
   const [grupoSel, setGrupoSel] = React.useState([]); // multi-select de grupo de risco; [] = todos
@@ -8046,7 +8047,23 @@ function TabMetricasDia({
     className: "tab-header"
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", null, "M\xE9tricas do dia a dia"), /*#__PURE__*/React.createElement("div", {
     className: "subtitle"
-  }, "A escada que sustenta a curva de dep\xF3sito do BP \u2014 realizado, os degraus internos (P75/P90 das safras di\xE1rias) e o n\xEDvel que a curva-meta exige"))), /*#__PURE__*/React.createElement("div", {
+  }, "A escada que sustenta a curva de dep\xF3sito do BP \u2014 realizado, os degraus internos (P75/P90 das safras di\xE1rias) e o n\xEDvel que a curva-meta exige"))), !retFaixaLive && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'rgba(239,68,68,.12)',
+      border: '1px solid rgba(239,68,68,.45)',
+      borderLeft: '4px solid #ef4444',
+      borderRadius: '8px',
+      padding: '12px 16px',
+      margin: '0 0 14px',
+      fontSize: '13px',
+      lineHeight: 1.6,
+      color: 'var(--text)'
+    }
+  }, /*#__PURE__*/React.createElement("strong", {
+    style: {
+      color: '#f87171'
+    }
+  }, "\u26A0 Dados de demonstra\xE7\xE3o \u2014 n\xE3o s\xE3o os seus n\xFAmeros."), ' ', "A base de safras (", /*#__PURE__*/React.createElement("code", null, "retencaoFaixa"), ") n\xE3o chegou do BigQuery nesta carga, ent\xE3o a tabela abaixo est\xE1 preenchida com o ", /*#__PURE__*/React.createElement("strong", null, "mock"), " embutido no app (11 safras fict\xEDcias de jun/26, sem os campos de funil D0+D1 nem de coorte semanal \u2014 por isso as linhas de passagem, D3, D14 e S1/S0 aparecem \u201C\u2014\u201D).", ' ', /*#__PURE__*/React.createElement("strong", null, "Recarregue a p\xE1gina"), "; se persistir, o backend est\xE1 lento (cold start do Apps Script) ou a query de safras falhou."), /*#__PURE__*/React.createElement("div", {
     className: "slicer-group slicer-ruler"
   }, /*#__PURE__*/React.createElement("label", {
     style: {
@@ -9541,6 +9558,8 @@ function App({
     farolSpark: null,
     // últimas 4 semanas fechadas por KPI (semana × canal) — linha de tendência nos hero cards do Farol (só live/backend v50+)
     isLive: false,
+    retFaixaLive: false,
+    // o payload trouxe retencaoFaixa de verdade? false = tela mostrando MOCK
     benchmarkNet: null // benchmark_net.json (Apostou + Lottu, faixa_diaria com saque/net)
   });
   const loadData = React.useCallback((opts = {}) => {
@@ -9585,6 +9604,11 @@ function App({
         ggrPayback: payload.ggrPayback || prev.ggrPayback,
         retencaoFaixa: payload.retencaoFaixa || prev.retencaoFaixa,
         // cai no mock até o backend mandar (igual às outras abas)
+        // ⚠️ A linha acima mantém o MOCK quando o backend devolve retencaoFaixa nulo (safeQuery_ engoliu
+        // um erro da query) — e `isLive` vira true do mesmo jeito, então o chip do topo diz "Live" com
+        // dado falso na tela. Esta flag separa as duas coisas: só é true quando o payload REALMENTE trouxe
+        // a base. Quem consome retencaoFaixa deve avisar na tela quando ela for false.
+        retFaixaLive: !!(payload.retencaoFaixa && payload.retencaoFaixa.length),
         componentsByChannel: payload.componentsByChannel || null,
         depM0Channels: payload.depM0Channels,
         bp: payload.bp || null,
@@ -9744,6 +9768,7 @@ function App({
     ggrSafraRoas: fGgrSafraRoas,
     ggrPayback: state.ggrPayback,
     retencaoFaixa: state.retencaoFaixa,
+    retFaixaLive: state.retFaixaLive,
     componentsByChannel: state.componentsByChannel,
     // spend/ftd por canal (tbl_performance_daily) — aba CAC usa p/ Investimento bater com o Farol
     meta: state.meta,

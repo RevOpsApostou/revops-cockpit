@@ -4050,7 +4050,7 @@ function mddPct_(vals, p) {
   const i = (v.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i);
   return lo === hi ? v[lo] : v[lo] + (v[hi] - v[lo]) * (i - lo);
 }
-function TabMetricasDia({ retencaoFaixa, chFilter, meta }) {
+function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const [faixaSel, setFaixaSel] = React.useState([]);   // multi-select de faixa de FTD; [] = todas
   const [grupoSel, setGrupoSel] = React.useState([]);   // multi-select de grupo de risco; [] = todos
   const dataMax = meta && meta.dataMaxDate;
@@ -4126,6 +4126,19 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta }) {
           <div className="subtitle">A escada que sustenta a curva de depósito do BP — realizado, os degraus internos (P75/P90 das safras diárias) e o nível que a curva-meta exige</div>
         </div>
       </div>
+      {!retFaixaLive && (
+        <div style={{
+          background: 'rgba(239,68,68,.12)', border: '1px solid rgba(239,68,68,.45)', borderLeft: '4px solid #ef4444',
+          borderRadius: '8px', padding: '12px 16px', margin: '0 0 14px', fontSize: '13px', lineHeight: 1.6, color: 'var(--text)',
+        }}>
+          <strong style={{ color: '#f87171' }}>⚠ Dados de demonstração — não são os seus números.</strong>{' '}
+          A base de safras (<code>retencaoFaixa</code>) não chegou do BigQuery nesta carga, então a tabela abaixo está
+          preenchida com o <strong>mock</strong> embutido no app (11 safras fictícias de jun/26, sem os campos de funil
+          D0+D1 nem de coorte semanal — por isso as linhas de passagem, D3, D14 e S1/S0 aparecem “—”).
+          {' '}<strong>Recarregue a página</strong>; se persistir, o backend está lento (cold start do Apps Script) ou a
+          query de safras falhou.
+        </div>
+      )}
       <div className="slicer-group slicer-ruler">
         <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Faixa FTD</label>
         <ChannelMultiSelect options={FAIXA_LIST} selected={faixaSel} onChange={setFaixaSel} labelOf={fxLabel_} allLabel="Todas" countNoun="faixas" />
@@ -4958,6 +4971,7 @@ function App({ user, onLogout, config }) {
     planScenarios: null,       // plano de aquisição 3 cenários {bp,conserv,rolling} (aba DB Plan_Growth Mkt) — switch do Farol (só live/backend v42+)
     farolSpark: null,          // últimas 4 semanas fechadas por KPI (semana × canal) — linha de tendência nos hero cards do Farol (só live/backend v50+)
     isLive: false,
+    retFaixaLive: false,   // o payload trouxe retencaoFaixa de verdade? false = tela mostrando MOCK
     benchmarkNet: null,        // benchmark_net.json (Apostou + Lottu, faixa_diaria com saque/net)
   });
 
@@ -4996,6 +5010,11 @@ function App({ user, onLogout, config }) {
           monthlyClose: payload.monthlyClose || null,
           ggrPayback: payload.ggrPayback || prev.ggrPayback,
           retencaoFaixa: payload.retencaoFaixa || prev.retencaoFaixa,  // cai no mock até o backend mandar (igual às outras abas)
+          // ⚠️ A linha acima mantém o MOCK quando o backend devolve retencaoFaixa nulo (safeQuery_ engoliu
+          // um erro da query) — e `isLive` vira true do mesmo jeito, então o chip do topo diz "Live" com
+          // dado falso na tela. Esta flag separa as duas coisas: só é true quando o payload REALMENTE trouxe
+          // a base. Quem consome retencaoFaixa deve avisar na tela quando ela for false.
+          retFaixaLive: !!(payload.retencaoFaixa && payload.retencaoFaixa.length),
           componentsByChannel: payload.componentsByChannel || null,
           depM0Channels: payload.depM0Channels,
           bp: payload.bp || null,
@@ -5120,7 +5139,7 @@ function App({ user, onLogout, config }) {
   const tabProps = {
     user, M: dispM, farol: farolMetrics, channels: fChannels, bp: state.bp,
     ggrChannels: fGgrChannels, ggrSafra: fGgrSafra, ggrSafraRoas: fGgrSafraRoas, ggrPayback: state.ggrPayback,
-    retencaoFaixa: state.retencaoFaixa,
+    retencaoFaixa: state.retencaoFaixa, retFaixaLive: state.retFaixaLive,
     componentsByChannel: state.componentsByChannel,   // spend/ftd por canal (tbl_performance_daily) — aba CAC usa p/ Investimento bater com o Farol
     meta: state.meta,
     benchmarkNet: state.benchmarkNet, chFilter, range: appliedRange,
