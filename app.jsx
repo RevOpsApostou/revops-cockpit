@@ -183,27 +183,6 @@ const MOCK_GGR_PAYBACK = {
   total: { paybackDays: 38, reached: true, spend: 3567125, ggrH: 3861700, roasH: 1.08 },
 };
 
-// Mock — safra diária por canal (modo dev). Live vem de payload.dailyCohort.
-// Cada linha = safra de FTD do dia. D0/D1/W1 = depósito por idade da safra; Ret = D1|W1 ÷ D0.
-const MOCK_DAILY_COHORT = {
-  // números ilustrativos (do print do Luis + tickets/same-day fictícios) — rótulo segue o slicer.
-  // ftdQty/ftdAmt ficam no dado p/ calcular o Tkt Médio FTD, mas não viram coluna.
-  channelLabel: null,
-  totals: { txPass: 0.75, txPassSD: 0.60, ftdQty: 941, ftdAmt: 73017, d0: 148575, tktD0: 158, d1: 37266, tktD1: 245, retD1: 0.251, w1: 111397, retW1: 0.75 },
-  rows: [
-    { date: '2026-06-01', txPass: 0.732, txPassSD: 0.61, ftdQty: 90,  ftdAmt: 9147.2,  d0: 19501.3, tktD0: 167, d1: 3438.5, tktD1: 245, retD1: 0.176, w1: 16304.5, retW1: 0.836 },
-    { date: '2026-06-02', txPass: 0.732, txPassSD: 0.60, ftdQty: 90,  ftdAmt: 7685.9,  d0: 21458.6, tktD0: 158, d1: 5925.8, tktD1: 310, retD1: 0.276, w1: 34375.0, retW1: 1.602 },
-    { date: '2026-06-03', txPass: 1.011, txPassSD: 0.68, ftdQty: 95,  ftdAmt: 7405.1,  d0: 14073.7, tktD0: 142, d1: 3498.1, tktD1: 198, retD1: 0.249, w1: 8876.1,  retW1: 0.631 },
-    { date: '2026-06-04', txPass: 0.819, txPassSD: 0.66, ftdQty: 122, ftdAmt: 9534.7,  d0: 24507.3, tktD0: 175, d1: 9751.3, tktD1: 280, retD1: 0.398, w1: 14082.8, retW1: 0.575 },
-    { date: '2026-06-05', txPass: 0.872, txPassSD: 0.71, ftdQty: 102, ftdAmt: 7832.8,  d0: 14294.4, tktD0: 151, d1: 4066.0, tktD1: 226, retD1: 0.284, w1: 12783.7, retW1: 0.894 },
-    { date: '2026-06-06', txPass: 1.000, txPassSD: 0.74, ftdQty: 89,  ftdAmt: 7086.3,  d0: 12470.3, tktD0: 138, d1: 1610.0, tktD1: 179, retD1: 0.129, w1: 8684.0,  retW1: 0.696 },
-    { date: '2026-06-07', txPass: 0.779, txPassSD: 0.58, ftdQty: 74,  ftdAmt: 10547.0, d0: 15217.0, tktD0: 192, d1: 1572.0, tktD1: 215, retD1: 0.103, w1: 3397.0,  retW1: 0.223 },
-    { date: '2026-06-08', txPass: 0.741, txPassSD: 0.55, ftdQty: 117, ftdAmt: 7407.0,  d0: 15847.0, tktD0: 149, d1: 6324.0, tktD1: 264, retD1: 0.399, w1: 11814.0, retW1: 0.746 },
-    { date: '2026-06-09', txPass: 0.559, txPassSD: 0.42, ftdQty: 105, ftdAmt: 4140.0,  d0: 8120.5,  tktD0: 121, d1: 1080.0, tktD1: 180, retD1: 0.133, w1: 1080.0,  retW1: 0.133 },
-    { date: '2026-06-10', txPass: 0.460, txPassSD: 0.35, ftdQty: 57,  ftdAmt: 2231.0,  d0: 3085.0,  tktD0: 108, d1: null,   tktD1: null, retD1: null,  w1: null,    retW1: null },
-  ],
-};
-
 // Mock — DEP M0 por canal (modo dev). Live vem de payload.depM0Channels.
 const MOCK_DEPM0_CHANNELS = [
   { channel: 'Meta',          depM0: 2814000, invest: 1842300 },
@@ -633,59 +612,6 @@ function GgrChannelTable({ channels, payback }) {
     </table></div>
   );
 }
-// ============================================================
-// RETENTION TABLE — retenção de valor (R$) por canal
-//   M0→M1 / M1→M2: média das safras com janela completa
-//   M3+: pool de safras antigas, mês ref vs mês anterior
-// ============================================================
-
-function RetentionTable({ channels, totalM3plus }) {
-  // Total exato: soma numeradores/denominadores das linhas exibidas
-  const tot = channels.reduce((a, c) => {
-    const nd = c.nd || {};
-    ['n1','d1','n2','d2','n3','d3'].forEach(k => { a[k] += nd[k] || 0; });
-    a.m0 += c.m0Total || 0;
-    return a;
-  }, { n1: 0, d1: 0, n2: 0, d2: 0, n3: 0, d3: 0, m0: 0 });
-  const rate = (n, d) => (d > 0 ? n / d : null);
-  // M3+ do Total = valor do hero (Total da Casa usa a fórmula residual da FAROL; nas linhas
-  // por canal o M3+ é coorte e NÃO soma pro Total — o M3+ não decompõe por canal, ver FAROL).
-  const m3Total = (totalM3plus !== undefined && totalM3plus !== null) ? totalM3plus : rate(tot.n3, tot.d3);
-
-  return (
-    <div className="table-scroll"><table className="ch-table">
-      <thead>
-        <tr>
-          <th>Canal</th>
-          <th>Dep. M0 (R$)</th>
-          <th>M0→M1</th>
-          <th>M1→M2</th>
-          <th>M3+</th>
-        </tr>
-      </thead>
-      <tbody>
-        {channels.map((c, i) => (
-          <tr key={i}>
-            <td className="ch-name">{c.channel}</td>
-            <td>{fmtBRL(c.m0Total)}</td>
-            <td>{fmtPct(c.m0m1)}</td>
-            <td>{fmtPct(c.m1m2)}</td>
-            <td>{fmtPct(c.m3plus)}</td>
-          </tr>
-        ))}
-      </tbody>
-      <tfoot>
-        <tr>
-          <td>Total</td>
-          <td>{fmtBRL(tot.m0)}</td>
-          <td>{fmtPct(rate(tot.n1, tot.d1))}</td>
-          <td>{fmtPct(rate(tot.n2, tot.d2))}</td>
-          <td>{fmtPct(m3Total)}</td>
-        </tr>
-      </tfoot>
-    </table></div>
-  );
-}
 
 // ============================================================
 // TABS — 3 KPIs hero + viz de apoio
@@ -807,29 +733,6 @@ function FtdBridge({ channels, bp }) {
         {hasBucket && <> O balde <strong>“Outros (s/ BP)”</strong> reúne canais sem plano de mídia (orgânico, afiliados, social) — entram pelo valor cheio por não terem BP; troque o filtro para <strong>“Canais Growth”</strong> para a ponte pura de mídia paga.</>}
         {' '}Acompanha o filtro de canal e bate com o total da tabela abaixo.
       </div>
-    </React.Fragment>
-  );
-}
-function TabRetencao({ M, retentionChannels }) {
-  return (
-    <React.Fragment>
-      <div className="tab-header">
-        <div>
-          <h1>Retenções</h1>
-          <div className="subtitle">Retenção de valor depositado (R$) — safras anteriores</div>
-        </div>
-      </div>
-      <div className="hero-grid">
-        <Hero metric={M.retM0M1} />
-        <Hero metric={M.retM1M2} />
-        <Hero metric={M.retM3plus} />
-      </div>
-      {retentionChannels && retentionChannels.length > 0 && (
-        <div className="support">
-          <div className="support-title">Retenção por Canal</div>
-          <RetentionTable channels={retentionChannels} totalM3plus={M.retM3plus && M.retM3plus.act} />
-        </div>
-      )}
     </React.Fragment>
   );
 }
@@ -1194,107 +1097,6 @@ function heatBg_(v, min, max) {
   }
   return `rgba(${r}, ${g}, ${b}, 0.26)`;
 }
-
-function DailyCohortTable({ data }) {
-  // Esconde dias sem dado de conversão (só spend carregado; FTD/depósito ainda não
-  // chegaram do player_metrics) — senão aparecem linhas vazias no fim da tabela.
-  const rows = (data.rows || []).filter(r => (r.ftdQty > 0) || (r.d0 > 0));
-  const t = data.totals || {};
-  const range = (key) => {
-    const vals = rows.map(r => r[key]).filter(v => v != null && !isNaN(v));
-    return vals.length ? { min: Math.min(...vals), max: Math.max(...vals) } : { min: 0, max: 1 };
-  };
-  const rD1 = range('retD1'), rW1 = range('retW1');
-  const dm = (iso) => { if (!iso) return '—'; const p = iso.split('-'); return `${p[2]}/${p[1]}`; };
-  const tktFtd = (o) => (o.ftdQty > 0 ? o.ftdAmt / o.ftdQty : null);
-
-  return (
-    <div className="table-scroll tall"><table className="ch-table">
-      <thead>
-        <tr>
-          <th>Data FTD</th>
-          <th>Tx Passagem</th>
-          <th>Tx Pass. mesmo dia</th>
-          <th>Tkt Médio FTD</th>
-          <th>Tkt Médio D0</th>
-          <th>Tkt Médio D1</th>
-          <th>Ret. D1</th>
-          <th>Ret. W1</th>
-          <th>Freespin</th>
-          <th>Rollover</th>
-          <th>Bonificações</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r, i) => (
-          <tr key={i}>
-            <td className="ch-name">{dm(r.date)}</td>
-            <td>{fmtPct(r.txPass, 1)}</td>
-            <td>{fmtPct(r.txPassSD, 1)}</td>
-            <td>{fmtBRL(tktFtd(r))}</td>
-            <td>{fmtBRL(r.tktD0)}</td>
-            <td>{fmtBRL(r.tktD1)}</td>
-            <td style={{ background: heatBg_(r.retD1, rD1.min, rD1.max) }}>{fmtPct(r.retD1, 1)}</td>
-            <td style={{ background: heatBg_(r.retW1, rW1.min, rW1.max) }}>{fmtPct(r.retW1, 1)}</td>
-            <td>{fmtBRL(r.freespin)}</td>
-            <td>{fmtMultiple(r.rollover)}</td>
-            <td>{fmtBRL(r.bonus)}</td>
-          </tr>
-        ))}
-      </tbody>
-      <tfoot>
-        <tr>
-          <td>Total</td>
-          <td>{fmtPct(t.txPass, 1)}</td>
-          <td>{fmtPct(t.txPassSD, 1)}</td>
-          <td>{fmtBRL(tktFtd(t))}</td>
-          <td>{fmtBRL(t.tktD0)}</td>
-          <td>{fmtBRL(t.tktD1)}</td>
-          <td>{fmtPct(t.retD1, 1)}</td>
-          <td>{fmtPct(t.retW1, 1)}</td>
-          <td>{fmtBRL(t.freespin)}</td>
-          <td>{fmtMultiple(t.rollover)}</td>
-          <td>{fmtBRL(t.bonus)}</td>
-        </tr>
-      </tfoot>
-    </table></div>
-  );
-}
-
-function TabSafras({ dailyCohort, chFilter }) {
-  if (!dailyCohort) return null;
-  const t = dailyCohort.totals || {};
-  const heroes = [
-    { label: 'Tx Passagem', act: t.txPass, m1: null, pctBp: null, fmt: 'pct' },
-    { label: 'Retenção D1', act: t.retD1,  m1: null, pctBp: null, fmt: 'pct' },
-    { label: 'Retenção W1', act: t.retW1,  m1: null, pctBp: null, fmt: 'pct' },
-  ];
-  // Rótulo segue o slicer (igual às outras abas): sem filtro = Total Casa (blended).
-  const chLabel = chLabel_(chFilter);
-  return (
-    <React.Fragment>
-      <div className="tab-header">
-        <div>
-          <h1>Safras Diárias</h1>
-          <div className="subtitle">Qualidade da safra de FTD por dia — passagem, retenção e atividade M0 (freespin, rollover, bonificações)</div>
-        </div>
-      </div>
-      <div className="hero-grid">
-        {heroes.map((m, i) => <Hero key={i} metric={m} />)}
-      </div>
-      <div className="support">
-        <div className="support-title">Safra por Dia · {chLabel}</div>
-        <DailyCohortTable data={dailyCohort} />
-        <div className="ch-note">
-          Cada linha = safra de FTD daquele dia. <strong>Tx Passagem</strong> = FTD ÷ registros do dia · <strong>Ret. D1 / W1</strong> = depósito do dia 1 | dias 1–7 ÷ depósito do D0.
-          <strong> Freespin</strong> = ganhos de freespin · <strong>Rollover</strong> = turnover ÷ depósito (×) · <strong>Bonificações</strong> = saldo real + cashback + torneio — todos no <strong>M0</strong> (mês do FTD), via player_metrics.
-          Safras recentes sem dado de retenção/M0 aparecem como — (dependem da player_metrics).
-        </div>
-      </div>
-    </React.Fragment>
-  );
-}
-
 // ===== Retenções por faixa de FTD — diária; faixa de valor do FTD + canal = filtros =====
 const FAIXA_LIST = ['01. R$0–10','02. R$10–25','03. R$25–50','04. R$50–100','05. R$100+'];
 const fxLabel_ = (f) => String(f).replace(/^\d+\.\s*/, '');
@@ -4324,8 +4126,6 @@ const TABS = [
   { id: 'farol', label: 'Farol', component: TabFarol },
   { id: 'monthlyclose', label: 'Monthly Close', component: TabMonthlyClose },
   { id: 'caccalc', label: 'CAC Calculator', component: TabCacCalculator },
-  { id: 'safras', label: 'Safras Diárias', component: TabSafras },
-  { id: 'retencao', label: 'Retenções', component: TabRetencao },
   { id: 'retfaixa', label: 'Multiplicadores e Retenção', component: TabRetencaoFaixa },
   { id: 'metricasdia', label: 'Métricas do dia a dia', component: TabMetricasDia },
   { id: 'ativacao', label: 'Ativação D0', component: TabAtivacao },
@@ -4647,61 +4447,6 @@ function applyBpLive_(out, filter, bp) {
   out.retM1M2   = { ...out.retM1M2, bp: null, pctBp: null };
   out.retM3plus = { ...out.retM3plus, bp: null, pctBp: null };
   return out;
-}
-
-// Seleciona a série da safra diária conforme o filtro (novo shape {all,growth,byChannel} ou mock {totals,rows}).
-function selectDailyCohort_(dc, filter) {
-  if (!dc) return null;
-  if (dc.byChannel || dc.all || dc.growth) {
-    const sel = chList_(filter);
-    if (sel.length === 1) return (dc.byChannel && dc.byChannel[sel[0]]) || { totals: {}, rows: [] };
-    if (sel.length > 1) {
-      const series = sel.map(ch => dc.byChannel && dc.byChannel[ch]).filter(Boolean);
-      return series.length ? sumDailyCohorts_(series) : { totals: {}, rows: [] };
-    }
-    if (filter.scope === 'growth') return dc.growth || { totals: {}, rows: [] };
-    return dc.all || { totals: {}, rows: [] };
-  }
-  return dc; // mock antigo {totals, rows}
-}
-
-// Soma várias séries de safra diária (byChannel) por dia, recompondo as bases ADITIVAS e
-// RECALCULANDO as razões — espelha assembleDailyCohort_ do backend. Requer as bases
-// (reg/sameday/d0cnt/d1cnt/turnover/deposito) que o backend expõe a partir do CACHE_VERSION v11.
-function sumDailyCohorts_(series) {
-  const BASE = ['ftdQty','ftdAmt','d0','reg','sameday','d0cnt','freespin','turnover','deposito','bonus'];
-  const acc = {};
-  series.forEach(s => ((s && s.rows) || []).forEach(r => {
-    const t = acc[r.date] || (acc[r.date] = { date: r.date, d1n: false, w1n: false });
-    BASE.forEach(k => t[k] = (t[k] || 0) + (r[k] || 0));
-    if (r.d1 != null) { t.d1 = (t.d1 || 0) + r.d1; t.d1cnt = (t.d1cnt || 0) + (r.d1cnt || 0); t.d1n = true; }
-    if (r.w1 != null) { t.w1 = (t.w1 || 0) + r.w1; t.w1n = true; }
-  }));
-  const ratios = (t) => ({
-    date:     t.date,
-    txPass:   t.reg > 0 ? t.ftdQty / t.reg : null,
-    txPassSD: t.reg > 0 ? t.sameday / t.reg : null,
-    ftdQty:   t.ftdQty || 0, ftdAmt: t.ftdAmt || 0, d0: t.d0 || 0,
-    tktD0:    t.d0cnt > 0 ? t.d0 / t.d0cnt : null,
-    d1:       t.d1n ? t.d1 : null,
-    tktD1:    (t.d1n && t.d1cnt > 0) ? t.d1 / t.d1cnt : null,
-    retD1:    (t.d1n && t.d0 > 0) ? t.d1 / t.d0 : null,
-    w1:       t.w1n ? t.w1 : null,
-    retW1:    (t.w1n && t.d0 > 0) ? t.w1 / t.d0 : null,
-    freespin: t.freespin || 0,
-    rollover: t.deposito > 0 ? t.turnover / t.deposito : null,
-    bonus:    t.bonus || 0,
-  });
-  const dates = Object.keys(acc).sort();
-  const rows = dates.map(d => ratios(acc[d]));
-  const T = { date: null, d1n: false, w1n: false };
-  dates.forEach(d => {
-    const t = acc[d];
-    BASE.forEach(k => T[k] = (T[k] || 0) + (t[k] || 0));
-    if (t.d1n) { T.d1 = (T.d1 || 0) + (t.d1 || 0); T.d1cnt = (T.d1cnt || 0) + (t.d1cnt || 0); T.d1n = true; }
-    if (t.w1n) { T.w1 = (T.w1 || 0) + (t.w1 || 0); T.w1n = true; }
-  });
-  return { totals: ratios(T), rows };
 }
 
 // YTD = janela acumulada desde ABRIL (início da operação Apostou) até o último dia com dado (= todayISO_).
@@ -5136,7 +4881,6 @@ function App({ user, onLogout, config }) {
     monthlyClose: null,        // depósitos por safra {act,bp} — aba Monthly Close
     ftdByRegister: null,       // FTDs por canal cohortados por data de CADASTRO — toggle no Farol (só live/backend v34+)
     ggrPayback: MOCK_GGR_PAYBACK,
-    dailyCohort: MOCK_DAILY_COHORT,
     retencaoFaixa: MOCK_RETENCAO_FAIXA,
     componentsByChannel: null,
     depM0Channels: MOCK_DEPM0_CHANNELS,
@@ -5181,7 +4925,6 @@ function App({ user, onLogout, config }) {
           ggrSafraRoas: payload.ggrSafraRoas || prev.ggrSafraRoas,
           monthlyClose: payload.monthlyClose || null,
           ggrPayback: payload.ggrPayback || prev.ggrPayback,
-          dailyCohort: payload.dailyCohort || prev.dailyCohort,
           retencaoFaixa: payload.retencaoFaixa || prev.retencaoFaixa,  // cai no mock até o backend mandar (igual às outras abas)
           componentsByChannel: payload.componentsByChannel || null,
           depM0Channels: payload.depM0Channels,
@@ -5257,7 +5000,6 @@ function App({ user, onLogout, config }) {
     ? Object.keys(state.ggrSafraRoas).reduce((o, b) => { o[b] = filterByChannel(state.ggrSafraRoas[b], null); return o; }, {})
     : null;
   // Depósitos do mês por canal (qtd + valor) — derivado do componentsByChannel (player_metrics).
-  const fRetentionChannels = filterByChannel(state.retentionChannels, null);
 
   // Opções do dropdown: nomes dos canais presentes no dado (sem filtro aplicado)
   const channelOptions = (state.channels || []).map(c => c.channel);
@@ -5307,8 +5049,8 @@ function App({ user, onLogout, config }) {
   React.useEffect(() => { setVisitedTabs(v => v[activeTabId] ? v : { ...v, [activeTabId]: true }); }, [activeTabId]);
   const tabProps = {
     user, M: dispM, farol: farolMetrics, channels: fChannels, bp: state.bp,
-    retentionChannels: fRetentionChannels, ggrChannels: fGgrChannels, ggrSafra: fGgrSafra, ggrSafraRoas: fGgrSafraRoas, ggrPayback: state.ggrPayback,
-    dailyCohort: selectDailyCohort_(state.dailyCohort, chFilter), retencaoFaixa: state.retencaoFaixa,
+    ggrChannels: fGgrChannels, ggrSafra: fGgrSafra, ggrSafraRoas: fGgrSafraRoas, ggrPayback: state.ggrPayback,
+    retencaoFaixa: state.retencaoFaixa,
     componentsByChannel: state.componentsByChannel,   // spend/ftd por canal (tbl_performance_daily) — aba CAC usa p/ Investimento bater com o Farol
     meta: state.meta,
     benchmarkNet: state.benchmarkNet, chFilter, range: appliedRange,
