@@ -7872,6 +7872,18 @@ const MDD_ROWS = [{
   bp: null,
   needs: "sem"
 }];
+// Resolve o escopo do slicer de canal p/ uma chave de MDD_BP. ⚠️ NÃO dá pra usar chLabel_ direto: ele
+// devolve 'Total Casa'/'Canais Growth' e a curva do estudo se chama 'Geral' — o mismatch fazia a coluna
+// Meta BP sair "—" justamente no escopo padrão (bug pego na tela em 2026-08-05).
+// Sem canal selecionado (Total Casa ou Growth) = a curva Geral do estudo. Um canal só: Google/Meta têm
+// curva própria; qualquer outro (TikTok, Kwai, Programática…) não tem meta declarada → null.
+// Faixa/grupo NÃO entram: o estudo não calibrou curva por faixa nem por grupo de risco.
+function mddBpScope_(chFilter) {
+  const sel = chList_(chFilter);
+  if (sel.length === 0) return MDD_BP.Geral;
+  if (sel.length === 1) return MDD_BP[sel[0]] || null;
+  return null;
+}
 // Percentil linear-interpolado sobre os valores diários ordenados (mesma régua do estudo: safras
 // diárias sem ponderar por volume — é distribuição de dias, não de reais).
 function mddPct_(vals, p) {
@@ -7888,14 +7900,51 @@ function TabMetricasDia({
   chFilter,
   meta
 }) {
+  const [faixaSel, setFaixaSel] = React.useState([]); // multi-select de faixa de FTD; [] = todas
+  const [grupoSel, setGrupoSel] = React.useState([]); // multi-select de grupo de risco; [] = todos
   const dataMax = meta && meta.dataMaxDate;
-  const rows = benchApostouRows_(retencaoFaixa || []);
+  const grupoActive = grupoSel.length > 0;
+  // A base `retencaoFaixa` do payload NÃO traz grupo de risco — precisa do fetch com &byGrupo=1 (mesma
+  // mecânica da aba Multiplicadores e Retenção). Só busca quando o filtro de grupo está ligado.
+  const winFrom = meta && meta.from,
+    winTo = meta && meta.to;
+  const [grFetch, setGrFetch] = React.useState({
+    rows: null,
+    loading: false,
+    error: null
+  });
+  React.useEffect(() => {
+    if (!grupoActive || !ENDPOINT_URL || !winFrom || !winTo) return;
+    setGrFetch(s => ({
+      ...s,
+      loading: true,
+      error: null
+    }));
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${winFrom}&to=${winTo}&only=retfaixa&byGrupo=1`).then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))).then(j => {
+      if (j.error) throw new Error(j.error);
+      setGrFetch({
+        rows: j.retencaoFaixa || [],
+        loading: false,
+        error: null
+      });
+    }).catch(e => setGrFetch({
+      rows: null,
+      loading: false,
+      error: String(e.message || e)
+    }));
+  }, [grupoActive, winFrom, winTo]);
+  // Opções do multiselect de grupo: os grupos REAIS quando já carregou, senão o default.
+  const grupoOptions = grFetch.rows && grFetch.rows.length ? Array.from(new Set(grFetch.rows.map(r => r.grupo != null ? String(r.grupo) : 'sem grupo'))).sort() : GRUPO_LIST;
+  const srcRows = grupoActive ? grFetch.rows || [] : retencaoFaixa || [];
+  const rows = benchApostouRows_(srcRows);
   const selCh = chSelector_(chFilter);
-  // Uma linha por DIA de safra (soma canais/faixas dentro do recorte) — base dos percentis.
+  const selFx = fx => faixaSel.length === 0 || faixaSel.includes(fx);
+  const selGr = g => !grupoActive || grupoSel.indexOf(g || 'sem grupo') >= 0;
+  // Uma linha por DIA de safra (soma canais/faixas/grupos dentro do recorte) — base dos percentis.
   const byDay = React.useMemo(() => {
     const m = {};
     rows.forEach(r => {
-      if (!selCh(r.canal)) return;
+      if (!selCh(r.canal) || !selFx(r.faixa) || !selGr(r.grupo)) return;
       const k = String(r.date);
       if (!m[k]) m[k] = {
         date: k,
@@ -7931,8 +7980,8 @@ function TabMetricasDia({
       a._pass += r._pass || 0;
     });
     return Object.values(m).sort((a, b) => a.date < b.date ? -1 : 1);
-  }, [retencaoFaixa, chFilter && chFilter.scope, JSON.stringify(chFilter && chFilter.canals)]);
-  const bpScope = MDD_BP[chLabel_(chFilter)] || null; // 'Geral'/'Google'/'Meta' batem com as chaves
+  }, [srcRows, chFilter && chFilter.scope, JSON.stringify(chFilter && chFilter.canals), JSON.stringify(faixaSel), JSON.stringify(grupoSel)]);
+  const bpScope = mddBpScope_(chFilter);
   const out = MDD_ROWS.map(row => {
     // Só safras que já fecharam a janela da métrica (maturação).
     const cut = dataMax ? isoAddDays_(dataMax, -row.mat) : null;
@@ -7967,15 +8016,54 @@ function TabMetricasDia({
   };
   const val = (v, fmt) => v == null ? '—' : fmt === 'pct' ? fmtPct(v, 1) : fmtMultiple(v);
   const chLbl = chLabel_(chFilter);
+  const faixaLbl = faixaSel.length === 0 ? 'todas as faixas' : faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas';
+  const grupoLbl = !grupoActive ? 'todos os grupos' : grupoSel.length <= 2 ? grupoSel.map(grupoLabel_).join(' + ') : grupoSel.length + ' grupos';
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "tab-header"
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", null, "M\xE9tricas do dia a dia"), /*#__PURE__*/React.createElement("div", {
     className: "subtitle"
   }, "A escada que sustenta a curva de dep\xF3sito do BP \u2014 realizado, os degraus internos (P75/P90 das safras di\xE1rias) e o n\xEDvel que a curva-meta exige"))), /*#__PURE__*/React.createElement("div", {
+    className: "slicer-group slicer-ruler"
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: '11px',
+      color: 'var(--text-muted)'
+    }
+  }, "Faixa FTD"), /*#__PURE__*/React.createElement(ChannelMultiSelect, {
+    options: FAIXA_LIST,
+    selected: faixaSel,
+    onChange: setFaixaSel,
+    labelOf: fxLabel_,
+    allLabel: "Todas",
+    countNoun: "faixas"
+  }), /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: '11px',
+      color: 'var(--text-muted)',
+      marginLeft: '8px'
+    }
+  }, "Grupo de risco"), /*#__PURE__*/React.createElement(ChannelMultiSelect, {
+    options: grupoOptions,
+    selected: grupoSel,
+    onChange: setGrupoSel,
+    labelOf: grupoLabel_,
+    allLabel: "Todos",
+    countNoun: "grupos"
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: '11px',
+      color: 'var(--text-muted)',
+      marginLeft: '10px'
+    }
+  }, "Canal: ", /*#__PURE__*/React.createElement("strong", {
+    style: {
+      color: 'var(--text)'
+    }
+  }, chLbl), " \u2014 use o slicer ", /*#__PURE__*/React.createElement("em", null, "Canal"), " do topo")), /*#__PURE__*/React.createElement("div", {
     className: "support"
   }, /*#__PURE__*/React.createElement("div", {
     className: "support-title"
-  }, "Escada de reten\xE7\xE3o precoce \xB7 ", chLbl, " \xB7 safras do per\xEDodo", dataMax ? ' (até ' + dataMax.slice(8, 10) + '/' + dataMax.slice(5, 7) + ')' : ''), /*#__PURE__*/React.createElement("div", {
+  }, "Escada de reten\xE7\xE3o precoce \xB7 ", chLbl, " \xB7 ", faixaLbl, " \xB7 ", grupoLbl, " \xB7 safras do per\xEDodo", dataMax ? ' (até ' + dataMax.slice(8, 10) + '/' + dataMax.slice(5, 7) + ')' : '', grFetch.loading ? ' · carregando grupos…' : '', grFetch.error ? ' · erro ao carregar grupos' : ''), /*#__PURE__*/React.createElement("div", {
     className: "table-scroll"
   }, /*#__PURE__*/React.createElement("table", {
     className: "ch-table"
@@ -8013,7 +8101,7 @@ function TabMetricasDia({
     }
   }, fmtQty(r.n))))))), /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
-  }, /*#__PURE__*/React.createElement("strong", null, "Realizado"), " = agregado do per\xEDodo (soma as bases, depois divide \u2014 n\xE3o \xE9 m\xE9dia das % di\xE1rias).", /*#__PURE__*/React.createElement("strong", null, " T+1 (P75)"), " e ", /*#__PURE__*/React.createElement("strong", null, "T+2 (P90)"), " s\xE3o percentis da distribui\xE7\xE3o das ", /*#__PURE__*/React.createElement("strong", null, "safras di\xE1rias"), " do per\xEDodo, sem ponderar por volume: s\xE3o degraus internos \u2014 \u201Creplicar no todo o que o melhor quartil dos nossos pr\xF3prios dias j\xE1 faz\u201D, n\xE3o uma meta externa. ", /*#__PURE__*/React.createElement("strong", null, "Meta BP"), " \xE9 o n\xEDvel exigido pela curva calibrada na Lottu; \xE9 constante do estudo, ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o deriva do nosso dado"), ", e s\xF3 existe p/ Geral, Google e Meta \u2014 em qualquer outro recorte de canal fica \u201C\u2014\u201D. As 3 taxas de passagem n\xE3o t\xEAm meta declarada (", /*#__PURE__*/React.createElement("em", null, "indicativo"), "): o estudo mostra que elas medem qualidade de aquisi\xE7\xE3o/ativa\xE7\xE3o, n\xE3o reten\xE7\xE3o de cauda (r = \u22120,28 no Geral).", ' ', /*#__PURE__*/React.createElement("strong", null, "Matura\xE7\xE3o:"), " cada linha s\xF3 usa safras que j\xE1 fecharam a janela dela \u2014 D14 exige 14 dias, S1/S0 exige 13. Por isso a coluna ", /*#__PURE__*/React.createElement("strong", null, "Safras"), " muda de linha pra linha; quando ela fica", /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("strong", null, "Realizado"), " = agregado do per\xEDodo (soma as bases, depois divide \u2014 n\xE3o \xE9 m\xE9dia das % di\xE1rias).", /*#__PURE__*/React.createElement("strong", null, " T+1 (P75)"), " e ", /*#__PURE__*/React.createElement("strong", null, "T+2 (P90)"), " s\xE3o percentis da distribui\xE7\xE3o das ", /*#__PURE__*/React.createElement("strong", null, "safras di\xE1rias"), " do per\xEDodo, sem ponderar por volume: s\xE3o degraus internos \u2014 \u201Creplicar no todo o que o melhor quartil dos nossos pr\xF3prios dias j\xE1 faz\u201D, n\xE3o uma meta externa. ", /*#__PURE__*/React.createElement("strong", null, "Meta BP"), " \xE9 o n\xEDvel exigido pela curva calibrada na Lottu; \xE9 constante do estudo, ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o deriva do nosso dado"), ", e s\xF3 existe p/ Geral, Google e Meta \u2014 em qualquer outro canal, ou com 2+ canais selecionados, fica \u201C\u2014\u201D.", ' ', /*#__PURE__*/React.createElement("strong", null, "\u26A0\uFE0F A Meta BP n\xE3o muda com Faixa nem com Grupo"), ": o estudo calibrou a curva no n\xEDvel do canal, n\xE3o por faixa de FTD nem por grupo de risco. Ao filtrar, Realizado e P75/P90 seguem o recorte, mas a meta continua sendo a do canal inteiro \u2014 use como refer\xEAncia de dire\xE7\xE3o, n\xE3o como alvo daquele segmento. As 3 taxas de passagem n\xE3o t\xEAm meta declarada (", /*#__PURE__*/React.createElement("em", null, "indicativo"), "): o estudo mostra que elas medem qualidade de aquisi\xE7\xE3o/ativa\xE7\xE3o, n\xE3o reten\xE7\xE3o de cauda (r = \u22120,28 no Geral).", ' ', /*#__PURE__*/React.createElement("strong", null, "Matura\xE7\xE3o:"), " cada linha s\xF3 usa safras que j\xE1 fecharam a janela dela \u2014 D14 exige 14 dias, S1/S0 exige 13. Por isso a coluna ", /*#__PURE__*/React.createElement("strong", null, "Safras"), " muda de linha pra linha; quando ela fica", /*#__PURE__*/React.createElement("span", {
     style: {
       color: 'var(--accent-red)'
     }

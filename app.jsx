@@ -4008,6 +4008,18 @@ const MDD_ROWS = [
   // definição, não performance. A linha de R$ não tem esse problema (bate: 26,5% medido vs 26,9% do estudo).
   { key: 'jogS1', label: 'Retenção de jogadores S1/S0 (semanal)',   mat: 13, fmt: 'pct', of: a => a.qtd  ? a.cs1 / a.qtd : null,         bp: null, needs: "sem" },
 ];
+// Resolve o escopo do slicer de canal p/ uma chave de MDD_BP. ⚠️ NÃO dá pra usar chLabel_ direto: ele
+// devolve 'Total Casa'/'Canais Growth' e a curva do estudo se chama 'Geral' — o mismatch fazia a coluna
+// Meta BP sair "—" justamente no escopo padrão (bug pego na tela em 2026-08-05).
+// Sem canal selecionado (Total Casa ou Growth) = a curva Geral do estudo. Um canal só: Google/Meta têm
+// curva própria; qualquer outro (TikTok, Kwai, Programática…) não tem meta declarada → null.
+// Faixa/grupo NÃO entram: o estudo não calibrou curva por faixa nem por grupo de risco.
+function mddBpScope_(chFilter) {
+  const sel = chList_(chFilter);
+  if (sel.length === 0) return MDD_BP.Geral;
+  if (sel.length === 1) return MDD_BP[sel[0]] || null;
+  return null;
+}
 // Percentil linear-interpolado sobre os valores diários ordenados (mesma régua do estudo: safras
 // diárias sem ponderar por volume — é distribuição de dias, não de reais).
 function mddPct_(vals, p) {
@@ -4018,14 +4030,36 @@ function mddPct_(vals, p) {
   return lo === hi ? v[lo] : v[lo] + (v[hi] - v[lo]) * (i - lo);
 }
 function TabMetricasDia({ retencaoFaixa, chFilter, meta }) {
+  const [faixaSel, setFaixaSel] = React.useState([]);   // multi-select de faixa de FTD; [] = todas
+  const [grupoSel, setGrupoSel] = React.useState([]);   // multi-select de grupo de risco; [] = todos
   const dataMax = meta && meta.dataMaxDate;
-  const rows = benchApostouRows_(retencaoFaixa || []);
+  const grupoActive = grupoSel.length > 0;
+  // A base `retencaoFaixa` do payload NÃO traz grupo de risco — precisa do fetch com &byGrupo=1 (mesma
+  // mecânica da aba Multiplicadores e Retenção). Só busca quando o filtro de grupo está ligado.
+  const winFrom = meta && meta.from, winTo = meta && meta.to;
+  const [grFetch, setGrFetch] = React.useState({ rows: null, loading: false, error: null });
+  React.useEffect(() => {
+    if (!grupoActive || !ENDPOINT_URL || !winFrom || !winTo) return;
+    setGrFetch(s => ({ ...s, loading: true, error: null }));
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${winFrom}&to=${winTo}&only=retfaixa&byGrupo=1`)
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(j => { if (j.error) throw new Error(j.error); setGrFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
+      .catch(e => setGrFetch({ rows: null, loading: false, error: String(e.message || e) }));
+  }, [grupoActive, winFrom, winTo]);
+  // Opções do multiselect de grupo: os grupos REAIS quando já carregou, senão o default.
+  const grupoOptions = (grFetch.rows && grFetch.rows.length)
+    ? Array.from(new Set(grFetch.rows.map(r => r.grupo != null ? String(r.grupo) : 'sem grupo'))).sort()
+    : GRUPO_LIST;
+  const srcRows = grupoActive ? (grFetch.rows || []) : (retencaoFaixa || []);
+  const rows = benchApostouRows_(srcRows);
   const selCh = chSelector_(chFilter);
-  // Uma linha por DIA de safra (soma canais/faixas dentro do recorte) — base dos percentis.
+  const selFx = (fx) => faixaSel.length === 0 || faixaSel.includes(fx);
+  const selGr = (g) => !grupoActive || grupoSel.indexOf(g || 'sem grupo') >= 0;
+  // Uma linha por DIA de safra (soma canais/faixas/grupos dentro do recorte) — base dos percentis.
   const byDay = React.useMemo(() => {
     const m = {};
     rows.forEach(r => {
-      if (!selCh(r.canal)) return;
+      if (!selCh(r.canal) || !selFx(r.faixa) || !selGr(r.grupo)) return;
       const k = String(r.date);
       if (!m[k]) m[k] = { date: k, qtd: 0, d0: 0, cd1: 0, vd1: 0, vd3: 0, vw1: 0, vw2: 0, vs0: 0, vs1: 0, cs1: 0, cstd: 0, cttd: 0, cqtd4: 0, _pass: 0 };
       const a = m[k];
@@ -4035,8 +4069,9 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta }) {
       a.cstd += r.cstd || 0; a.cttd += r.cttd || 0; a.cqtd4 += r.cqtd4 || 0; a._pass += r._pass || 0;
     });
     return Object.values(m).sort((a, b) => a.date < b.date ? -1 : 1);
-  }, [retencaoFaixa, chFilter && chFilter.scope, JSON.stringify(chFilter && chFilter.canals)]);
-  const bpScope = MDD_BP[chLabel_(chFilter)] || null;   // 'Geral'/'Google'/'Meta' batem com as chaves
+  }, [srcRows, chFilter && chFilter.scope, JSON.stringify(chFilter && chFilter.canals),
+      JSON.stringify(faixaSel), JSON.stringify(grupoSel)]);
+  const bpScope = mddBpScope_(chFilter);
   const out = MDD_ROWS.map(row => {
     // Só safras que já fecharam a janela da métrica (maturação).
     const cut = dataMax ? isoAddDays_(dataMax, -row.mat) : null;
@@ -4060,6 +4095,8 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta }) {
   };
   const val = (v, fmt) => v == null ? '—' : (fmt === 'pct' ? fmtPct(v, 1) : fmtMultiple(v));
   const chLbl = chLabel_(chFilter);
+  const faixaLbl = faixaSel.length === 0 ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
+  const grupoLbl = !grupoActive ? 'todos os grupos' : (grupoSel.length <= 2 ? grupoSel.map(grupoLabel_).join(' + ') : grupoSel.length + ' grupos');
   return (
     <React.Fragment>
       <div className="tab-header">
@@ -4068,8 +4105,17 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta }) {
           <div className="subtitle">A escada que sustenta a curva de depósito do BP — realizado, os degraus internos (P75/P90 das safras diárias) e o nível que a curva-meta exige</div>
         </div>
       </div>
+      <div className="slicer-group slicer-ruler">
+        <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Faixa FTD</label>
+        <ChannelMultiSelect options={FAIXA_LIST} selected={faixaSel} onChange={setFaixaSel} labelOf={fxLabel_} allLabel="Todas" countNoun="faixas" />
+        <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>Grupo de risco</label>
+        <ChannelMultiSelect options={grupoOptions} selected={grupoSel} onChange={setGrupoSel} labelOf={grupoLabel_} allLabel="Todos" countNoun="grupos" />
+        <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>
+          Canal: <strong style={{ color: 'var(--text)' }}>{chLbl}</strong> — use o slicer <em>Canal</em> do topo
+        </span>
+      </div>
       <div className="support">
-        <div className="support-title">Escada de retenção precoce · {chLbl} · safras do período{dataMax ? ' (até ' + dataMax.slice(8, 10) + '/' + dataMax.slice(5, 7) + ')' : ''}</div>
+        <div className="support-title">Escada de retenção precoce · {chLbl} · {faixaLbl} · {grupoLbl} · safras do período{dataMax ? ' (até ' + dataMax.slice(8, 10) + '/' + dataMax.slice(5, 7) + ')' : ''}{grFetch.loading ? ' · carregando grupos…' : ''}{grFetch.error ? ' · erro ao carregar grupos' : ''}</div>
         <div className="table-scroll"><table className="ch-table">
           <thead>
             <tr>
@@ -4102,7 +4148,10 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta }) {
           diárias</strong> do período, sem ponderar por volume: são degraus internos — “replicar no todo o que o melhor
           quartil dos nossos próprios dias já faz”, não uma meta externa. <strong>Meta BP</strong> é o nível exigido pela
           curva calibrada na Lottu; é constante do estudo, <strong>não deriva do nosso dado</strong>, e só existe p/ Geral,
-          Google e Meta — em qualquer outro recorte de canal fica “—”. As 3 taxas de passagem não têm meta declarada
+          Google e Meta — em qualquer outro canal, ou com 2+ canais selecionados, fica “—”.
+          {' '}<strong>⚠️ A Meta BP não muda com Faixa nem com Grupo</strong>: o estudo calibrou a curva no nível do canal,
+          não por faixa de FTD nem por grupo de risco. Ao filtrar, Realizado e P75/P90 seguem o recorte, mas a meta continua
+          sendo a do canal inteiro — use como referência de direção, não como alvo daquele segmento. As 3 taxas de passagem não têm meta declarada
           (<em>indicativo</em>): o estudo mostra que elas medem qualidade de aquisição/ativação, não retenção de cauda
           (r = −0,28 no Geral).
           {' '}<strong>Maturação:</strong> cada linha só usa safras que já fecharam a janela dela — D14 exige 14 dias,
