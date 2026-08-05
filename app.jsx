@@ -24,8 +24,26 @@ const ACCESS_TOKEN = 'rvops_5fa28e9c4b1d3a7f';   // legado — o gate real agora
 const SESSION_KEY = 'rvops:session';
 const USER_KEY = 'rvops:user';
 function authParam_() { const s = localStorage.getItem(SESSION_KEY); return 'session=' + encodeURIComponent(s || ''); }
-function apiPost_(payload) {
-  return fetch(ENDPOINT_URL, { method: 'POST', body: JSON.stringify(payload) }).then(r => r.json());
+function apiPost_(payload, opts) {
+  // ⚠️ COLD START do Apps Script: a 1ª chamada depois de um período ocioso demora MUITO — medido
+  // 18,7s no navegador e, num pico, >42s (chegou a devolver 404 enquanto o deploy propagava). Sem
+  // timeout o fetch ficava pendurado e a tela "Verificando sessão…" travava pra sempre, sem erro e
+  // sem saída (o Luis bateu nisso 2× em 05/08). Timeout + 1 retry automático: se estourar, a promise
+  // REJEITA e quem chamou cai no .catch (→ tela de login), em vez de ficar em limbo.
+  const timeoutMs = (opts && opts.timeoutMs) || 45000;
+  const tries = (opts && opts.tries) || 2;
+  const attempt = (n) => {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), timeoutMs);
+    return fetch(ENDPOINT_URL, { method: 'POST', body: JSON.stringify(payload), signal: ctl.signal })
+      .then(r => { clearTimeout(timer); return r.json(); })
+      .catch(e => {
+        clearTimeout(timer);
+        if (n + 1 < tries) return attempt(n + 1);   // 2ª tentativa já pega a instância quente
+        throw e;
+      });
+  };
+  return attempt(0);
 }
 
 // ============================================================
@@ -3996,10 +4014,13 @@ const MDD_ROWS = [
   { key: 'pQtd',  label: 'Taxa de passagem TTD → QTD (D0+D1)', mat: 1,  fmt: 'pct',      of: a => a.cttd ? a.cqtd4 / a.cttd : null,      bp: null, needs: "pass" },
   { key: 'jogD1', label: 'Retenção de jogadores D1/D0',        mat: 1,  fmt: 'pct',      of: a => a.qtd  ? a.cd1 / a.qtd : null,         bp: 'jogD1' },
   { key: 'rsD1',  label: 'Retenção de depósito R$ D1/D0',      mat: 1,  fmt: 'pct',      of: a => a.d0   ? a.vd1 / a.d0 : null,          bp: 'rsD1' },
-  { key: 'm1',    label: 'Multiplicador D1',                   mat: 1,  fmt: 'multiple', of: a => a.d0   ? (a.d0 + a.vd1) / a.d0 : null, bp: 'm1' },
-  { key: 'm3',    label: 'Multiplicador D3',                   mat: 3,  fmt: 'multiple', of: a => a.d0   ? (a.d0 + a.vd3) / a.d0 : null, bp: 'm3' },
-  { key: 'm7',    label: 'Multiplicador D7',                   mat: 7,  fmt: 'multiple', of: a => a.d0   ? (a.d0 + a.vw1) / a.d0 : null, bp: 'm7' },
-  { key: 'm14',   label: 'Multiplicador D14',                  mat: 14, fmt: 'multiple', of: a => a.d0   ? (a.d0 + a.vw2) / a.d0 : null, bp: 'm14' },
+  // ⚠️ Os multiplicadores exigem d0 > 0 E o incremento da janela > 0. Uma safra real SEMPRE tem algum
+  // depósito depois do D0 — um multiplicador exatamente 1,00x não é "não cresceu", é BASE AUSENTE
+  // (payload sem o campo). Sem esta guarda a tela mostrava "1,00x · +0,00x" com cara de dado bom.
+  { key: 'm1',    label: 'Multiplicador D1',                   mat: 1,  fmt: 'multiple', of: a => (a.d0 && a.vd1) ? (a.d0 + a.vd1) / a.d0 : null, bp: 'm1' },
+  { key: 'm3',    label: 'Multiplicador D3',                   mat: 3,  fmt: 'multiple', of: a => (a.d0 && a.vd3) ? (a.d0 + a.vd3) / a.d0 : null, bp: 'm3' },
+  { key: 'm7',    label: 'Multiplicador D7',                   mat: 7,  fmt: 'multiple', of: a => (a.d0 && a.vw1) ? (a.d0 + a.vw1) / a.d0 : null, bp: 'm7' },
+  { key: 'm14',   label: 'Multiplicador D14',                  mat: 14, fmt: 'multiple', of: a => (a.d0 && a.vw2) ? (a.d0 + a.vw2) / a.d0 : null, bp: 'm14' },
   { key: 'rsS1',  label: 'Retenção de depósito R$ S1/S0 (semanal)', mat: 13, fmt: 'pct', of: a => a.vs0  ? a.vs1 / a.vs0 : null,         bp: 'rsS1', needs: "sem" },
   // ⚠️ SEM Meta BP de propósito. A curva semanal de JOGADORES do estudo é ESTIMADA (jogadores únicos na
   // semana inferidos das taxas diárias assumindo independência entre dias) — o que infla o número: o
@@ -5275,6 +5296,14 @@ function Root() {
   const [user, setUser] = React.useState(() => { try { return JSON.parse(localStorage.getItem(USER_KEY) || 'null'); } catch (e) { return null; } });
   const [checking, setChecking] = React.useState(!!session);
   const [config, setConfig] = React.useState(null);   // { hiddenTabs: [...] } — vem do backend no me/login
+  // Segundos decorridos na verificação — a tela ficava muda durante o cold start do Apps Script (até ~45s)
+  // e parecia travada. Mostrar o contador + o motivo evita o "não está carregando".
+  const [waited, setWaited] = React.useState(0);
+  React.useEffect(() => {
+    if (!checking) return;
+    const t = setInterval(() => setWaited(w => w + 1), 1000);
+    return () => clearInterval(t);
+  }, [checking]);
 
   React.useEffect(() => {
     if (!session) { setChecking(false); return; }
@@ -5298,7 +5327,17 @@ function Root() {
 
   // Modo dev (sem ENDPOINT_URL) não exige login.
   if (ENDPOINT_URL && !session) return <Login onLogin={onLogin} />;
-  if (ENDPOINT_URL && checking) return <div className="login-wrap"><div className="login-card"><div className="login-sub">Verificando sessão…</div></div></div>;
+  if (ENDPOINT_URL && checking) return (
+    <div className="login-wrap"><div className="login-card">
+      <div className="login-sub">Verificando sessão…{waited > 2 ? ' (' + waited + 's)' : ''}</div>
+      {waited > 6 && (
+        <div className="login-sub" style={{ marginTop: '10px', fontSize: '12px', opacity: .75, lineHeight: 1.5 }}>
+          O servidor está acordando — a primeira chamada do dia ao Apps Script leva até ~45s.
+          Se passar disso, a tela volta pro login sozinha.
+        </div>
+      )}
+    </div></div>
+  );
   return <App user={user} onLogout={onLogout} config={config} />;
 }
 

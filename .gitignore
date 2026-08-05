@@ -11,6 +11,7 @@ node_modules/
 # ⚠️ Este repo É o GitHub Pages: tudo que entra aqui vira URL pública.
 mddtest.js
 boot.js
+guardtest.js
 fronttest.js
 *.pptx
 *.pdf
